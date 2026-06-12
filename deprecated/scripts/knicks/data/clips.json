@@ -1,0 +1,3081 @@
+{
+  "generatedAt": "2026-06-10T18:42:45.027742-04:00",
+  "source": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clip-marks.csv",
+  "clips": [
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 0,
+      "start": 0.0,
+      "end": 15.0,
+      "duration": 15.0,
+      "marked": {
+        "start": 0.0,
+        "end": 15.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/000_0-15.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 1,
+      "start": 15.0,
+      "end": 35.0,
+      "duration": 20.0,
+      "marked": {
+        "start": 15.0,
+        "end": 35.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/001_15-35.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 2,
+      "start": 35.0,
+      "end": 50.0,
+      "duration": 15.0,
+      "marked": {
+        "start": 35.0,
+        "end": 50.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/002_35-50.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 3,
+      "start": 50.0,
+      "end": 65.0,
+      "duration": 15.0,
+      "marked": {
+        "start": 50.0,
+        "end": 65.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/003_50-65.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 4,
+      "start": 65.0,
+      "end": 77.0,
+      "duration": 12.0,
+      "marked": {
+        "start": 65.0,
+        "end": 77.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/004_65-77.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 5,
+      "start": 77.0,
+      "end": 88.0,
+      "duration": 11.0,
+      "marked": {
+        "start": 77.0,
+        "end": 88.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/005_77-88.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 6,
+      "start": 88.0,
+      "end": 113.0,
+      "duration": 25.0,
+      "marked": {
+        "start": 88.0,
+        "end": 113.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/006_88-113.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 7,
+      "start": 113.0,
+      "end": 127.0,
+      "duration": 14.0,
+      "marked": {
+        "start": 113.0,
+        "end": 127.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/007_113-127.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 8,
+      "start": 127.0,
+      "end": 137.0,
+      "duration": 10.0,
+      "marked": {
+        "start": 127.0,
+        "end": 137.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/008_127-137.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 9,
+      "start": 137.0,
+      "end": 169.0,
+      "duration": 32.0,
+      "marked": {
+        "start": 137.0,
+        "end": 169.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/009_137-169.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 10,
+      "start": 169.0,
+      "end": 187.0,
+      "duration": 18.0,
+      "marked": {
+        "start": 169.0,
+        "end": 187.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/010_169-187.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 11,
+      "start": 187.0,
+      "end": 209.0,
+      "duration": 22.0,
+      "marked": {
+        "start": 187.0,
+        "end": 209.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/011_187-209.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 12,
+      "start": 209.0,
+      "end": 218.0,
+      "duration": 9.0,
+      "marked": {
+        "start": 209.0,
+        "end": 218.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/012_209-218.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 13,
+      "start": 218.0,
+      "end": 231.0,
+      "duration": 13.0,
+      "marked": {
+        "start": 218.0,
+        "end": 231.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/013_218-231.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 14,
+      "start": 231.0,
+      "end": 248.0,
+      "duration": 17.0,
+      "marked": {
+        "start": 231.0,
+        "end": 248.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/014_231-248.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 15,
+      "start": 248.0,
+      "end": 258.0,
+      "duration": 10.0,
+      "marked": {
+        "start": 248.0,
+        "end": 258.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/015_248-258.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 16,
+      "start": 258.0,
+      "end": 273.0,
+      "duration": 15.0,
+      "marked": {
+        "start": 258.0,
+        "end": 273.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/016_258-273.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 17,
+      "start": 273.0,
+      "end": 288.0,
+      "duration": 15.0,
+      "marked": {
+        "start": 273.0,
+        "end": 288.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/017_273-288.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 18,
+      "start": 288.0,
+      "end": 311.0,
+      "duration": 23.0,
+      "marked": {
+        "start": 288.0,
+        "end": 311.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/018_288-311.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 19,
+      "start": 311.0,
+      "end": 317.0,
+      "duration": 6.0,
+      "marked": {
+        "start": 311.0,
+        "end": 317.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/019_311-317.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 20,
+      "start": 317.0,
+      "end": 328.0,
+      "duration": 11.0,
+      "marked": {
+        "start": 317.0,
+        "end": 328.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/020_317-328.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 21,
+      "start": 328.0,
+      "end": 338.0,
+      "duration": 10.0,
+      "marked": {
+        "start": 328.0,
+        "end": 338.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/021_328-338.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 22,
+      "start": 338.0,
+      "end": 361.0,
+      "duration": 23.0,
+      "marked": {
+        "start": 338.0,
+        "end": 361.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/022_338-361.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 23,
+      "start": 361.0,
+      "end": 380.0,
+      "duration": 19.0,
+      "marked": {
+        "start": 361.0,
+        "end": 380.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/023_361-380.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 24,
+      "start": 380.0,
+      "end": 394.0,
+      "duration": 14.0,
+      "marked": {
+        "start": 380.0,
+        "end": 394.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/024_380-394.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 25,
+      "start": 394.0,
+      "end": 410.0,
+      "duration": 16.0,
+      "marked": {
+        "start": 394.0,
+        "end": 410.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/025_394-410.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 26,
+      "start": 410.0,
+      "end": 440.0,
+      "duration": 30.0,
+      "marked": {
+        "start": 410.0,
+        "end": 440.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/026_410-440.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 27,
+      "start": 440.0,
+      "end": 460.0,
+      "duration": 20.0,
+      "marked": {
+        "start": 440.0,
+        "end": 460.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/027_440-460.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 28,
+      "start": 460.0,
+      "end": 468.0,
+      "duration": 8.0,
+      "marked": {
+        "start": 460.0,
+        "end": 468.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/028_460-468.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 29,
+      "start": 468.0,
+      "end": 477.0,
+      "duration": 9.0,
+      "marked": {
+        "start": 468.0,
+        "end": 477.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/029_468-477.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 30,
+      "start": 477.0,
+      "end": 532.0,
+      "duration": 55.0,
+      "marked": {
+        "start": 477.0,
+        "end": 532.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/030_477-532.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 31,
+      "start": 532.0,
+      "end": 551.0,
+      "duration": 19.0,
+      "marked": {
+        "start": 532.0,
+        "end": 551.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/031_532-551.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 32,
+      "start": 551.0,
+      "end": 578.0,
+      "duration": 27.0,
+      "marked": {
+        "start": 551.0,
+        "end": 578.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/032_551-578.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 33,
+      "start": 578.0,
+      "end": 586.0,
+      "duration": 8.0,
+      "marked": {
+        "start": 578.0,
+        "end": 586.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/033_578-586.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 34,
+      "start": 586.0,
+      "end": 595.0,
+      "duration": 9.0,
+      "marked": {
+        "start": 586.0,
+        "end": 595.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/034_586-595.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 35,
+      "start": 595.0,
+      "end": 612.0,
+      "duration": 17.0,
+      "marked": {
+        "start": 595.0,
+        "end": 612.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/035_595-612.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 36,
+      "start": 612.0,
+      "end": 632.0,
+      "duration": 20.0,
+      "marked": {
+        "start": 612.0,
+        "end": 632.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/036_612-632.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 37,
+      "start": 632.0,
+      "end": 643.0,
+      "duration": 11.0,
+      "marked": {
+        "start": 632.0,
+        "end": 643.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/037_632-643.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 38,
+      "start": 643.0,
+      "end": 658.0,
+      "duration": 15.0,
+      "marked": {
+        "start": 643.0,
+        "end": 658.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/038_643-658.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 39,
+      "start": 658.0,
+      "end": 667.0,
+      "duration": 9.0,
+      "marked": {
+        "start": 658.0,
+        "end": 667.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/039_658-667.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 40,
+      "start": 667.0,
+      "end": 684.0,
+      "duration": 17.0,
+      "marked": {
+        "start": 667.0,
+        "end": 684.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/040_667-684.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 41,
+      "start": 684.0,
+      "end": 697.0,
+      "duration": 13.0,
+      "marked": {
+        "start": 684.0,
+        "end": 697.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/041_684-697.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 42,
+      "start": 697.0,
+      "end": 710.0,
+      "duration": 13.0,
+      "marked": {
+        "start": 697.0,
+        "end": 710.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/042_697-710.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 43,
+      "start": 710.0,
+      "end": 718.0,
+      "duration": 8.0,
+      "marked": {
+        "start": 710.0,
+        "end": 718.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/043_710-718.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 44,
+      "start": 718.0,
+      "end": 737.0,
+      "duration": 19.0,
+      "marked": {
+        "start": 718.0,
+        "end": 737.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/044_718-737.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 45,
+      "start": 737.0,
+      "end": 759.0,
+      "duration": 22.0,
+      "marked": {
+        "start": 737.0,
+        "end": 759.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/045_737-759.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 46,
+      "start": 759.0,
+      "end": 772.0,
+      "duration": 13.0,
+      "marked": {
+        "start": 759.0,
+        "end": 772.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/046_759-772.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 47,
+      "start": 772.0,
+      "end": 783.0,
+      "duration": 11.0,
+      "marked": {
+        "start": 772.0,
+        "end": 783.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/047_772-783.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 48,
+      "start": 783.0,
+      "end": 797.0,
+      "duration": 14.0,
+      "marked": {
+        "start": 783.0,
+        "end": 797.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/048_783-797.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 49,
+      "start": 797.0,
+      "end": 803.0,
+      "duration": 6.0,
+      "marked": {
+        "start": 797.0,
+        "end": 803.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/049_797-803.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 50,
+      "start": 803.0,
+      "end": 824.0,
+      "duration": 21.0,
+      "marked": {
+        "start": 803.0,
+        "end": 824.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/050_803-824.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 51,
+      "start": 824.0,
+      "end": 847.0,
+      "duration": 23.0,
+      "marked": {
+        "start": 824.0,
+        "end": 847.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/051_824-847.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 52,
+      "start": 847.0,
+      "end": 883.0,
+      "duration": 36.0,
+      "marked": {
+        "start": 847.0,
+        "end": 883.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/052_847-883.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 53,
+      "start": 883.0,
+      "end": 912.0,
+      "duration": 29.0,
+      "marked": {
+        "start": 883.0,
+        "end": 912.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/053_883-912.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 54,
+      "start": 912.0,
+      "end": 925.0,
+      "duration": 13.0,
+      "marked": {
+        "start": 912.0,
+        "end": 925.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/054_912-925.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 55,
+      "start": 925.0,
+      "end": 944.0,
+      "duration": 19.0,
+      "marked": {
+        "start": 925.0,
+        "end": 944.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/055_925-944.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 56,
+      "start": 944.0,
+      "end": 960.0,
+      "duration": 16.0,
+      "marked": {
+        "start": 944.0,
+        "end": 960.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/056_944-960.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 57,
+      "start": 960.0,
+      "end": 967.0,
+      "duration": 7.0,
+      "marked": {
+        "start": 960.0,
+        "end": 967.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/057_960-967.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 58,
+      "start": 967.0,
+      "end": 988.0,
+      "duration": 21.0,
+      "marked": {
+        "start": 967.0,
+        "end": 988.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/058_967-988.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 59,
+      "start": 988.0,
+      "end": 1004.0,
+      "duration": 16.0,
+      "marked": {
+        "start": 988.0,
+        "end": 1004.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/059_988-1004.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 60,
+      "start": 1004.0,
+      "end": 1012.0,
+      "duration": 8.0,
+      "marked": {
+        "start": 1004.0,
+        "end": 1012.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/060_1004-1012.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 61,
+      "start": 1012.0,
+      "end": 1022.0,
+      "duration": 10.0,
+      "marked": {
+        "start": 1012.0,
+        "end": 1022.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/061_1012-1022.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 62,
+      "start": 1022.0,
+      "end": 1038.0,
+      "duration": 16.0,
+      "marked": {
+        "start": 1022.0,
+        "end": 1038.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/062_1022-1038.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 63,
+      "start": 1038.0,
+      "end": 1047.0,
+      "duration": 9.0,
+      "marked": {
+        "start": 1038.0,
+        "end": 1047.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/063_1038-1047.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 64,
+      "start": 1047.0,
+      "end": 1061.0,
+      "duration": 14.0,
+      "marked": {
+        "start": 1047.0,
+        "end": 1061.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/064_1047-1061.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 65,
+      "start": 1061.0,
+      "end": 1076.0,
+      "duration": 15.0,
+      "marked": {
+        "start": 1061.0,
+        "end": 1076.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/065_1061-1076.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 66,
+      "start": 1076.0,
+      "end": 1087.0,
+      "duration": 11.0,
+      "marked": {
+        "start": 1076.0,
+        "end": 1087.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/066_1076-1087.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 67,
+      "start": 1087.0,
+      "end": 1107.0,
+      "duration": 20.0,
+      "marked": {
+        "start": 1087.0,
+        "end": 1107.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/067_1087-1107.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 68,
+      "start": 1107.0,
+      "end": 1118.0,
+      "duration": 11.0,
+      "marked": {
+        "start": 1107.0,
+        "end": 1118.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/068_1107-1118.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 69,
+      "start": 1118.0,
+      "end": 1128.0,
+      "duration": 10.0,
+      "marked": {
+        "start": 1118.0,
+        "end": 1128.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/069_1118-1128.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 70,
+      "start": 1128.0,
+      "end": 1144.0,
+      "duration": 16.0,
+      "marked": {
+        "start": 1128.0,
+        "end": 1144.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/070_1128-1144.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 71,
+      "start": 1144.0,
+      "end": 1151.0,
+      "duration": 7.0,
+      "marked": {
+        "start": 1144.0,
+        "end": 1151.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/071_1144-1151.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 72,
+      "start": 1151.0,
+      "end": 1160.0,
+      "duration": 9.0,
+      "marked": {
+        "start": 1151.0,
+        "end": 1160.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/072_1151-1160.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 73,
+      "start": 1160.0,
+      "end": 1183.0,
+      "duration": 23.0,
+      "marked": {
+        "start": 1160.0,
+        "end": 1183.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/073_1160-1183.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 74,
+      "start": 1183.0,
+      "end": 1188.0,
+      "duration": 5.0,
+      "marked": {
+        "start": 1183.0,
+        "end": 1188.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/074_1183-1188.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 75,
+      "start": 1188.0,
+      "end": 1205.0,
+      "duration": 17.0,
+      "marked": {
+        "start": 1188.0,
+        "end": 1205.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/075_1188-1205.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 76,
+      "start": 1205.0,
+      "end": 1212.0,
+      "duration": 7.0,
+      "marked": {
+        "start": 1205.0,
+        "end": 1212.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/076_1205-1212.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 77,
+      "start": 1212.0,
+      "end": 1221.0,
+      "duration": 9.0,
+      "marked": {
+        "start": 1212.0,
+        "end": 1221.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/077_1212-1221.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 78,
+      "start": 1221.0,
+      "end": 1240.0,
+      "duration": 19.0,
+      "marked": {
+        "start": 1221.0,
+        "end": 1240.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/078_1221-1240.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 79,
+      "start": 1240.0,
+      "end": 1257.0,
+      "duration": 17.0,
+      "marked": {
+        "start": 1240.0,
+        "end": 1257.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/079_1240-1257.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 80,
+      "start": 1257.0,
+      "end": 1263.0,
+      "duration": 6.0,
+      "marked": {
+        "start": 1257.0,
+        "end": 1263.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/080_1257-1263.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 81,
+      "start": 1263.0,
+      "end": 1270.0,
+      "duration": 7.0,
+      "marked": {
+        "start": 1263.0,
+        "end": 1270.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/081_1263-1270.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 82,
+      "start": 1270.0,
+      "end": 1278.0,
+      "duration": 8.0,
+      "marked": {
+        "start": 1270.0,
+        "end": 1278.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/082_1270-1278.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 83,
+      "start": 1278.0,
+      "end": 1297.0,
+      "duration": 19.0,
+      "marked": {
+        "start": 1278.0,
+        "end": 1297.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/083_1278-1297.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 84,
+      "start": 1297.0,
+      "end": 1319.0,
+      "duration": 22.0,
+      "marked": {
+        "start": 1297.0,
+        "end": 1319.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/084_1297-1319.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 85,
+      "start": 1319.0,
+      "end": 1331.0,
+      "duration": 12.0,
+      "marked": {
+        "start": 1319.0,
+        "end": 1331.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/085_1319-1331.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 86,
+      "start": 1331.0,
+      "end": 1337.0,
+      "duration": 6.0,
+      "marked": {
+        "start": 1331.0,
+        "end": 1337.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/086_1331-1337.mp4"
+    },
+    {
+      "videoId": "XTWy-gAI99s",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/XTWy-gAI99s.mp4",
+      "index": 87,
+      "start": 1337.0,
+      "end": 1357.0,
+      "duration": 20.0,
+      "marked": {
+        "start": 1337.0,
+        "end": 1357.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/XTWy-gAI99s/087_1337-1357.mp4"
+    },
+    {
+      "videoId": "biCFAgYwiig",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/biCFAgYwiig.mp4",
+      "index": 0,
+      "start": 0.0,
+      "end": 528.361,
+      "duration": 528.361,
+      "marked": {
+        "start": 0.0,
+        "end": 525.0
+      },
+      "boundarySource": "chapter",
+      "cut": "copy",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/biCFAgYwiig/000_0-528.mp4"
+    },
+    {
+      "videoId": "biCFAgYwiig",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/biCFAgYwiig.mp4",
+      "index": 1,
+      "start": 524.09,
+      "end": 1063.596,
+      "duration": 539.506,
+      "marked": {
+        "start": 525.0,
+        "end": 1058.0
+      },
+      "boundarySource": "chapter",
+      "cut": "copy",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/biCFAgYwiig/001_524-1063.mp4"
+    },
+    {
+      "videoId": "biCFAgYwiig",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/biCFAgYwiig.mp4",
+      "index": 2,
+      "start": 1057.924,
+      "end": 1500.632,
+      "duration": 442.709,
+      "marked": {
+        "start": 1058.0,
+        "end": 1494.0
+      },
+      "boundarySource": "chapter",
+      "cut": "copy",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/biCFAgYwiig/002_1057-1500.mp4"
+    },
+    {
+      "videoId": "biCFAgYwiig",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/biCFAgYwiig.mp4",
+      "index": 3,
+      "start": 1493.625,
+      "end": 1898.597,
+      "duration": 404.971,
+      "marked": {
+        "start": 1494.0,
+        "end": 1895.0
+      },
+      "boundarySource": "chapter",
+      "cut": "copy",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/biCFAgYwiig/003_1493-1898.mp4"
+    },
+    {
+      "videoId": "biCFAgYwiig",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/biCFAgYwiig.mp4",
+      "index": 4,
+      "start": 1894.793,
+      "end": 2247.245,
+      "duration": 352.452,
+      "marked": {
+        "start": 1895.0,
+        "end": 2243.0
+      },
+      "boundarySource": "chapter",
+      "cut": "copy",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/biCFAgYwiig/004_1894-2247.mp4"
+    },
+    {
+      "videoId": "biCFAgYwiig",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/biCFAgYwiig.mp4",
+      "index": 5,
+      "start": 2242.073,
+      "end": 2794.492,
+      "duration": 552.419,
+      "marked": {
+        "start": 2243.0,
+        "end": 2794.0
+      },
+      "boundarySource": "chapter",
+      "cut": "copy",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/biCFAgYwiig/005_2242-2794.mp4"
+    },
+    {
+      "videoId": "biCFAgYwiig",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/biCFAgYwiig.mp4",
+      "index": 6,
+      "start": 2791.122,
+      "end": 3146.51,
+      "duration": 355.388,
+      "marked": {
+        "start": 2794.0,
+        "end": 3146.0
+      },
+      "boundarySource": "chapter",
+      "cut": "copy",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/biCFAgYwiig/006_2791-3146.mp4"
+    },
+    {
+      "videoId": "biCFAgYwiig",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/biCFAgYwiig.mp4",
+      "index": 7,
+      "start": 3140.104,
+      "end": 3616.146,
+      "duration": 476.042,
+      "marked": {
+        "start": 3146.0,
+        "end": 3610.0
+      },
+      "boundarySource": "chapter",
+      "cut": "copy",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/biCFAgYwiig/007_3140-3616.mp4"
+    },
+    {
+      "videoId": "biCFAgYwiig",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/biCFAgYwiig.mp4",
+      "index": 8,
+      "start": 3609.84,
+      "end": 4213.309,
+      "duration": 603.47,
+      "marked": {
+        "start": 3610.0,
+        "end": 4207.0
+      },
+      "boundarySource": "chapter",
+      "cut": "copy",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/biCFAgYwiig/008_3609-4213.mp4"
+    },
+    {
+      "videoId": "biCFAgYwiig",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/biCFAgYwiig.mp4",
+      "index": 9,
+      "start": 4206.335,
+      "end": 4587.45,
+      "duration": 381.114,
+      "marked": {
+        "start": 4207.0,
+        "end": 4582.0
+      },
+      "boundarySource": "chapter",
+      "cut": "copy",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/biCFAgYwiig/009_4206-4587.mp4"
+    },
+    {
+      "videoId": "biCFAgYwiig",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/biCFAgYwiig.mp4",
+      "index": 10,
+      "start": 4581.343,
+      "end": 5155.517,
+      "duration": 574.174,
+      "marked": {
+        "start": 4582.0,
+        "end": 5149.0
+      },
+      "boundarySource": "chapter",
+      "cut": "copy",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/biCFAgYwiig/010_4581-5155.mp4"
+    },
+    {
+      "videoId": "biCFAgYwiig",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/biCFAgYwiig.mp4",
+      "index": 11,
+      "start": 5148.51,
+      "end": 7102.329,
+      "duration": 1953.819,
+      "marked": {
+        "start": 5149.0,
+        "end": 7096.0
+      },
+      "boundarySource": "chapter",
+      "cut": "copy",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/biCFAgYwiig/011_5148-7102.mp4"
+    },
+    {
+      "videoId": "biCFAgYwiig",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/biCFAgYwiig.mp4",
+      "index": 12,
+      "start": 7095.655,
+      "end": 7451.644,
+      "duration": 355.989,
+      "marked": {
+        "start": 7096.0,
+        "end": 7446.0
+      },
+      "boundarySource": "chapter",
+      "cut": "copy",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/biCFAgYwiig/012_7095-7451.mp4"
+    },
+    {
+      "videoId": "biCFAgYwiig",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/biCFAgYwiig.mp4",
+      "index": 13,
+      "start": 7444.637,
+      "end": 7992.117,
+      "duration": 547.48,
+      "marked": {
+        "start": 7446.0,
+        "end": 7992.0
+      },
+      "boundarySource": "chapter",
+      "cut": "copy",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/biCFAgYwiig/013_7444-7992.mp4"
+    },
+    {
+      "videoId": "biCFAgYwiig",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/biCFAgYwiig.mp4",
+      "index": 14,
+      "start": 7989.582,
+      "end": 8526.752,
+      "duration": 537.17,
+      "marked": {
+        "start": 7992.0,
+        "end": 8523.0
+      },
+      "boundarySource": "chapter",
+      "cut": "copy",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/biCFAgYwiig/014_7989-8526.mp4"
+    },
+    {
+      "videoId": "biCFAgYwiig",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/biCFAgYwiig.mp4",
+      "index": 15,
+      "start": 8521.913,
+      "end": 9081.005,
+      "duration": 559.092,
+      "marked": {
+        "start": 8523.0,
+        "end": 9081.0
+      },
+      "boundarySource": "chapter",
+      "cut": "copy",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/biCFAgYwiig/015_8521-9081.mp4"
+    },
+    {
+      "videoId": "biCFAgYwiig",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/biCFAgYwiig.mp4",
+      "index": 16,
+      "start": 9075.6,
+      "end": 9711.468,
+      "duration": 635.869,
+      "marked": {
+        "start": 9081.0,
+        "end": 9711.0
+      },
+      "boundarySource": "chapter",
+      "cut": "copy",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/biCFAgYwiig/016_9075-9711.mp4"
+    },
+    {
+      "videoId": "biCFAgYwiig",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/biCFAgYwiig.mp4",
+      "index": 17,
+      "start": 9707.398,
+      "end": 10272.295,
+      "duration": 564.898,
+      "marked": {
+        "start": 9711.0,
+        "end": 10269.0
+      },
+      "boundarySource": "chapter",
+      "cut": "copy",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/biCFAgYwiig/017_9707-10272.mp4"
+    },
+    {
+      "videoId": "biCFAgYwiig",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/biCFAgYwiig.mp4",
+      "index": 18,
+      "start": 10267.824,
+      "end": 10802.458,
+      "duration": 534.634,
+      "marked": {
+        "start": 10269.0,
+        "end": 10796.0
+      },
+      "boundarySource": "chapter",
+      "cut": "copy",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/biCFAgYwiig/018_10267-10802.mp4"
+    },
+    {
+      "videoId": "biCFAgYwiig",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/biCFAgYwiig.mp4",
+      "index": 19,
+      "start": 10795.451,
+      "end": 11075.131,
+      "duration": 279.679,
+      "marked": {
+        "start": 10796.0,
+        "end": 11075.0
+      },
+      "boundarySource": "chapter",
+      "cut": "copy",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/biCFAgYwiig/019_10795-11075.mp4"
+    },
+    {
+      "videoId": "biCFAgYwiig",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/biCFAgYwiig.mp4",
+      "index": 20,
+      "start": 11072.128,
+      "end": 12286.0,
+      "duration": 1213.872,
+      "marked": {
+        "start": 11075.0,
+        "end": 12286.0
+      },
+      "boundarySource": "chapter",
+      "cut": "copy",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/biCFAgYwiig/020_11072-12286.mp4"
+    },
+    {
+      "videoId": "1SxhKOeJ6dQ",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/1SxhKOeJ6dQ.mp4",
+      "index": 0,
+      "start": 0.0,
+      "end": 13.0,
+      "duration": 13.0,
+      "marked": {
+        "start": 0.0,
+        "end": 13.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/1SxhKOeJ6dQ/000_0-13.mp4"
+    },
+    {
+      "videoId": "1SxhKOeJ6dQ",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/1SxhKOeJ6dQ.mp4",
+      "index": 1,
+      "start": 13.0,
+      "end": 40.0,
+      "duration": 27.0,
+      "marked": {
+        "start": 13.0,
+        "end": 40.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/1SxhKOeJ6dQ/001_13-40.mp4"
+    },
+    {
+      "videoId": "1SxhKOeJ6dQ",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/1SxhKOeJ6dQ.mp4",
+      "index": 2,
+      "start": 40.0,
+      "end": 47.0,
+      "duration": 7.0,
+      "marked": {
+        "start": 40.0,
+        "end": 47.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/1SxhKOeJ6dQ/002_40-47.mp4"
+    },
+    {
+      "videoId": "1SxhKOeJ6dQ",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/1SxhKOeJ6dQ.mp4",
+      "index": 3,
+      "start": 47.0,
+      "end": 74.0,
+      "duration": 27.0,
+      "marked": {
+        "start": 47.0,
+        "end": 74.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/1SxhKOeJ6dQ/003_47-74.mp4"
+    },
+    {
+      "videoId": "1SxhKOeJ6dQ",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/1SxhKOeJ6dQ.mp4",
+      "index": 4,
+      "start": 74.0,
+      "end": 82.0,
+      "duration": 8.0,
+      "marked": {
+        "start": 74.0,
+        "end": 82.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/1SxhKOeJ6dQ/004_74-82.mp4"
+    },
+    {
+      "videoId": "1SxhKOeJ6dQ",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/1SxhKOeJ6dQ.mp4",
+      "index": 5,
+      "start": 82.0,
+      "end": 106.0,
+      "duration": 24.0,
+      "marked": {
+        "start": 82.0,
+        "end": 106.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/1SxhKOeJ6dQ/005_82-106.mp4"
+    },
+    {
+      "videoId": "1SxhKOeJ6dQ",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/1SxhKOeJ6dQ.mp4",
+      "index": 6,
+      "start": 106.0,
+      "end": 120.0,
+      "duration": 14.0,
+      "marked": {
+        "start": 106.0,
+        "end": 120.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/1SxhKOeJ6dQ/006_106-120.mp4"
+    },
+    {
+      "videoId": "1SxhKOeJ6dQ",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/1SxhKOeJ6dQ.mp4",
+      "index": 7,
+      "start": 120.0,
+      "end": 142.0,
+      "duration": 22.0,
+      "marked": {
+        "start": 120.0,
+        "end": 142.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/1SxhKOeJ6dQ/007_120-142.mp4"
+    },
+    {
+      "videoId": "1SxhKOeJ6dQ",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/1SxhKOeJ6dQ.mp4",
+      "index": 8,
+      "start": 142.0,
+      "end": 158.0,
+      "duration": 16.0,
+      "marked": {
+        "start": 142.0,
+        "end": 158.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/1SxhKOeJ6dQ/008_142-158.mp4"
+    },
+    {
+      "videoId": "1SxhKOeJ6dQ",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/1SxhKOeJ6dQ.mp4",
+      "index": 9,
+      "start": 158.0,
+      "end": 174.0,
+      "duration": 16.0,
+      "marked": {
+        "start": 158.0,
+        "end": 174.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/1SxhKOeJ6dQ/009_158-174.mp4"
+    },
+    {
+      "videoId": "1SxhKOeJ6dQ",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/1SxhKOeJ6dQ.mp4",
+      "index": 10,
+      "start": 174.0,
+      "end": 197.0,
+      "duration": 23.0,
+      "marked": {
+        "start": 174.0,
+        "end": 197.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/1SxhKOeJ6dQ/010_174-197.mp4"
+    },
+    {
+      "videoId": "1SxhKOeJ6dQ",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/1SxhKOeJ6dQ.mp4",
+      "index": 11,
+      "start": 197.0,
+      "end": 209.0,
+      "duration": 12.0,
+      "marked": {
+        "start": 197.0,
+        "end": 209.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/1SxhKOeJ6dQ/011_197-209.mp4"
+    },
+    {
+      "videoId": "1SxhKOeJ6dQ",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/1SxhKOeJ6dQ.mp4",
+      "index": 12,
+      "start": 209.0,
+      "end": 244.0,
+      "duration": 35.0,
+      "marked": {
+        "start": 209.0,
+        "end": 244.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/1SxhKOeJ6dQ/012_209-244.mp4"
+    },
+    {
+      "videoId": "1SxhKOeJ6dQ",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/1SxhKOeJ6dQ.mp4",
+      "index": 13,
+      "start": 244.0,
+      "end": 259.0,
+      "duration": 15.0,
+      "marked": {
+        "start": 244.0,
+        "end": 259.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/1SxhKOeJ6dQ/013_244-259.mp4"
+    },
+    {
+      "videoId": "1SxhKOeJ6dQ",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/1SxhKOeJ6dQ.mp4",
+      "index": 14,
+      "start": 259.0,
+      "end": 294.0,
+      "duration": 35.0,
+      "marked": {
+        "start": 259.0,
+        "end": 294.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/1SxhKOeJ6dQ/014_259-294.mp4"
+    },
+    {
+      "videoId": "1SxhKOeJ6dQ",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/1SxhKOeJ6dQ.mp4",
+      "index": 15,
+      "start": 294.0,
+      "end": 317.0,
+      "duration": 23.0,
+      "marked": {
+        "start": 294.0,
+        "end": 317.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/1SxhKOeJ6dQ/015_294-317.mp4"
+    },
+    {
+      "videoId": "1SxhKOeJ6dQ",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/1SxhKOeJ6dQ.mp4",
+      "index": 16,
+      "start": 317.0,
+      "end": 326.0,
+      "duration": 9.0,
+      "marked": {
+        "start": 317.0,
+        "end": 326.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/1SxhKOeJ6dQ/016_317-326.mp4"
+    },
+    {
+      "videoId": "1SxhKOeJ6dQ",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/1SxhKOeJ6dQ.mp4",
+      "index": 17,
+      "start": 326.0,
+      "end": 335.0,
+      "duration": 9.0,
+      "marked": {
+        "start": 326.0,
+        "end": 335.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/1SxhKOeJ6dQ/017_326-335.mp4"
+    },
+    {
+      "videoId": "1SxhKOeJ6dQ",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/1SxhKOeJ6dQ.mp4",
+      "index": 18,
+      "start": 335.0,
+      "end": 372.0,
+      "duration": 37.0,
+      "marked": {
+        "start": 335.0,
+        "end": 372.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/1SxhKOeJ6dQ/018_335-372.mp4"
+    },
+    {
+      "videoId": "1SxhKOeJ6dQ",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/1SxhKOeJ6dQ.mp4",
+      "index": 19,
+      "start": 372.0,
+      "end": 382.0,
+      "duration": 10.0,
+      "marked": {
+        "start": 372.0,
+        "end": 382.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/1SxhKOeJ6dQ/019_372-382.mp4"
+    },
+    {
+      "videoId": "1SxhKOeJ6dQ",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/1SxhKOeJ6dQ.mp4",
+      "index": 20,
+      "start": 382.0,
+      "end": 394.0,
+      "duration": 12.0,
+      "marked": {
+        "start": 382.0,
+        "end": 394.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/1SxhKOeJ6dQ/020_382-394.mp4"
+    },
+    {
+      "videoId": "1SxhKOeJ6dQ",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/1SxhKOeJ6dQ.mp4",
+      "index": 21,
+      "start": 394.0,
+      "end": 415.0,
+      "duration": 21.0,
+      "marked": {
+        "start": 394.0,
+        "end": 415.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/1SxhKOeJ6dQ/021_394-415.mp4"
+    },
+    {
+      "videoId": "1SxhKOeJ6dQ",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/1SxhKOeJ6dQ.mp4",
+      "index": 22,
+      "start": 415.0,
+      "end": 431.0,
+      "duration": 16.0,
+      "marked": {
+        "start": 415.0,
+        "end": 431.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/1SxhKOeJ6dQ/022_415-431.mp4"
+    },
+    {
+      "videoId": "1SxhKOeJ6dQ",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/1SxhKOeJ6dQ.mp4",
+      "index": 23,
+      "start": 431.0,
+      "end": 460.0,
+      "duration": 29.0,
+      "marked": {
+        "start": 431.0,
+        "end": 460.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/1SxhKOeJ6dQ/023_431-460.mp4"
+    },
+    {
+      "videoId": "Jsj8Lyi1Pi4",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/Jsj8Lyi1Pi4.mp4",
+      "index": 0,
+      "start": 0.0,
+      "end": 5.0,
+      "duration": 5.0,
+      "marked": {
+        "start": 0.0,
+        "end": 5.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/Jsj8Lyi1Pi4/000_0-5.mp4"
+    },
+    {
+      "videoId": "Jsj8Lyi1Pi4",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/Jsj8Lyi1Pi4.mp4",
+      "index": 1,
+      "start": 5.0,
+      "end": 23.0,
+      "duration": 18.0,
+      "marked": {
+        "start": 5.0,
+        "end": 23.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/Jsj8Lyi1Pi4/001_5-23.mp4"
+    },
+    {
+      "videoId": "Jsj8Lyi1Pi4",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/Jsj8Lyi1Pi4.mp4",
+      "index": 2,
+      "start": 23.0,
+      "end": 40.0,
+      "duration": 17.0,
+      "marked": {
+        "start": 23.0,
+        "end": 40.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/Jsj8Lyi1Pi4/002_23-40.mp4"
+    },
+    {
+      "videoId": "Jsj8Lyi1Pi4",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/Jsj8Lyi1Pi4.mp4",
+      "index": 3,
+      "start": 40.0,
+      "end": 53.0,
+      "duration": 13.0,
+      "marked": {
+        "start": 40.0,
+        "end": 53.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/Jsj8Lyi1Pi4/003_40-53.mp4"
+    },
+    {
+      "videoId": "Jsj8Lyi1Pi4",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/Jsj8Lyi1Pi4.mp4",
+      "index": 4,
+      "start": 53.0,
+      "end": 73.0,
+      "duration": 20.0,
+      "marked": {
+        "start": 53.0,
+        "end": 73.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/Jsj8Lyi1Pi4/004_53-73.mp4"
+    },
+    {
+      "videoId": "Jsj8Lyi1Pi4",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/Jsj8Lyi1Pi4.mp4",
+      "index": 5,
+      "start": 73.0,
+      "end": 88.0,
+      "duration": 15.0,
+      "marked": {
+        "start": 73.0,
+        "end": 88.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/Jsj8Lyi1Pi4/005_73-88.mp4"
+    },
+    {
+      "videoId": "Jsj8Lyi1Pi4",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/Jsj8Lyi1Pi4.mp4",
+      "index": 6,
+      "start": 88.0,
+      "end": 102.0,
+      "duration": 14.0,
+      "marked": {
+        "start": 88.0,
+        "end": 102.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/Jsj8Lyi1Pi4/006_88-102.mp4"
+    },
+    {
+      "videoId": "Jsj8Lyi1Pi4",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/Jsj8Lyi1Pi4.mp4",
+      "index": 7,
+      "start": 102.0,
+      "end": 119.0,
+      "duration": 17.0,
+      "marked": {
+        "start": 102.0,
+        "end": 119.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/Jsj8Lyi1Pi4/007_102-119.mp4"
+    },
+    {
+      "videoId": "Jsj8Lyi1Pi4",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/Jsj8Lyi1Pi4.mp4",
+      "index": 8,
+      "start": 119.0,
+      "end": 136.0,
+      "duration": 17.0,
+      "marked": {
+        "start": 119.0,
+        "end": 136.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/Jsj8Lyi1Pi4/008_119-136.mp4"
+    },
+    {
+      "videoId": "Jsj8Lyi1Pi4",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/Jsj8Lyi1Pi4.mp4",
+      "index": 9,
+      "start": 136.0,
+      "end": 154.0,
+      "duration": 18.0,
+      "marked": {
+        "start": 136.0,
+        "end": 154.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/Jsj8Lyi1Pi4/009_136-154.mp4"
+    },
+    {
+      "videoId": "Jsj8Lyi1Pi4",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/Jsj8Lyi1Pi4.mp4",
+      "index": 10,
+      "start": 154.0,
+      "end": 168.0,
+      "duration": 14.0,
+      "marked": {
+        "start": 154.0,
+        "end": 168.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/Jsj8Lyi1Pi4/010_154-168.mp4"
+    },
+    {
+      "videoId": "Jsj8Lyi1Pi4",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/Jsj8Lyi1Pi4.mp4",
+      "index": 11,
+      "start": 168.0,
+      "end": 180.0,
+      "duration": 12.0,
+      "marked": {
+        "start": 168.0,
+        "end": 180.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/Jsj8Lyi1Pi4/011_168-180.mp4"
+    },
+    {
+      "videoId": "Jsj8Lyi1Pi4",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/Jsj8Lyi1Pi4.mp4",
+      "index": 12,
+      "start": 180.0,
+      "end": 192.0,
+      "duration": 12.0,
+      "marked": {
+        "start": 180.0,
+        "end": 192.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/Jsj8Lyi1Pi4/012_180-192.mp4"
+    },
+    {
+      "videoId": "Jsj8Lyi1Pi4",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/Jsj8Lyi1Pi4.mp4",
+      "index": 13,
+      "start": 192.0,
+      "end": 205.0,
+      "duration": 13.0,
+      "marked": {
+        "start": 192.0,
+        "end": 205.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/Jsj8Lyi1Pi4/013_192-205.mp4"
+    },
+    {
+      "videoId": "Jsj8Lyi1Pi4",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/Jsj8Lyi1Pi4.mp4",
+      "index": 14,
+      "start": 205.0,
+      "end": 218.0,
+      "duration": 13.0,
+      "marked": {
+        "start": 205.0,
+        "end": 218.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/Jsj8Lyi1Pi4/014_205-218.mp4"
+    },
+    {
+      "videoId": "Jsj8Lyi1Pi4",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/Jsj8Lyi1Pi4.mp4",
+      "index": 15,
+      "start": 218.0,
+      "end": 230.0,
+      "duration": 12.0,
+      "marked": {
+        "start": 218.0,
+        "end": 230.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/Jsj8Lyi1Pi4/015_218-230.mp4"
+    },
+    {
+      "videoId": "Jsj8Lyi1Pi4",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/Jsj8Lyi1Pi4.mp4",
+      "index": 16,
+      "start": 230.0,
+      "end": 246.0,
+      "duration": 16.0,
+      "marked": {
+        "start": 230.0,
+        "end": 246.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/Jsj8Lyi1Pi4/016_230-246.mp4"
+    },
+    {
+      "videoId": "Jsj8Lyi1Pi4",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/Jsj8Lyi1Pi4.mp4",
+      "index": 17,
+      "start": 246.0,
+      "end": 265.0,
+      "duration": 19.0,
+      "marked": {
+        "start": 246.0,
+        "end": 265.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/Jsj8Lyi1Pi4/017_246-265.mp4"
+    },
+    {
+      "videoId": "Jsj8Lyi1Pi4",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/Jsj8Lyi1Pi4.mp4",
+      "index": 18,
+      "start": 265.0,
+      "end": 278.0,
+      "duration": 13.0,
+      "marked": {
+        "start": 265.0,
+        "end": 278.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/Jsj8Lyi1Pi4/018_265-278.mp4"
+    },
+    {
+      "videoId": "Jsj8Lyi1Pi4",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/Jsj8Lyi1Pi4.mp4",
+      "index": 19,
+      "start": 278.0,
+      "end": 289.0,
+      "duration": 11.0,
+      "marked": {
+        "start": 278.0,
+        "end": 289.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/Jsj8Lyi1Pi4/019_278-289.mp4"
+    },
+    {
+      "videoId": "Jsj8Lyi1Pi4",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/Jsj8Lyi1Pi4.mp4",
+      "index": 20,
+      "start": 289.0,
+      "end": 304.0,
+      "duration": 15.0,
+      "marked": {
+        "start": 289.0,
+        "end": 304.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/Jsj8Lyi1Pi4/020_289-304.mp4"
+    },
+    {
+      "videoId": "Jsj8Lyi1Pi4",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/Jsj8Lyi1Pi4.mp4",
+      "index": 21,
+      "start": 304.0,
+      "end": 328.0,
+      "duration": 24.0,
+      "marked": {
+        "start": 304.0,
+        "end": 328.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/Jsj8Lyi1Pi4/021_304-328.mp4"
+    },
+    {
+      "videoId": "Jsj8Lyi1Pi4",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/Jsj8Lyi1Pi4.mp4",
+      "index": 22,
+      "start": 328.0,
+      "end": 343.0,
+      "duration": 15.0,
+      "marked": {
+        "start": 328.0,
+        "end": 343.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/Jsj8Lyi1Pi4/022_328-343.mp4"
+    },
+    {
+      "videoId": "Jsj8Lyi1Pi4",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/Jsj8Lyi1Pi4.mp4",
+      "index": 23,
+      "start": 343.0,
+      "end": 362.0,
+      "duration": 19.0,
+      "marked": {
+        "start": 343.0,
+        "end": 362.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/Jsj8Lyi1Pi4/023_343-362.mp4"
+    },
+    {
+      "videoId": "Jsj8Lyi1Pi4",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/Jsj8Lyi1Pi4.mp4",
+      "index": 24,
+      "start": 362.0,
+      "end": 382.0,
+      "duration": 20.0,
+      "marked": {
+        "start": 362.0,
+        "end": 382.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/Jsj8Lyi1Pi4/024_362-382.mp4"
+    },
+    {
+      "videoId": "Jsj8Lyi1Pi4",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/Jsj8Lyi1Pi4.mp4",
+      "index": 25,
+      "start": 382.0,
+      "end": 395.0,
+      "duration": 13.0,
+      "marked": {
+        "start": 382.0,
+        "end": 395.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/Jsj8Lyi1Pi4/025_382-395.mp4"
+    },
+    {
+      "videoId": "Jsj8Lyi1Pi4",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/Jsj8Lyi1Pi4.mp4",
+      "index": 26,
+      "start": 395.0,
+      "end": 410.0,
+      "duration": 15.0,
+      "marked": {
+        "start": 395.0,
+        "end": 410.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/Jsj8Lyi1Pi4/026_395-410.mp4"
+    },
+    {
+      "videoId": "Jsj8Lyi1Pi4",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/Jsj8Lyi1Pi4.mp4",
+      "index": 27,
+      "start": 410.0,
+      "end": 427.0,
+      "duration": 17.0,
+      "marked": {
+        "start": 410.0,
+        "end": 427.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/Jsj8Lyi1Pi4/027_410-427.mp4"
+    },
+    {
+      "videoId": "Jsj8Lyi1Pi4",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/Jsj8Lyi1Pi4.mp4",
+      "index": 28,
+      "start": 427.0,
+      "end": 445.0,
+      "duration": 18.0,
+      "marked": {
+        "start": 427.0,
+        "end": 445.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/Jsj8Lyi1Pi4/028_427-445.mp4"
+    },
+    {
+      "videoId": "Jsj8Lyi1Pi4",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/Jsj8Lyi1Pi4.mp4",
+      "index": 29,
+      "start": 445.0,
+      "end": 461.0,
+      "duration": 16.0,
+      "marked": {
+        "start": 445.0,
+        "end": 461.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/Jsj8Lyi1Pi4/029_445-461.mp4"
+    },
+    {
+      "videoId": "Jsj8Lyi1Pi4",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/Jsj8Lyi1Pi4.mp4",
+      "index": 30,
+      "start": 461.0,
+      "end": 471.0,
+      "duration": 10.0,
+      "marked": {
+        "start": 461.0,
+        "end": 471.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/Jsj8Lyi1Pi4/030_461-471.mp4"
+    },
+    {
+      "videoId": "Jsj8Lyi1Pi4",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/Jsj8Lyi1Pi4.mp4",
+      "index": 31,
+      "start": 471.0,
+      "end": 489.0,
+      "duration": 18.0,
+      "marked": {
+        "start": 471.0,
+        "end": 489.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/Jsj8Lyi1Pi4/031_471-489.mp4"
+    },
+    {
+      "videoId": "Jsj8Lyi1Pi4",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/Jsj8Lyi1Pi4.mp4",
+      "index": 32,
+      "start": 489.0,
+      "end": 508.0,
+      "duration": 19.0,
+      "marked": {
+        "start": 489.0,
+        "end": 508.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/Jsj8Lyi1Pi4/032_489-508.mp4"
+    },
+    {
+      "videoId": "Jsj8Lyi1Pi4",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/Jsj8Lyi1Pi4.mp4",
+      "index": 33,
+      "start": 508.0,
+      "end": 525.0,
+      "duration": 17.0,
+      "marked": {
+        "start": 508.0,
+        "end": 525.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/Jsj8Lyi1Pi4/033_508-525.mp4"
+    },
+    {
+      "videoId": "Jsj8Lyi1Pi4",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/Jsj8Lyi1Pi4.mp4",
+      "index": 34,
+      "start": 525.0,
+      "end": 540.0,
+      "duration": 15.0,
+      "marked": {
+        "start": 525.0,
+        "end": 540.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/Jsj8Lyi1Pi4/034_525-540.mp4"
+    },
+    {
+      "videoId": "Jsj8Lyi1Pi4",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/Jsj8Lyi1Pi4.mp4",
+      "index": 35,
+      "start": 540.0,
+      "end": 557.0,
+      "duration": 17.0,
+      "marked": {
+        "start": 540.0,
+        "end": 557.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/Jsj8Lyi1Pi4/035_540-557.mp4"
+    },
+    {
+      "videoId": "Jsj8Lyi1Pi4",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/Jsj8Lyi1Pi4.mp4",
+      "index": 36,
+      "start": 557.0,
+      "end": 577.0,
+      "duration": 20.0,
+      "marked": {
+        "start": 557.0,
+        "end": 577.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/Jsj8Lyi1Pi4/036_557-577.mp4"
+    },
+    {
+      "videoId": "Jsj8Lyi1Pi4",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/Jsj8Lyi1Pi4.mp4",
+      "index": 37,
+      "start": 577.0,
+      "end": 598.0,
+      "duration": 21.0,
+      "marked": {
+        "start": 577.0,
+        "end": 598.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/Jsj8Lyi1Pi4/037_577-598.mp4"
+    },
+    {
+      "videoId": "Jsj8Lyi1Pi4",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/Jsj8Lyi1Pi4.mp4",
+      "index": 38,
+      "start": 598.0,
+      "end": 612.0,
+      "duration": 14.0,
+      "marked": {
+        "start": 598.0,
+        "end": 612.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/Jsj8Lyi1Pi4/038_598-612.mp4"
+    },
+    {
+      "videoId": "Jsj8Lyi1Pi4",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/Jsj8Lyi1Pi4.mp4",
+      "index": 39,
+      "start": 612.0,
+      "end": 629.0,
+      "duration": 17.0,
+      "marked": {
+        "start": 612.0,
+        "end": 629.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/Jsj8Lyi1Pi4/039_612-629.mp4"
+    },
+    {
+      "videoId": "Jsj8Lyi1Pi4",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/Jsj8Lyi1Pi4.mp4",
+      "index": 40,
+      "start": 629.0,
+      "end": 644.0,
+      "duration": 15.0,
+      "marked": {
+        "start": 629.0,
+        "end": 644.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/Jsj8Lyi1Pi4/040_629-644.mp4"
+    },
+    {
+      "videoId": "Jsj8Lyi1Pi4",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/Jsj8Lyi1Pi4.mp4",
+      "index": 41,
+      "start": 644.0,
+      "end": 660.0,
+      "duration": 16.0,
+      "marked": {
+        "start": 644.0,
+        "end": 660.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/Jsj8Lyi1Pi4/041_644-660.mp4"
+    },
+    {
+      "videoId": "Jsj8Lyi1Pi4",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/Jsj8Lyi1Pi4.mp4",
+      "index": 42,
+      "start": 660.0,
+      "end": 675.0,
+      "duration": 15.0,
+      "marked": {
+        "start": 660.0,
+        "end": 675.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/Jsj8Lyi1Pi4/042_660-675.mp4"
+    },
+    {
+      "videoId": "Jsj8Lyi1Pi4",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/Jsj8Lyi1Pi4.mp4",
+      "index": 43,
+      "start": 675.0,
+      "end": 689.0,
+      "duration": 14.0,
+      "marked": {
+        "start": 675.0,
+        "end": 689.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/Jsj8Lyi1Pi4/043_675-689.mp4"
+    },
+    {
+      "videoId": "Jsj8Lyi1Pi4",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/Jsj8Lyi1Pi4.mp4",
+      "index": 44,
+      "start": 689.0,
+      "end": 703.0,
+      "duration": 14.0,
+      "marked": {
+        "start": 689.0,
+        "end": 703.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/Jsj8Lyi1Pi4/044_689-703.mp4"
+    },
+    {
+      "videoId": "Jsj8Lyi1Pi4",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/Jsj8Lyi1Pi4.mp4",
+      "index": 45,
+      "start": 703.0,
+      "end": 722.0,
+      "duration": 19.0,
+      "marked": {
+        "start": 703.0,
+        "end": 722.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/Jsj8Lyi1Pi4/045_703-722.mp4"
+    },
+    {
+      "videoId": "Jsj8Lyi1Pi4",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/Jsj8Lyi1Pi4.mp4",
+      "index": 46,
+      "start": 722.0,
+      "end": 743.0,
+      "duration": 21.0,
+      "marked": {
+        "start": 722.0,
+        "end": 743.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/Jsj8Lyi1Pi4/046_722-743.mp4"
+    },
+    {
+      "videoId": "Jsj8Lyi1Pi4",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/Jsj8Lyi1Pi4.mp4",
+      "index": 47,
+      "start": 743.0,
+      "end": 758.0,
+      "duration": 15.0,
+      "marked": {
+        "start": 743.0,
+        "end": 758.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/Jsj8Lyi1Pi4/047_743-758.mp4"
+    },
+    {
+      "videoId": "Jsj8Lyi1Pi4",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/Jsj8Lyi1Pi4.mp4",
+      "index": 48,
+      "start": 758.0,
+      "end": 776.0,
+      "duration": 18.0,
+      "marked": {
+        "start": 758.0,
+        "end": 776.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/Jsj8Lyi1Pi4/048_758-776.mp4"
+    },
+    {
+      "videoId": "Jsj8Lyi1Pi4",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/Jsj8Lyi1Pi4.mp4",
+      "index": 49,
+      "start": 776.0,
+      "end": 789.0,
+      "duration": 13.0,
+      "marked": {
+        "start": 776.0,
+        "end": 789.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/Jsj8Lyi1Pi4/049_776-789.mp4"
+    },
+    {
+      "videoId": "Jsj8Lyi1Pi4",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/Jsj8Lyi1Pi4.mp4",
+      "index": 50,
+      "start": 789.0,
+      "end": 804.0,
+      "duration": 15.0,
+      "marked": {
+        "start": 789.0,
+        "end": 804.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/Jsj8Lyi1Pi4/050_789-804.mp4"
+    },
+    {
+      "videoId": "Jsj8Lyi1Pi4",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/Jsj8Lyi1Pi4.mp4",
+      "index": 51,
+      "start": 804.0,
+      "end": 834.0,
+      "duration": 30.0,
+      "marked": {
+        "start": 804.0,
+        "end": 834.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/Jsj8Lyi1Pi4/051_804-834.mp4"
+    },
+    {
+      "videoId": "Jsj8Lyi1Pi4",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/Jsj8Lyi1Pi4.mp4",
+      "index": 52,
+      "start": 834.0,
+      "end": 848.0,
+      "duration": 14.0,
+      "marked": {
+        "start": 834.0,
+        "end": 848.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/Jsj8Lyi1Pi4/052_834-848.mp4"
+    },
+    {
+      "videoId": "Jsj8Lyi1Pi4",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/Jsj8Lyi1Pi4.mp4",
+      "index": 53,
+      "start": 848.0,
+      "end": 876.0,
+      "duration": 28.0,
+      "marked": {
+        "start": 848.0,
+        "end": 876.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/Jsj8Lyi1Pi4/053_848-876.mp4"
+    },
+    {
+      "videoId": "Jsj8Lyi1Pi4",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/Jsj8Lyi1Pi4.mp4",
+      "index": 54,
+      "start": 876.0,
+      "end": 891.0,
+      "duration": 15.0,
+      "marked": {
+        "start": 876.0,
+        "end": 891.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/Jsj8Lyi1Pi4/054_876-891.mp4"
+    },
+    {
+      "videoId": "Jsj8Lyi1Pi4",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/Jsj8Lyi1Pi4.mp4",
+      "index": 55,
+      "start": 891.0,
+      "end": 905.0,
+      "duration": 14.0,
+      "marked": {
+        "start": 891.0,
+        "end": 905.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/Jsj8Lyi1Pi4/055_891-905.mp4"
+    },
+    {
+      "videoId": "Jsj8Lyi1Pi4",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/Jsj8Lyi1Pi4.mp4",
+      "index": 56,
+      "start": 905.0,
+      "end": 921.0,
+      "duration": 16.0,
+      "marked": {
+        "start": 905.0,
+        "end": 921.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/Jsj8Lyi1Pi4/056_905-921.mp4"
+    },
+    {
+      "videoId": "Jsj8Lyi1Pi4",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/Jsj8Lyi1Pi4.mp4",
+      "index": 57,
+      "start": 921.0,
+      "end": 941.0,
+      "duration": 20.0,
+      "marked": {
+        "start": 921.0,
+        "end": 941.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/Jsj8Lyi1Pi4/057_921-941.mp4"
+    },
+    {
+      "videoId": "Jsj8Lyi1Pi4",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/Jsj8Lyi1Pi4.mp4",
+      "index": 58,
+      "start": 941.0,
+      "end": 958.0,
+      "duration": 17.0,
+      "marked": {
+        "start": 941.0,
+        "end": 958.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/Jsj8Lyi1Pi4/058_941-958.mp4"
+    },
+    {
+      "videoId": "Jsj8Lyi1Pi4",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/Jsj8Lyi1Pi4.mp4",
+      "index": 59,
+      "start": 958.0,
+      "end": 975.0,
+      "duration": 17.0,
+      "marked": {
+        "start": 958.0,
+        "end": 975.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/Jsj8Lyi1Pi4/059_958-975.mp4"
+    },
+    {
+      "videoId": "Jsj8Lyi1Pi4",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/Jsj8Lyi1Pi4.mp4",
+      "index": 60,
+      "start": 975.0,
+      "end": 987.0,
+      "duration": 12.0,
+      "marked": {
+        "start": 975.0,
+        "end": 987.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/Jsj8Lyi1Pi4/060_975-987.mp4"
+    },
+    {
+      "videoId": "Jsj8Lyi1Pi4",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/Jsj8Lyi1Pi4.mp4",
+      "index": 61,
+      "start": 987.0,
+      "end": 1000.0,
+      "duration": 13.0,
+      "marked": {
+        "start": 987.0,
+        "end": 1000.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/Jsj8Lyi1Pi4/061_987-1000.mp4"
+    },
+    {
+      "videoId": "Jsj8Lyi1Pi4",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/Jsj8Lyi1Pi4.mp4",
+      "index": 62,
+      "start": 1000.0,
+      "end": 1016.0,
+      "duration": 16.0,
+      "marked": {
+        "start": 1000.0,
+        "end": 1016.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/Jsj8Lyi1Pi4/062_1000-1016.mp4"
+    },
+    {
+      "videoId": "Jsj8Lyi1Pi4",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/Jsj8Lyi1Pi4.mp4",
+      "index": 63,
+      "start": 1016.0,
+      "end": 1041.0,
+      "duration": 25.0,
+      "marked": {
+        "start": 1016.0,
+        "end": 1041.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/Jsj8Lyi1Pi4/063_1016-1041.mp4"
+    },
+    {
+      "videoId": "Jsj8Lyi1Pi4",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/Jsj8Lyi1Pi4.mp4",
+      "index": 64,
+      "start": 1041.0,
+      "end": 1060.0,
+      "duration": 19.0,
+      "marked": {
+        "start": 1041.0,
+        "end": 1060.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/Jsj8Lyi1Pi4/064_1041-1060.mp4"
+    },
+    {
+      "videoId": "Jsj8Lyi1Pi4",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/Jsj8Lyi1Pi4.mp4",
+      "index": 65,
+      "start": 1060.0,
+      "end": 1078.0,
+      "duration": 18.0,
+      "marked": {
+        "start": 1060.0,
+        "end": 1078.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/Jsj8Lyi1Pi4/065_1060-1078.mp4"
+    },
+    {
+      "videoId": "Jsj8Lyi1Pi4",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/Jsj8Lyi1Pi4.mp4",
+      "index": 66,
+      "start": 1078.0,
+      "end": 1096.0,
+      "duration": 18.0,
+      "marked": {
+        "start": 1078.0,
+        "end": 1096.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/Jsj8Lyi1Pi4/066_1078-1096.mp4"
+    },
+    {
+      "videoId": "Jsj8Lyi1Pi4",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/Jsj8Lyi1Pi4.mp4",
+      "index": 67,
+      "start": 1096.0,
+      "end": 1112.0,
+      "duration": 16.0,
+      "marked": {
+        "start": 1096.0,
+        "end": 1112.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/Jsj8Lyi1Pi4/067_1096-1112.mp4"
+    },
+    {
+      "videoId": "Jsj8Lyi1Pi4",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/Jsj8Lyi1Pi4.mp4",
+      "index": 68,
+      "start": 1112.0,
+      "end": 1127.0,
+      "duration": 15.0,
+      "marked": {
+        "start": 1112.0,
+        "end": 1127.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/Jsj8Lyi1Pi4/068_1112-1127.mp4"
+    },
+    {
+      "videoId": "Jsj8Lyi1Pi4",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/Jsj8Lyi1Pi4.mp4",
+      "index": 69,
+      "start": 1127.0,
+      "end": 1141.0,
+      "duration": 14.0,
+      "marked": {
+        "start": 1127.0,
+        "end": 1141.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/Jsj8Lyi1Pi4/069_1127-1141.mp4"
+    },
+    {
+      "videoId": "Jsj8Lyi1Pi4",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/Jsj8Lyi1Pi4.mp4",
+      "index": 70,
+      "start": 1141.0,
+      "end": 1154.0,
+      "duration": 13.0,
+      "marked": {
+        "start": 1141.0,
+        "end": 1154.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/Jsj8Lyi1Pi4/070_1141-1154.mp4"
+    },
+    {
+      "videoId": "Jsj8Lyi1Pi4",
+      "videoPath": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/videos/Jsj8Lyi1Pi4.mp4",
+      "index": 71,
+      "start": 1154.0,
+      "end": 1171.0,
+      "duration": 17.0,
+      "marked": {
+        "start": 1154.0,
+        "end": 1171.0
+      },
+      "boundarySource": "manual",
+      "cut": "reencode",
+      "path": "/Users/cadenli/Documents/Personal Code/personal-website/scripts/knicks/data/clips/Jsj8Lyi1Pi4/071_1154-1171.mp4"
+    }
+  ]
+}
