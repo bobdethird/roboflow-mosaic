@@ -4,3 +4,4 @@ __pycache__/
 *.pyo
 .streamlit/
 .DS_Store
+*.env
