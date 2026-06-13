@@ -121,7 +121,20 @@ function buildCandidatePool({ manifest, signatures }) {
   return pool
 }
 
-function matchCells({ cellSigs, geometry, pool, order }) {
+function normalizeVideoAllowlist(values) {
+  return new Set(
+    values.map((value) => path.normalize(value).replaceAll(path.sep, "/"))
+  )
+}
+
+function candidateMatchesVideoAllowlist(candidate, allowlist) {
+  if (!allowlist?.size) return true
+  const sourcePath = path.normalize(candidate.sourcePath || "").replaceAll(path.sep, "/")
+  const baseName = path.basename(sourcePath)
+  return allowlist.has(sourcePath) || allowlist.has(baseName)
+}
+
+function matchCells({ cellSigs, geometry, pool, order, forcedVideoCells = new Map() }) {
   if (!pool.length) throw new Error("No frame candidates available for matching.")
 
   const reuseCap = Math.max(0, Math.floor(CONFIG.mosaic.tileReuseCap || 0))
@@ -195,6 +208,13 @@ function matchCells({ cellSigs, geometry, pool, order }) {
       return false
     }
     const blockedAt = (tileIndex, level) => {
+      const forcedVideos = forcedVideoCells.get(cell)
+      if (
+        forcedVideos?.size &&
+        !candidateMatchesVideoAllowlist(pool[tileIndex], forcedVideos)
+      ) {
+        return true
+      }
       if (level < 3) {
         if (reuseCap && useCounts[tileIndex] >= reuseCap) return true
         if (
@@ -369,7 +389,21 @@ async function main() {
     outputHeight
   )
   const order = [openingCell, ...activeCells.filter((i) => i !== openingCell)]
-  const { assignment, errors } = matchCells({ cellSigs, geometry, pool, order })
+  const centerVideos = normalizeVideoAllowlist(CONFIG.mosaic.centerVideos)
+  const forcedVideoCells = new Map()
+  if (centerVideos.size) {
+    forcedVideoCells.set(openingCell, centerVideos)
+    console.log(
+      `Center cell ${openingCell} constrained to: ${[...centerVideos].join(", ")}`
+    )
+  }
+  const { assignment, errors } = matchCells({
+    cellSigs,
+    geometry,
+    pool,
+    order,
+    forcedVideoCells,
+  })
 
   const usage = new Map()
   const assignments = activeCells.map((cell) => {
@@ -456,6 +490,7 @@ async function main() {
       minSameVideoGapSec: CONFIG.mosaic.minSameVideoGapSec,
       flatnessMinStd: CONFIG.mosaic.flatnessMinStd,
       requireFullPreroll: CONFIG.mosaic.requireFullPreroll,
+      centerVideos: [...centerVideos],
     },
     assignments,
     usedCandidates,

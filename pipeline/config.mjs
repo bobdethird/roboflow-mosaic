@@ -13,7 +13,7 @@ const PROFILES = {
     gridCols: 64,
     gridRows: 36,
     fps: 30,
-    tileFps: 10,
+    tileFps: 30,
     preRollSec: 28,
     freezeSec: 4,
     tileOversample: 2,
@@ -30,7 +30,7 @@ const PROFILES = {
     gridCols: 96,
     gridRows: 54,
     fps: 30,
-    tileFps: 15,
+    tileFps: 30,
     preRollSec: 28,
     freezeSec: 4,
     tileOversample: 2,
@@ -90,9 +90,23 @@ export const CONFIG = {
     // shows the reference photo. 0 = match the whole grid (original behavior).
     centerCols: envNumber("MOSAIC_CENTER_COLS", 0),
     centerRows: envNumber("MOSAIC_CENTER_ROWS", 0),
+    // Optional comma-separated allowlist for the opening/center cell, e.g.
+    // "videos/0-v1.mp4,videos/0-v2.mp4,videos/0-v3.mp4".
+    centerVideos: (process.env.MOSAIC_CENTER_VIDEOS || "")
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean),
     fps: envNumber("MOSAIC_FPS", profile.fps),
     tileFps: envNumber("MOSAIC_TILE_FPS", profile.tileFps),
     preRollSec: envNumber("MOSAIC_PREROLL_SEC", profile.preRollSec),
+    // Hold on the opening/center tile before the zoom-out begins. The hold is
+    // counted inside preRollSec, so MOSAIC_ZOOM_HOLD_SEC=10 means 10s held +
+    // the remaining preroll time used for zooming.
+    zoomHoldSec: envNumber("MOSAIC_ZOOM_HOLD_SEC", 0),
+    // Delay non-center tile playback; the opening/center tile still plays from
+    // t=0. Useful when the camera holds on the center clip before revealing the
+    // rest of the mosaic.
+    tileStartDelaySec: envNumber("MOSAIC_TILE_START_DELAY_SEC", 0),
     freezeSec: envNumber("MOSAIC_FREEZE_SEC", profile.freezeSec),
     tileOversample: envNumber("MOSAIC_TILE_OVERSAMPLE", profile.tileOversample),
     tileReuseCap: envNumber("MOSAIC_REUSE_CAP", profile.tileReuseCap),

@@ -38,6 +38,11 @@ export function easeOutCubic(t) {
   return 1 - Math.pow(1 - clamp(t, 0, 1), 3)
 }
 
+export function easeInCubic(t) {
+  const clamped = clamp(t, 0, 1)
+  return clamped * clamped * clamped
+}
+
 export function formatSeconds(value) {
   return Number(value).toFixed(3)
 }
