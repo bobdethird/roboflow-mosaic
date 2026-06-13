@@ -5,10 +5,25 @@ __pycache__/
 .streamlit/
 .DS_Store
 
+# mosaic photo pipeline (.mjs scripts)
 photos/
 pipeline/data/
 pipeline/output/
 pipeline/node_modules/
 pipeline/videos*/
+
+# diversity clip pipeline (diversity.py)
+key-frames/
+clips/
+clip-frames/
+videos/
+.cache/
+
+# video-generation experiments
+video-generation/.cache/
+video-generation/output/
+video-generation/.DS_Store
+
 *.env
 .env
+.gstack/
