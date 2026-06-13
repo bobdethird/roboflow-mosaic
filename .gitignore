@@ -4,9 +4,9 @@ __pycache__/
 *.pyo
 .streamlit/
 .DS_Store
-.env
 
 pipeline/data/
 pipeline/output/
 pipeline/node_modules/
 pipeline/videos*/
+*.env
