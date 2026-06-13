@@ -1,0 +1,16 @@
+{
+  "name": "mosaic-pipeline",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "index": "python3 01-index-frames.py",
+    "match": "node 02-match.mjs",
+    "clips": "node 03-clips.mjs",
+    "render": "node 04-render.mjs",
+    "all": "python3 01-index-frames.py && node 02-match.mjs && node 03-clips.mjs && node 04-render.mjs"
+  },
+  "dependencies": {
+    "@napi-rs/canvas": "^1.0.0"
+  }
+}
