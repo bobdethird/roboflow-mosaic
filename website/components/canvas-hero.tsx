@@ -1,0 +1,862 @@
+"use client"
+
+import * as React from "react"
+import Link from "next/link"
+import { ArrowLeft, Lock } from "lucide-react"
+
+import {
+  loadLibrary,
+  fetchLibraryVersion,
+  thumbUrl,
+  BUCKET_LABELS,
+  BUCKET_COPY,
+  MOSAIC_BUCKETS,
+  type LibraryItem,
+  type MosaicBucket,
+} from "@/lib/photo-library"
+import {
+  ReferenceCard,
+  ReferenceEmptyCard,
+  makeReferenceFromFile,
+  type ReferenceImage,
+} from "@/components/reference-image"
+import { Button } from "@/components/ui/button"
+import { Slider } from "@/components/ui/slider"
+import { MosaicEngine } from "@/lib/mosaic-client"
+import {
+  averageColor,
+  edgeVectorField,
+  gridForCellSize,
+  loadImage,
+  referenceWindowSignatures,
+} from "@/lib/mosaic"
+import { contourMosaic } from "@/lib/contour-mosaic"
+
+// The mosaic renders into a flat frame matching the reference's aspect ratio so
+// tiles stay square instead of stretching. The long edge is fixed so tile
+// detail stays roughly constant regardless of the reference's shape.
+const CANVAS_LONG_EDGE = 1600
+// Long edge of the edge-vector field the contour-flow layout samples for tile
+// orientation; kept coarse since it only steers direction, not color.
+const FIELD_LONG_EDGE = 360
+
+// Mosaic cell size in px (within the frame). Smaller = finer grid (more tiles,
+// higher resolution). The resolution slider tunes this between the bounds.
+const DENSITY_MIN = 16
+const DENSITY_MAX = 80
+const DENSITY_DEFAULT = 40
+
+// Largest the displayed mosaic may grow vertically. The center column applies
+// responsive width caps so narrow screens still leave the canvas visible.
+const MOSAIC_VIEWPORT_HEIGHT_PCT = 83.5
+
+type Dims = { w: number; h: number }
+
+const MOSAIC_CACHE_DB = "mosaic-cache"
+const MOSAIC_CACHE_STORE = "generated"
+
+type MosaicTileMap = {
+  assignment: Int32Array
+  centers: Float32Array
+  polys: Float32Array
+  offsets: Int32Array
+  tileIds: string[]
+  extent: number
+}
+
+type CachedMosaicBase = {
+  reference: Omit<ReferenceImage, "url">
+  referenceBlob: Blob
+  mosaicBlob: Blob
+  frame: Dims
+  density: number
+  bgColor: string
+  savedAt: number
+  // Library (manifest) version this mosaic was generated against. When the
+  // library is re-seeded the version changes, so a cached render from an older
+  // version is treated as stale (its tiles may no longer exist) and not shown.
+  libraryVersion?: string
+  // Per-generated-mosaic source-photo reuse cap used for this render. A changed
+  // cap means the baked image and assignment map should regenerate.
+  maxTileReuse?: number
+}
+
+type CachedMosaic =
+  | (CachedMosaicBase & { version: 1 })
+  | (CachedMosaicBase & { version: 2; tileMap: MosaicTileMap })
+
+type HoveredTile = {
+  cell: number
+  id: string
+  url: string
+  x: number
+  y: number
+  width?: number
+  height?: number
+}
+
+const evenDim = (n: number) => Math.max(2, Math.round(n / 2) * 2)
+
+// Flat mosaic frame sized to the reference's aspect, long edge = CANVAS_LONG_EDGE.
+function frameDimsFor(w: number, h: number): Dims {
+  const aspect = w / h
+  return aspect >= 1
+    ? { w: CANVAS_LONG_EDGE, h: evenDim(CANVAS_LONG_EDGE / aspect) }
+    : { w: evenDim(CANVAS_LONG_EDGE * aspect), h: CANVAS_LONG_EDGE }
+}
+
+// Edge-vector field dims, matching the frame's aspect at a coarse resolution.
+function fieldDimsFor(w: number, h: number): { fw: number; fh: number } {
+  const aspect = w / h
+  return aspect >= 1
+    ? {
+        fw: FIELD_LONG_EDGE,
+        fh: Math.max(1, Math.round(FIELD_LONG_EDGE / aspect)),
+      }
+    : {
+        fw: Math.max(1, Math.round(FIELD_LONG_EDGE * aspect)),
+        fh: FIELD_LONG_EDGE,
+      }
+}
+
+function isTypingTarget(t: EventTarget | null) {
+  if (!(t instanceof HTMLElement)) return false
+  return (
+    t.isContentEditable ||
+    t.tagName === "INPUT" ||
+    t.tagName === "TEXTAREA" ||
+    t.tagName === "SELECT"
+  )
+}
+
+function pointInPolygon(
+  x: number,
+  y: number,
+  polys: ArrayLike<number>,
+  offsets: ArrayLike<number>,
+  cell: number
+) {
+  const start = offsets[cell]
+  const end = offsets[cell + 1]
+  let inside = false
+  for (let i = start, j = end - 1; i < end; j = i++) {
+    const xi = polys[i * 2]
+    const yi = polys[i * 2 + 1]
+    const xj = polys[j * 2]
+    const yj = polys[j * 2 + 1]
+    if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) {
+      inside = !inside
+    }
+  }
+  return inside
+}
+
+function hitTestTile(map: MosaicTileMap, x: number, y: number): number {
+  const n = map.centers.length / 2
+  for (let i = 0; i < n; i++) {
+    if (pointInPolygon(x, y, map.polys, map.offsets, i)) return i
+  }
+  return -1
+}
+
+function openMosaicCache(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(MOSAIC_CACHE_DB, 1)
+    req.onupgradeneeded = () => {
+      req.result.createObjectStore(MOSAIC_CACHE_STORE)
+    }
+    req.onsuccess = () => resolve(req.result)
+    req.onerror = () => reject(req.error)
+  })
+}
+
+// The generated mosaic is cached per collection (keyed by bucket) so each one
+// remembers its own last reference + render independently.
+async function readCachedMosaic(key: string): Promise<CachedMosaic | null> {
+  const db = await openMosaicCache()
+  try {
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction(MOSAIC_CACHE_STORE, "readonly")
+      const req = tx.objectStore(MOSAIC_CACHE_STORE).get(key)
+      req.onsuccess = () =>
+        resolve((req.result as CachedMosaic | undefined) ?? null)
+      req.onerror = () => reject(req.error)
+    })
+  } finally {
+    db.close()
+  }
+}
+
+async function writeCachedMosaic(
+  key: string,
+  cache: CachedMosaic
+): Promise<void> {
+  const db = await openMosaicCache()
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(MOSAIC_CACHE_STORE, "readwrite")
+      tx.objectStore(MOSAIC_CACHE_STORE).put(cache, key)
+      tx.oncomplete = () => resolve()
+      tx.onerror = () => reject(tx.error)
+      tx.onabort = () => reject(tx.error)
+    })
+  } finally {
+    db.close()
+  }
+}
+
+async function clearCachedMosaic(key: string): Promise<void> {
+  const db = await openMosaicCache()
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(MOSAIC_CACHE_STORE, "readwrite")
+      tx.objectStore(MOSAIC_CACHE_STORE).delete(key)
+      tx.oncomplete = () => resolve()
+      tx.onerror = () => reject(tx.error)
+      tx.onabort = () => reject(tx.error)
+    })
+  } finally {
+    db.close()
+  }
+}
+
+function canvasToBlob(canvas: HTMLCanvasElement): Promise<Blob | null> {
+  return new Promise((resolve) => canvas.toBlob(resolve, "image/png"))
+}
+
+type CanvasHeroProps = {
+  // Which collection's photos power the tiles. The parent remounts CanvasHero
+  // (via `key={bucket}`) when this changes, so all state resets per collection.
+  bucket: MosaicBucket
+  // Switch to the other collection. Optional: when omitted (e.g. a standalone
+  // single-collection page), the "switch to …" control is hidden entirely.
+  onSwitchBucket?: () => void
+  // True when the collection the switch points to is password-gated and not yet
+  // unlocked, so the link shows a lock hint (the parent prompts on click).
+  switchLocked?: boolean
+  // Optional cap on how many cells a single library photo may occupy in one
+  // generated mosaic.
+  maxTileReuse?: number
+}
+
+export function CanvasHero({
+  bucket,
+  onSwitchBucket,
+  switchLocked = false,
+  maxTileReuse,
+}: CanvasHeroProps) {
+  const [reference, setReference] = React.useState<ReferenceImage | null>(null)
+  // Pixel dims of the mosaic frame, derived from the reference's aspect.
+  const [frame, setFrame] = React.useState<Dims | null>(null)
+  const [isGenerating, setIsGenerating] = React.useState(false)
+  const [hasMosaic, setHasMosaic] = React.useState(false)
+  // Mosaic resolution as a cell size in px; higher slider = smaller cells.
+  const [density, setDensity] = React.useState(DENSITY_DEFAULT)
+  const [generateProgress, setGenerateProgress] = React.useState<{
+    done: number
+    total: number
+  } | null>(null)
+  const [displayedProgressPct, setDisplayedProgressPct] = React.useState(0)
+  // How many tile photos are available in the (cached) library.
+  const [tileCount, setTileCount] = React.useState(0)
+  const [tileMap, setTileMap] = React.useState<MosaicTileMap | null>(null)
+  const [hoveredTile, setHoveredTile] = React.useState<HoveredTile | null>(null)
+
+  const mosaicCanvasRef = React.useRef<HTMLCanvasElement | null>(null)
+  const bgColorRef = React.useRef<string>("#ffffff")
+  const engineRef = React.useRef<MosaicEngine | null>(null)
+  const referenceBlobRef = React.useRef<Blob | null>(null)
+  const [restoredMosaicUrl, setRestoredMosaicUrl] = React.useState<
+    string | null
+  >(null)
+  // Ids of the tile photos (from the shared library) used for matching.
+  const tileIdsRef = React.useRef<string[]>([])
+  // Library items by id — state (not a ref) so the usage stats below recompute
+  // once the library finishes loading.
+  const [libraryById, setLibraryById] = React.useState<
+    Map<string, LibraryItem>
+  >(() => new Map())
+  // Version of the loaded library, stamped into the cache so a re-seed makes a
+  // previously generated (and cached) mosaic regenerate instead of restoring.
+  const libraryVersionRef = React.useRef<string>("")
+  // Mirror density into a ref so handleGenerate stays stable yet reads the
+  // latest value when the user explicitly generates.
+  const densityRef = React.useRef(density)
+  React.useEffect(() => {
+    densityRef.current = density
+  }, [density])
+
+  const targetProgressPct =
+    generateProgress && generateProgress.total > 0
+      ? Math.min(100, (generateProgress.done / generateProgress.total) * 100)
+      : isGenerating
+        ? 0
+        : null
+
+  React.useEffect(() => {
+    if (targetProgressPct === null) {
+      return
+    }
+
+    const timer = window.setInterval(() => {
+      setDisplayedProgressPct((current) => {
+        const delta = targetProgressPct - current
+        if (Math.abs(delta) < 0.1) {
+          return targetProgressPct
+        }
+        return current + delta * 0.16
+      })
+    }, 33)
+    return () => window.clearInterval(timer)
+  }, [targetProgressPct])
+
+  // Monotonic token so a superseded generate is discarded.
+  const generateTokenRef = React.useRef(0)
+
+  // Spin up the mosaic worker once on mount and hydrate it with the shared photo
+  // library from Supabase (signatures + thumbnail URLs). The worker owns tile
+  // matching and base-canvas rendering off the main thread, fetching thumbnails
+  // lazily for placed tiles.
+  React.useEffect(() => {
+    let cancelled = false
+    const engine = new MosaicEngine()
+    engineRef.current = engine
+    void (async () => {
+      const { version, items } = await loadLibrary(bucket)
+      if (cancelled || items.length === 0) return
+      libraryVersionRef.current = version
+      engine.hydrate(items)
+      tileIdsRef.current = items.map((it) => it.id)
+      setLibraryById(new Map(items.map((it) => [it.id, it])))
+      setTileCount(items.length)
+    })()
+    return () => {
+      cancelled = true
+      engine.terminate()
+      engineRef.current = null
+    }
+  }, [bucket, maxTileReuse])
+
+  React.useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      try {
+        const cached = await readCachedMosaic(bucket)
+        if (cancelled || !cached) return
+        // If the library was re-seeded since this mosaic was generated, the baked
+        // render can contain tiles that no longer exist — keep the reference so
+        // the user can regenerate, but don't show the stale image.
+        const currentVersion = await fetchLibraryVersion(bucket)
+        if (cancelled) return
+        const stale =
+          (currentVersion !== null && cached.libraryVersion !== currentVersion) ||
+          cached.maxTileReuse !== maxTileReuse
+
+        const referenceUrl = URL.createObjectURL(cached.referenceBlob)
+        referenceBlobRef.current = cached.referenceBlob
+        bgColorRef.current = cached.bgColor
+        setReference({ ...cached.reference, url: referenceUrl })
+        setFrame(cached.frame)
+        setDensity(cached.density)
+        setHoveredTile(null)
+
+        if (stale) {
+          setHasMosaic(false)
+          setTileMap(null)
+          setRestoredMosaicUrl(null)
+          return
+        }
+
+        setHasMosaic(true)
+        setTileMap(cached.version === 2 ? cached.tileMap : null)
+        setRestoredMosaicUrl(URL.createObjectURL(cached.mosaicBlob))
+      } catch {
+        // Cache access is best-effort; the app still works without persistence.
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [bucket, maxTileReuse])
+
+  const referenceRef = React.useRef<ReferenceImage | null>(null)
+  React.useEffect(() => {
+    referenceRef.current = reference
+  }, [reference])
+  React.useEffect(() => {
+    return () => {
+      if (referenceRef.current) URL.revokeObjectURL(referenceRef.current.url)
+    }
+  }, [])
+
+  const handleSetReference = React.useCallback(
+    async (file: File) => {
+      try {
+        const next = await makeReferenceFromFile(file)
+        generateTokenRef.current++
+        referenceBlobRef.current = file
+        setReference((prev) => {
+          if (prev) URL.revokeObjectURL(prev.url)
+          return next
+        })
+        setFrame(frameDimsFor(next.width, next.height))
+        setHasMosaic(false)
+        setTileMap(null)
+        setHoveredTile(null)
+        setIsGenerating(false)
+        setGenerateProgress(null)
+        setRestoredMosaicUrl(null)
+        void clearCachedMosaic(bucket)
+      } catch {
+        // Unreadable image — keep current state so the user can retry.
+      }
+    },
+    [bucket]
+  )
+
+  const handleRemoveReference = React.useCallback(() => {
+    generateTokenRef.current++
+    setReference((prev) => {
+      if (prev) URL.revokeObjectURL(prev.url)
+      return null
+    })
+    referenceBlobRef.current = null
+    setFrame(null)
+    setHasMosaic(false)
+    setTileMap(null)
+    setHoveredTile(null)
+    setIsGenerating(false)
+    setGenerateProgress(null)
+    setRestoredMosaicUrl(null)
+    void clearCachedMosaic(bucket)
+  }, [bucket])
+
+  // Generate the contour-flow mosaic and paint it into the canvas. The raw tiles
+  // sit on the reference's average color (the grout) showing through the gaps.
+  const handleGenerate = React.useCallback(async () => {
+    const ref = referenceRef.current
+    const engine = engineRef.current
+    if (!ref || !engine) return
+    const ids = tileIdsRef.current
+    if (ids.length === 0) return
+    const { w: canvasW, h: canvasH } = frameDimsFor(ref.width, ref.height)
+    const token = ++generateTokenRef.current
+    setIsGenerating(true)
+    setGenerateProgress(null)
+    setDisplayedProgressPct(0)
+    setRestoredMosaicUrl(null)
+    setTileMap(null)
+    setHoveredTile(null)
+    // Paint the grout color then the worker frame on top; the frame is
+    // transparent between tiles, so the grout shows in the gaps.
+    const blit = (bitmap: ImageBitmap) => {
+      const ctx = mosaicCanvasRef.current?.getContext("2d")
+      if (!ctx) return
+      ctx.clearRect(0, 0, canvasW, canvasH)
+      ctx.fillStyle = bgColorRef.current
+      ctx.fillRect(0, 0, canvasW, canvasH)
+      ctx.drawImage(bitmap, 0, 0)
+    }
+    try {
+      const refImg = await loadImage(ref.url)
+      bgColorRef.current = averageColor(refImg)
+      const cellSize = densityRef.current
+      const grid = gridForCellSize(cellSize, canvasW, canvasH)
+      const { fw, fh } = fieldDimsFor(canvasW, canvasH)
+      const vfield = edgeVectorField(refImg, fw, fh)
+      const cm = contourMosaic(canvasW, canvasH, cellSize, vfield)
+      const cellSigs = referenceWindowSignatures(
+        refImg,
+        cm.centers,
+        cm.tileSize,
+        canvasW,
+        canvasH
+      )
+      const { assignment, base } = await engine.generate(
+        cellSigs,
+        grid,
+        ids,
+        cm.angles,
+        cm.polys,
+        cm.offsets,
+        canvasW,
+        canvasH,
+        (bitmap) => {
+          if (token !== generateTokenRef.current) {
+            bitmap.close()
+            return
+          }
+          blit(bitmap)
+          bitmap.close()
+        },
+        (doneCells, totalCells) => {
+          if (token !== generateTokenRef.current) return
+          setGenerateProgress({ done: doneCells, total: totalCells })
+        },
+        { maxTileReuse }
+      )
+      if (token !== generateTokenRef.current) {
+        base.close()
+        return
+      }
+      blit(base)
+      base.close()
+      const nextTileMap: MosaicTileMap = {
+        assignment,
+        centers: cm.centers,
+        polys: cm.polys,
+        offsets: cm.offsets,
+        tileIds: [...ids],
+        extent: cm.extent,
+      }
+      setTileMap(nextTileMap)
+      setHasMosaic(true)
+      const canvas = mosaicCanvasRef.current
+      const referenceBlob = referenceBlobRef.current
+      if (canvas && referenceBlob) {
+        void (async () => {
+          try {
+            const mosaicBlob = await canvasToBlob(canvas)
+            if (
+              !mosaicBlob ||
+              token !== generateTokenRef.current ||
+              referenceBlob !== referenceBlobRef.current
+            ) {
+              return
+            }
+            await writeCachedMosaic(bucket, {
+              version: 2,
+              reference: {
+                name: ref.name,
+                width: ref.width,
+                height: ref.height,
+              },
+              referenceBlob,
+              mosaicBlob,
+              frame: { w: canvasW, h: canvasH },
+              density: cellSize,
+              bgColor: bgColorRef.current,
+              tileMap: nextTileMap,
+              savedAt: Date.now(),
+              libraryVersion: libraryVersionRef.current,
+              maxTileReuse,
+            })
+          } catch {
+            // Quota/private-mode failures should not block the generated mosaic.
+          }
+        })()
+      }
+    } catch {
+      // Generation failed — keep the prior canvas.
+    } finally {
+      if (token === generateTokenRef.current) {
+        setIsGenerating(false)
+        setGenerateProgress(null)
+      }
+    }
+  }, [bucket, maxTileReuse])
+
+  React.useEffect(() => {
+    if (!restoredMosaicUrl || !frame) return
+    let cancelled = false
+    const img = new Image()
+    img.onload = () => {
+      if (!cancelled) {
+        const ctx = mosaicCanvasRef.current?.getContext("2d")
+        if (ctx) {
+          ctx.clearRect(0, 0, frame.w, frame.h)
+          ctx.drawImage(img, 0, 0, frame.w, frame.h)
+        }
+        setRestoredMosaicUrl(null)
+      }
+      URL.revokeObjectURL(restoredMosaicUrl)
+    }
+    img.onerror = () => {
+      if (!cancelled) setRestoredMosaicUrl(null)
+      URL.revokeObjectURL(restoredMosaicUrl)
+    }
+    img.src = restoredMosaicUrl
+    return () => {
+      cancelled = true
+      img.onload = null
+      img.onerror = null
+      URL.revokeObjectURL(restoredMosaicUrl)
+    }
+  }, [restoredMosaicUrl, frame])
+
+  // Paste an image from the clipboard to set or replace the reference.
+  React.useEffect(() => {
+    const onPaste = (e: ClipboardEvent) => {
+      if (isTypingTarget(e.target)) return
+      const items = e.clipboardData?.items
+      if (!items) return
+      for (const item of Array.from(items)) {
+        if (item.type.startsWith("image/")) {
+          const file = item.getAsFile()
+          if (file) {
+            e.preventDefault()
+            void handleSetReference(file)
+            break
+          }
+        }
+      }
+    }
+    window.addEventListener("paste", onPaste)
+    return () => window.removeEventListener("paste", onPaste)
+  }, [handleSetReference])
+
+  // Clear the mosaic canvas whenever there's no current mosaic (e.g. after the
+  // reference changes), so the frame is blank until the next generate.
+  React.useEffect(() => {
+    if (hasMosaic) return
+    const canvas = mosaicCanvasRef.current
+    const ctx = canvas?.getContext("2d")
+    if (canvas && ctx) ctx.clearRect(0, 0, canvas.width, canvas.height)
+  }, [hasMosaic, reference])
+
+  const tileFromPointer = React.useCallback(
+    (
+      e: React.PointerEvent<HTMLDivElement> | React.MouseEvent<HTMLDivElement>
+    ): HoveredTile | null => {
+      if (!hasMosaic || !frame || !tileMap) return null
+      const rect = e.currentTarget.getBoundingClientRect()
+      const x = ((e.clientX - rect.left) / rect.width) * frame.w
+      const y = ((e.clientY - rect.top) / rect.height) * frame.h
+      if (x < 0 || x > frame.w || y < 0 || y > frame.h) return null
+
+      const cell = hitTestTile(tileMap, x, y)
+      if (cell < 0) return null
+      const id = tileMap.tileIds[tileMap.assignment[cell]]
+      if (!id) return null
+      const item = libraryById.get(id)
+      return {
+        cell,
+        id,
+        url: item?.fullUrl ?? item?.url ?? thumbUrl(bucket, id),
+        x,
+        y,
+        width: item?.w,
+        height: item?.h,
+      }
+    },
+    [frame, hasMosaic, tileMap, bucket, libraryById]
+  )
+
+  const handleTilePointerMove = React.useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      const next = tileFromPointer(e)
+      setHoveredTile((prev) => {
+        if (!next) return prev === null ? prev : null
+        if (prev?.cell === next.cell && prev.url === next.url) return prev
+        return next
+      })
+    },
+    [tileFromPointer]
+  )
+
+  const handleTileClick = React.useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      const tile = hoveredTile ?? tileFromPointer(e)
+      if (!tile) return
+      window.open(tile.url, "_blank", "noopener,noreferrer")
+    },
+    [hoveredTile, tileFromPointer]
+  )
+
+  // Usage stats for the current mosaic: how many distinct library photos ended
+  // up placed, and — for frame-sampled collections (knicks) — how many distinct
+  // source clips those photos came from. Null clips means the library carries
+  // no source-video info (regular photo collections), so the count is hidden.
+  const mosaicStats = React.useMemo(() => {
+    if (!tileMap) return null
+    const photoIds = new Set<string>()
+    for (let i = 0; i < tileMap.assignment.length; i++) {
+      const id = tileMap.tileIds[tileMap.assignment[i]]
+      if (id) photoIds.add(id)
+    }
+    const clips = new Set<string>()
+    let withVideo = 0
+    for (const id of photoIds) {
+      const video = libraryById.get(id)?.video
+      if (video) {
+        clips.add(video)
+        withVideo++
+      }
+    }
+    return {
+      cells: tileMap.assignment.length,
+      uniquePhotos: photoIds.size,
+      uniqueClips: withVideo > 0 ? clips.size : null,
+    }
+  }, [tileMap, libraryById])
+
+  const otherBucket = MOSAIC_BUCKETS.find((b) => b !== bucket) ?? bucket
+  const currentLabel = BUCKET_LABELS[bucket]
+  const otherLabel = BUCKET_LABELS[otherBucket]
+  const copy = BUCKET_COPY[bucket]
+
+  return (
+    <section className="relative min-h-svh w-full overflow-x-hidden bg-background select-none xl:h-svh xl:overflow-hidden">
+      <div className="box-border grid min-h-svh w-full grid-cols-1 gap-8 px-3 py-4 sm:px-4 md:p-6 xl:h-svh xl:grid-cols-[minmax(0,1fr)_minmax(0,50vw)_minmax(0,1fr)] xl:items-stretch xl:gap-8 xl:p-8">
+        <div className="z-20 flex min-w-0 flex-col items-start">
+          <Button variant="link" asChild className="h-auto p-0 underline">
+            <Link href="/">
+              <ArrowLeft />
+              back to home
+            </Link>
+          </Button>
+        </div>
+
+        <div className="mx-auto grid w-full min-w-0 place-items-center md:max-w-[88vw] xl:max-w-none">
+          {/* The flat mosaic, centered in the dominant middle column. */}
+          {reference && frame ? (
+            <div
+              className="relative w-full"
+              style={{
+                maxWidth: `calc(${MOSAIC_VIEWPORT_HEIGHT_PCT}svh * ${frame.w} / ${frame.h})`,
+                aspectRatio: `${frame.w} / ${frame.h}`,
+              }}
+              onPointerMove={handleTilePointerMove}
+              onPointerLeave={() => setHoveredTile(null)}
+              onClick={handleTileClick}
+            >
+              <canvas
+                ref={mosaicCanvasRef}
+                width={frame.w}
+                height={frame.h}
+                className="absolute inset-0 block size-full"
+              />
+              {hoveredTile && hasMosaic && (
+                <div
+                  aria-hidden="true"
+                  className="pointer-events-none absolute z-10 w-56 overflow-hidden rounded-2xl border bg-white p-2 shadow-lg"
+                  style={{
+                    left: `${(hoveredTile.x / frame.w) * 100}%`,
+                    top: `${(hoveredTile.y / frame.h) * 100}%`,
+                    transform: `translate(${
+                      hoveredTile.x > frame.w * 0.5
+                        ? "calc(-100% - 12px)"
+                        : "12px"
+                    }, ${
+                      hoveredTile.y > frame.h * 0.5
+                        ? "calc(-100% - 12px)"
+                        : "12px"
+                    })`,
+                  }}
+                >
+                  <div className="aspect-square w-full overflow-hidden rounded-xl bg-white">
+                    {/* eslint-disable-next-line @next/next/no-img-element -- public library URL, shown only as a hover preview */}
+                    <img
+                      src={hoveredTile.url}
+                      alt=""
+                      draggable={false}
+                      className="size-full object-contain"
+                    />
+                  </div>
+                  <div className="mt-2 flex items-center justify-between gap-3 px-1 text-xs text-muted-foreground">
+                    <span>source tile</span>
+                    <span>click to open</span>
+                  </div>
+                </div>
+              )}
+              {!hasMosaic && !isGenerating && (
+                <div className="pointer-events-none absolute inset-0 grid place-items-center text-sm text-muted-foreground">
+                  press generate
+                </div>
+              )}
+            </div>
+          ) : (
+            <p className="px-6 text-center text-sm text-muted-foreground">
+              Add a reference image to begin
+            </p>
+          )}
+        </div>
+
+        <aside className="z-20 flex min-w-0 flex-col gap-6 xl:items-end xl:text-right">
+          <div className="flex items-center gap-2 text-sm text-muted-foreground xl:justify-end">
+            <span>{currentLabel}</span>
+            {onSwitchBucket && (
+              <>
+                <span aria-hidden="true">·</span>
+                <Button
+                  variant="link"
+                  onClick={onSwitchBucket}
+                  className="h-auto gap-1 p-0 underline"
+                >
+                  {switchLocked && (
+                    <Lock className="size-3" aria-hidden="true" />
+                  )}
+                  switch to {otherLabel}
+                </Button>
+              </>
+            )}
+          </div>
+
+          <div className="flex flex-col gap-4 xl:items-end">
+            <h1 className="text-3xl font-semibold tracking-tight text-balance text-foreground">
+              {copy.heading}
+            </h1>
+            <p className="text-sm leading-relaxed text-pretty text-muted-foreground">
+              {copy.description}
+            </p>
+            {hasMosaic && mosaicStats && (
+              <p className="text-xs text-muted-foreground">
+                {mosaicStats.cells.toLocaleString()} tiles ·{" "}
+                {mosaicStats.uniquePhotos.toLocaleString()} unique photos
+                {mosaicStats.uniqueClips !== null && (
+                  <>
+                    {" "}
+                    · {mosaicStats.uniqueClips.toLocaleString()} unique clips
+                  </>
+                )}
+              </p>
+            )}
+          </div>
+
+          <div className="mt-auto flex flex-col gap-3 xl:items-end">
+            {reference ? (
+              <ReferenceCard
+                reference={reference}
+                onReplace={handleSetReference}
+                onRemove={handleRemoveReference}
+              />
+            ) : (
+              <ReferenceEmptyCard onSelect={handleSetReference} />
+            )}
+
+            {reference && (
+              <div className="flex w-56 flex-col gap-3 border bg-card p-4">
+                <div className="flex items-center gap-3">
+                  <span className="text-sm text-muted-foreground">
+                    Resolution
+                  </span>
+                  <Slider
+                    className="w-40"
+                    min={DENSITY_MIN}
+                    max={DENSITY_MAX}
+                    step={2}
+                    value={[DENSITY_MIN + DENSITY_MAX - density]}
+                    onValueChange={(v) =>
+                      setDensity(DENSITY_MIN + DENSITY_MAX - v[0])
+                    }
+                    aria-label="Mosaic resolution"
+                  />
+                </div>
+                <Button
+                  onClick={() => void handleGenerate()}
+                  disabled={tileCount === 0 || isGenerating}
+                >
+                  {isGenerating
+                    ? `Generating ${displayedProgressPct.toFixed(1)}%`
+                    : hasMosaic
+                      ? "Regenerate"
+                      : "Generate mosaic"}
+                </Button>
+              </div>
+            )}
+          </div>
+        </aside>
+      </div>
+    </section>
+  )
+}

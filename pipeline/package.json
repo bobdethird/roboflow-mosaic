@@ -6,6 +6,7 @@
   "scripts": {
     "index": "python3 01-index-frames.py",
     "match": "node 02-match.mjs",
+    "poster": "node 03-poster.mjs",
     "clips": "node 03-clips.mjs",
     "render": "node 04-render.mjs",
     "photos": "node 05-download-knicks-photos.mjs",
