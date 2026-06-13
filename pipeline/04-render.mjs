@@ -240,11 +240,20 @@ function renderHash(plan, clipsManifest) {
         crf: CONFIG.mosaic.crf,
         encodePreset: CONFIG.mosaic.encodePreset,
         zoomMode: "constant-factor",
+        zoomDurationSec: CONFIG.mosaic.zoomDurationSec,
         zoomHoldSec: CONFIG.mosaic.zoomHoldSec,
         tileStartDelaySec: CONFIG.mosaic.tileStartDelaySec,
       },
     })
   )
+}
+
+function renderDurationSec(plan) {
+  const configuredZoomDuration = CONFIG.mosaic.zoomDurationSec || 0
+  if (configuredZoomDuration > 0) {
+    return Math.min(configuredZoomDuration, plan.timing.preRollSec)
+  }
+  return plan.timing.preRollSec + plan.timing.freezeSec
 }
 
 async function renderFrame({
@@ -314,7 +323,7 @@ async function encodeFromFrameDir(frameDir) {
   await fs.rename(tmpOutputPath, CONFIG.paths.outputVideoPath)
 }
 
-async function writePoster() {
+async function writePoster(timeSec) {
   await run(
     "ffmpeg",
     [
@@ -323,7 +332,7 @@ async function writePoster() {
       "error",
       "-y",
       "-ss",
-      String(CONFIG.mosaic.preRollSec),
+      String(timeSec),
       "-i",
       CONFIG.paths.outputVideoPath,
       "-frames:v",
@@ -349,9 +358,8 @@ async function main() {
 
   const hash = renderHash(plan, clipsManifest)
   const frameDir = path.join(CONFIG.paths.renderFramesDir, hash)
-  const totalFrames = Math.round(
-    (plan.timing.preRollSec + plan.timing.freezeSec) * plan.timing.fps
-  )
+  const outputDurationSec = renderDurationSec(plan)
+  const totalFrames = Math.round(outputDurationSec * plan.timing.fps)
   if (
     previousMeta?.renderHash === hash &&
     (await exists(CONFIG.paths.outputVideoPath)) &&
@@ -378,7 +386,7 @@ async function main() {
 
   // Fast iteration: render just the final still composition to the poster.
   if (CONFIG.mosaic.previewPoster) {
-    const time = plan.timing.preRollSec
+    const time = outputDurationSec
     const frameIndex = Math.round(time * plan.timing.fps)
     const window = zoomWindow(time, plan, geometry)
     const framePaths = new Set()
@@ -465,12 +473,13 @@ async function main() {
   }
 
   await encodeFromFrameDir(frameDir)
-  await writePoster()
+  await writePoster(Math.max(0, outputDurationSec - 1 / plan.timing.fps))
   await writeJson(CONFIG.paths.renderMetaPath, {
     renderHash: hash,
     frameDir,
     outputVideoPath: CONFIG.paths.outputVideoPath,
     posterPath: CONFIG.paths.posterPath,
+    outputDurationSec,
     totalFrames,
     generatedAt: new Date().toISOString(),
   })

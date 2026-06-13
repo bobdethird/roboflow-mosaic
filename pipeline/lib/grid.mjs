@@ -129,16 +129,21 @@ export function zoomStartWindow(plan, geometry = null) {
 export function zoomWindow(time, plan, geometry = null) {
   const { outputWidth, outputHeight } = plan.grid
   const { preRollSec } = plan.timing
+  const configuredZoomDuration = CONFIG.mosaic.zoomDurationSec || 0
+  const zoomDurationSec =
+    configuredZoomDuration > 0
+      ? Math.min(configuredZoomDuration, preRollSec)
+      : preRollSec
   const zoomHoldSec = Math.min(
     Math.max(0, CONFIG.mosaic.zoomHoldSec || 0),
-    Math.max(0, preRollSec - 0.001)
+    Math.max(0, zoomDurationSec - 0.001)
   )
-  if (time >= preRollSec) {
+  if (time >= zoomDurationSec) {
     return { x: 0, y: 0, w: outputWidth, h: outputHeight }
   }
   const start = zoomStartWindow(plan, geometry)
   if (time <= zoomHoldSec) return start
-  const rawT = (time - zoomHoldSec) / Math.max(0.001, preRollSec - zoomHoldSec)
+  const rawT = (time - zoomHoldSec) / Math.max(0.001, zoomDurationSec - zoomHoldSec)
   const t = clamp(rawT, 0, 1)
   const w = start.w * Math.pow(outputWidth / start.w, t)
   const h = start.h * Math.pow(outputHeight / start.h, t)
