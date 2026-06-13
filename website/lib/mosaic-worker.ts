@@ -55,6 +55,20 @@ const FULL_GRID = SIGNATURE_GRID
 const COARSE_GRID = Math.max(1, FULL_GRID >> 1)
 const COARSE_LEN = COARSE_GRID * COARSE_GRID * 3
 const COARSE_CHANNELS = COARSE_GRID * COARSE_GRID
+const COARSE_FIXED_BYTES = COARSE_LEN * 2
+// Mean RGB search bins. Matching still computes the exact coarse-signature error;
+// bins only let us visit likely colors first and stop when the mean-color lower
+// bound proves the rest cannot beat the current best.
+const MEAN_BIN_BITS = 4
+const MEAN_BIN_COUNT = 1 << MEAN_BIN_BITS
+const MEAN_BIN_SIZE = 256 / MEAN_BIN_COUNT
+const MEAN_BIN_TOTAL = MEAN_BIN_COUNT * MEAN_BIN_COUNT * MEAN_BIN_COUNT
+// Exact global NN over 50k tiles is too slow in-browser. Instead, collect a
+// generous nearest-color candidate pool, then run the existing 8x8 signature
+// score only inside that pool. This is approximate, but preserves visual quality
+// because candidates are color-near and final ranking still uses layout color.
+const MATCH_CANDIDATE_TARGET = 640
+const MATCH_CANDIDATE_MAX = 1536
 
 function downsampleSig(s: ArrayLike<number>): Float32Array {
   const out = new Float32Array(COARSE_LEN)
@@ -74,6 +88,19 @@ function downsampleSig(s: ArrayLike<number>): Float32Array {
   return out
 }
 
+function comparisonSig(s: Uint8Array): Float32Array {
+  if (s.length === COARSE_LEN) return Float32Array.from(s)
+  if (s.length === COARSE_FIXED_BYTES) {
+    const view = new DataView(s.buffer, s.byteOffset, s.byteLength)
+    const out = new Float32Array(COARSE_LEN)
+    for (let i = 0; i < COARSE_LEN; i++) {
+      out[i] = view.getUint16(i * 2, true) * 0.25
+    }
+    return out
+  }
+  return downsampleSig(s)
+}
+
 type Entry = {
   coarse: Float32Array
   meanR: number
@@ -88,6 +115,19 @@ type PreparedLibrary = {
   ids: string[]
   coarse: Float32Array[]
   means: Float32Array
+  meanBins: MeanBinIndex
+}
+
+type MeanBinIndex = {
+  bins: (Int32Array | undefined)[]
+  keys: Int32Array
+}
+
+type MeanBinOffset = {
+  r: number
+  g: number
+  b: number
+  dist: number
 }
 
 function meanRgb(coarse: Float32Array): [number, number, number] {
@@ -102,6 +142,83 @@ function meanRgb(coarse: Float32Array): [number, number, number] {
   return [r / COARSE_CHANNELS, g / COARSE_CHANNELS, b / COARSE_CHANNELS]
 }
 
+function meanBinCoord(value: number): number {
+  return Math.max(
+    0,
+    Math.min(MEAN_BIN_COUNT - 1, Math.floor(value / MEAN_BIN_SIZE))
+  )
+}
+
+function meanBinKey(r: number, g: number, b: number): number {
+  return (r * MEAN_BIN_COUNT + g) * MEAN_BIN_COUNT + b
+}
+
+function meanBinOffsetDistanceSq(r: number, g: number, b: number): number {
+  const distToAxis = (delta: number): number => {
+    // If two bins touch or overlap on this axis, a point inside the origin bin
+    // can be distance 0 from the target bin on that axis.
+    return Math.max(0, Math.abs(delta) - 1) * MEAN_BIN_SIZE
+  }
+  const dr = distToAxis(r)
+  const dg = distToAxis(g)
+  const db = distToAxis(b)
+  return dr * dr + dg * dg + db * db
+}
+
+function buildMeanBinOffsets(): MeanBinOffset[] {
+  const offsets: MeanBinOffset[] = []
+  for (let r = 1 - MEAN_BIN_COUNT; r < MEAN_BIN_COUNT; r++) {
+    for (let g = 1 - MEAN_BIN_COUNT; g < MEAN_BIN_COUNT; g++) {
+      for (let b = 1 - MEAN_BIN_COUNT; b < MEAN_BIN_COUNT; b++) {
+        offsets.push({ r, g, b, dist: meanBinOffsetDistanceSq(r, g, b) })
+      }
+    }
+  }
+  offsets.sort(
+    (a, b) =>
+      a.dist - b.dist ||
+      Math.abs(a.r) + Math.abs(a.g) + Math.abs(a.b) -
+        (Math.abs(b.r) + Math.abs(b.g) + Math.abs(b.b))
+  )
+  return offsets
+}
+
+const MEAN_BIN_OFFSETS = buildMeanBinOffsets()
+
+function buildMeanBinIndex(means: Float32Array, count: number): MeanBinIndex {
+  const mutable = Array.from({ length: MEAN_BIN_TOTAL }, () => [] as number[])
+  for (let t = 0; t < count; t++) {
+    const r = meanBinCoord(means[t * 3])
+    const g = meanBinCoord(means[t * 3 + 1])
+    const b = meanBinCoord(means[t * 3 + 2])
+    mutable[meanBinKey(r, g, b)].push(t)
+  }
+
+  const bins: (Int32Array | undefined)[] = new Array(MEAN_BIN_TOTAL)
+  const keys: number[] = []
+  for (let key = 0; key < mutable.length; key++) {
+    const bin = mutable[key]
+    if (bin.length === 0) continue
+    bins[key] = Int32Array.from(bin)
+    keys.push(key)
+  }
+  return { bins, keys: Int32Array.from(keys) }
+}
+
+function coarseError(
+  cell: Float32Array,
+  tile: Float32Array,
+  stopAt: number
+): number {
+  let sum = 0
+  for (let i = 0; i < COARSE_LEN; i++) {
+    const d = cell[i] - tile[i]
+    sum += d * d
+    if (sum >= stopAt) return sum
+  }
+  return sum
+}
+
 function prepareLibrary(items: HydrateItem[]): PreparedLibrary {
   const ids = new Array<string>(items.length)
   const coarse = new Array<Float32Array>(items.length)
@@ -109,14 +226,14 @@ function prepareLibrary(items: HydrateItem[]): PreparedLibrary {
   for (let i = 0; i < items.length; i++) {
     const item = items[i]
     ids[i] = item.id
-    const cs = downsampleSig(item.sig)
+    const cs = comparisonSig(item.sig)
     coarse[i] = cs
     const [r, g, b] = meanRgb(cs)
     means[i * 3] = r
     means[i * 3 + 1] = g
     means[i * 3 + 2] = b
   }
-  return { ids, coarse, means }
+  return { ids, coarse, means, meanBins: buildMeanBinIndex(means, items.length) }
 }
 
 function preparedMatchesIds(library: PreparedLibrary, ids: string[]): boolean {
@@ -143,7 +260,12 @@ function getPreparedLibrary(ids: string[]): PreparedLibrary {
     means[i * 3 + 1] = entry?.meanG ?? 0
     means[i * 3 + 2] = entry?.meanB ?? 0
   }
-  return { ids: [...ids], coarse, means }
+  return {
+    ids: [...ids],
+    coarse,
+    means,
+    meanBins: buildMeanBinIndex(means, ids.length),
+  }
 }
 
 // Everything we keep per photo after hydration: the derived comparison signature
@@ -239,14 +361,13 @@ async function handleGenerate(
   const nTiles = ids.length
   if (nTiles === 0) return
   const tileCoarse = library.coarse
-  const tileMeans = library.means
+  const meanBins = library.meanBins
   const reuseCap =
     maxTileReuse !== undefined && Number.isFinite(maxTileReuse)
       ? Math.max(1, Math.floor(maxTileReuse))
       : 0
   const useCounts = reuseCap ? new Uint32Array(nTiles) : null
-  // Reused per cell: squared mean-color distance to each tile.
-  const mds = new Float32Array(nTiles)
+  const candidates = new Int32Array(Math.min(MATCH_CANDIDATE_MAX, nTiles))
 
   // Cell centroids (vertex mean of each polygon) and the mean cell pitch, for
   // the duplicate-spreading constraint below.
@@ -284,16 +405,12 @@ async function handleGenerate(
   const assignment = new Int32Array(cellCount)
 
   // ── Phase 1: match every cell to its nearest tile (CPU only, no network) ────
-  // Nearest tile by summed squared error over the coarse signature, skipping
-  // tiles that already hit this generated mosaic's reuse cap or that are
-  // already placed within the duplicate-spacing radius. Two accelerations keep
-  // it faster than a brute-force scan:
-  //   1. A mean-RGB prefilter picks the closest tile by average color and seeds
-  //      `bestErr` with its real error — a tight initial bound so the work below
-  //      stays small.
-  //   2. An exact lower-bound prune (COARSE_CHANNELS * meanDistSq >= bestErr)
-  //      skips far-colored tiles outright, and the inner early-exit abandons the
-  //      rest as soon as their partial sum reaches the current best.
+  // Nearest-looking tile by summed squared error over the coarse signature,
+  // skipping tiles that already hit this generated mosaic's reuse cap or that are
+  // already placed within the duplicate-spacing radius. For very large libraries
+  // we bound work by collecting a nearest-color candidate pool, then doing the
+  // full coarse-signature score inside that pool.
+  let lastMatchProgress = 0
   for (let cell = 0; cell < cellCount; cell++) {
     const cs = downsampleSig(cellSigs[cell])
 
@@ -309,12 +426,9 @@ async function handleGenerate(
     cr /= COARSE_CHANNELS
     cg /= COARSE_CHANNELS
     cb /= COARSE_CHANNELS
-    for (let t = 0; t < nTiles; t++) {
-      const dr = cr - tileMeans[t * 3]
-      const dg = cg - tileMeans[t * 3 + 1]
-      const db = cb - tileMeans[t * 3 + 2]
-      mds[t] = dr * dr + dg * dg + db * db
-    }
+    const originR = meanBinCoord(cr)
+    const originG = meanBinCoord(cg)
+    const originB = meanBinCoord(cb)
 
     // True when tile `t` is already placed too close to this cell for a repeat.
     const px = cellCx[cell]
@@ -336,55 +450,69 @@ async function handleGenerate(
       (lvl < 2 && useCounts !== null && useCounts[t] >= reuseCap) ||
       (lvl < 1 && tooClose(t))
 
-    // Nearest unblocked tile by mean color seeds the error bound, at the
-    // tightest constraint level that still has a candidate.
-    let seed = -1
-    let seedDist = Infinity
-    let level = 0
-    for (; level <= 2; level++) {
-      for (let t = 0; t < nTiles; t++) {
-        if (blockedAt(t, level)) continue
-        if (mds[t] < seedDist) {
-          seedDist = mds[t]
-          seed = t
+    let best = -1
+    let bestErr = Infinity
+    for (let level = 0; level <= 2 && best < 0; level++) {
+      let candidateCount = 0
+      for (
+        let offsetIndex = 0;
+        offsetIndex < MEAN_BIN_OFFSETS.length;
+        offsetIndex++
+      ) {
+        const offset = MEAN_BIN_OFFSETS[offsetIndex]
+        const r = originR + offset.r
+        const g = originG + offset.g
+        const b = originB + offset.b
+        if (
+          r < 0 ||
+          r >= MEAN_BIN_COUNT ||
+          g < 0 ||
+          g >= MEAN_BIN_COUNT ||
+          b < 0 ||
+          b >= MEAN_BIN_COUNT
+        ) {
+          continue
+        }
+        const key = meanBinKey(r, g, b)
+        const tiles = meanBins.bins[key]
+        if (!tiles) continue
+        for (let i = 0; i < tiles.length; i++) {
+          const t = tiles[i]
+          if (blockedAt(t, level)) continue
+          candidates[candidateCount++] = t
+          if (candidateCount >= candidates.length) break
+        }
+        if (
+          candidateCount >= candidates.length ||
+          candidateCount >= MATCH_CANDIDATE_TARGET
+        ) {
+          break
         }
       }
-      if (seed >= 0) break
-    }
 
-    // Seed bestErr with the prefilter pick's full coarse error.
-    let best = seed
-    let bestErr = 0
-    {
-      const ts = tileCoarse[seed]
-      for (let i = 0; i < COARSE_LEN; i++) {
-        const d = cs[i] - ts[i]
-        bestErr += d * d
+      for (let i = 0; i < candidateCount; i++) {
+        const t = candidates[i]
+        const err = coarseError(cs, tileCoarse[t], bestErr)
+        if (err < bestErr) {
+          bestErr = err
+          best = t
+        }
       }
     }
-
-    // Scan, skipping tiles the mean-color lower bound rules out.
-    for (let t = 0; t < nTiles; t++) {
-      if (t === seed) continue
-      if (blockedAt(t, level)) continue
-      if (COARSE_CHANNELS * mds[t] >= bestErr) continue
-      const ts = tileCoarse[t]
-      let sum = 0
-      let i = 0
-      for (; i < COARSE_LEN; i++) {
-        const d = cs[i] - ts[i]
-        sum += d * d
-        if (sum >= bestErr) break
-      }
-      if (i === COARSE_LEN && sum < bestErr) {
-        bestErr = sum
-        best = t
-      }
-    }
+    if (best < 0) best = 0
     assignment[cell] = best
     if (useCounts) useCounts[best]++
     const placed = placements[best] ?? (placements[best] = [])
     placed.push(px, py)
+
+    const now = performance.now()
+    if (
+      now - lastMatchProgress >= PROGRESS_EVENT_MS ||
+      cell === cellCount - 1
+    ) {
+      lastMatchProgress = now
+      post({ type: "progress", reqId, done: cell + 1, total: cellCount * 2 })
+    }
   }
   if (activeGenerate !== reqId) return
 
@@ -393,6 +521,7 @@ async function handleGenerate(
   // the cross-generate cache, so we never close them here.
   const ready = new Map<number, ImageBitmap>()
   const uniqueTiles = Array.from(new Set(assignment))
+  const progressTotal = cellCount + uniqueTiles.length
 
   // Full clear + repaint of every ready cell, in cell order. Reserved for the
   // final frame so its shadow layering (later tiles' shadows spill over earlier
@@ -435,7 +564,12 @@ async function handleGenerate(
     const now = performance.now()
     if (!force && now - lastProgress < PROGRESS_EVENT_MS) return
     lastProgress = now
-    post({ type: "progress", reqId, done: fetched, total: uniqueTiles.length })
+    post({
+      type: "progress",
+      reqId,
+      done: cellCount + fetched,
+      total: progressTotal,
+    })
   }
   emitProgress(true)
 

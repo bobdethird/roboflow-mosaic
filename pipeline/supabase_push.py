@@ -25,6 +25,7 @@ from dotenv import load_dotenv
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 load_dotenv(SCRIPT_DIR.parent / ".env")
+load_dotenv(SCRIPT_DIR.parent / ".env.local")
 
 BUCKET = os.environ.get("MOSAIC_CLIPS_BUCKET", "knicks-clips")
 

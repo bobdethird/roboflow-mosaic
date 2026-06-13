@@ -1,5 +1,5 @@
 import { CONFIG } from "../config.mjs"
-import { clamp, easeOutCubic } from "./common.mjs"
+import { clamp } from "./common.mjs"
 
 export function buildGridGeometry({
   cols = CONFIG.mosaic.gridCols,
@@ -129,16 +129,30 @@ export function zoomStartWindow(plan, geometry = null) {
 export function zoomWindow(time, plan, geometry = null) {
   const { outputWidth, outputHeight } = plan.grid
   const { preRollSec } = plan.timing
-  if (time >= preRollSec) {
+  const configuredZoomDuration = CONFIG.mosaic.zoomDurationSec || 0
+  const zoomDurationSec =
+    configuredZoomDuration > 0
+      ? Math.min(configuredZoomDuration, preRollSec)
+      : preRollSec
+  const zoomHoldSec = Math.min(
+    Math.max(0, CONFIG.mosaic.zoomHoldSec || 0),
+    Math.max(0, zoomDurationSec - 0.001)
+  )
+  if (time >= zoomDurationSec) {
     return { x: 0, y: 0, w: outputWidth, h: outputHeight }
   }
   const start = zoomStartWindow(plan, geometry)
-  const t = easeOutCubic(time / Math.max(0.001, preRollSec))
+  if (time <= zoomHoldSec) return start
+  const rawT = (time - zoomHoldSec) / Math.max(0.001, zoomDurationSec - zoomHoldSec)
+  const t = clamp(rawT, 0, 1)
+  const w = start.w * Math.pow(outputWidth / start.w, t)
+  const h = start.h * Math.pow(outputHeight / start.h, t)
+  const sizeT = clamp((w - start.w) / Math.max(0.001, outputWidth - start.w), 0, 1)
   return {
-    x: start.x + (0 - start.x) * t,
-    y: start.y + (0 - start.y) * t,
-    w: start.w + (outputWidth - start.w) * t,
-    h: start.h + (outputHeight - start.h) * t,
+    x: start.x + (0 - start.x) * sizeT,
+    y: start.y + (0 - start.y) * sizeT,
+    w,
+    h,
   }
 }
 

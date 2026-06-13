@@ -32,8 +32,39 @@ function hashInt(n) {
   return x >>> 0
 }
 
-function frameForClip(clip, globalTime, cellIndex = 0, timing) {
+function frameForClip(clip, globalTime, cellIndex = 0, timing, plan = null) {
   const last = Math.max(0, clip.frames.length - 1)
+  const isOpeningCell = plan && cellIndex === plan.grid.openingCell
+  const delay =
+    !isOpeningCell && CONFIG.mosaic.tileStartDelaySec
+      ? Math.min(
+          Math.max(0, CONFIG.mosaic.tileStartDelaySec),
+          Math.max(0, timing.preRollSec - 0.001)
+        )
+      : 0
+  if (delay > 0 && globalTime < delay) return clip.frames[0]
+  if (delay > 0 && globalTime < timing.preRollSec) {
+    const startFrame =
+      CONFIG.mosaic.playStartStagger > 0
+        ? Math.round(
+            CONFIG.mosaic.playStartStagger *
+              ((hashInt(cellIndex) % 1000) / 1000) *
+              last
+          )
+        : 0
+    const maxPlayable = Math.max(0, last - startFrame)
+    const progress = clamp(
+      (globalTime - delay) / Math.max(0.001, timing.preRollSec - delay),
+      0,
+      1
+    )
+    const index = clamp(
+      startFrame + Math.round(progress * maxPlayable),
+      0,
+      last
+    )
+    return clip.frames[index]
+  }
   const matchAtSec = clip.matchAtSec ?? timing.preRollSec
   if (globalTime >= matchAtSec) return clip.frames[last]
   const stagger = CONFIG.mosaic.playStartStagger ?? 0
@@ -208,9 +239,21 @@ function renderHash(plan, clipsManifest) {
       output: {
         crf: CONFIG.mosaic.crf,
         encodePreset: CONFIG.mosaic.encodePreset,
+        zoomMode: "constant-factor",
+        zoomDurationSec: CONFIG.mosaic.zoomDurationSec,
+        zoomHoldSec: CONFIG.mosaic.zoomHoldSec,
+        tileStartDelaySec: CONFIG.mosaic.tileStartDelaySec,
       },
     })
   )
+}
+
+function renderDurationSec(plan) {
+  const configuredZoomDuration = CONFIG.mosaic.zoomDurationSec || 0
+  if (configuredZoomDuration > 0) {
+    return Math.min(configuredZoomDuration, plan.timing.preRollSec)
+  }
+  return plan.timing.preRollSec + plan.timing.freezeSec
 }
 
 async function renderFrame({
@@ -235,7 +278,7 @@ async function renderFrame({
     if (!intersects(worldRect, window)) continue
     const clip = clipsByKey.get(assignment.candidateKey)
     if (!clip) continue
-    const framePath = frameForClip(clip, time, assignment.cellIndex, plan.timing)
+    const framePath = frameForClip(clip, time, assignment.cellIndex, plan.timing, plan)
     const image = frameCache.get(framePath)
     if (!image) continue
     if (geometry) {
@@ -280,7 +323,7 @@ async function encodeFromFrameDir(frameDir) {
   await fs.rename(tmpOutputPath, CONFIG.paths.outputVideoPath)
 }
 
-async function writePoster() {
+async function writePoster(timeSec) {
   await run(
     "ffmpeg",
     [
@@ -289,7 +332,7 @@ async function writePoster() {
       "error",
       "-y",
       "-ss",
-      String(CONFIG.mosaic.preRollSec),
+      String(timeSec),
       "-i",
       CONFIG.paths.outputVideoPath,
       "-frames:v",
@@ -315,9 +358,8 @@ async function main() {
 
   const hash = renderHash(plan, clipsManifest)
   const frameDir = path.join(CONFIG.paths.renderFramesDir, hash)
-  const totalFrames = Math.round(
-    (plan.timing.preRollSec + plan.timing.freezeSec) * plan.timing.fps
-  )
+  const outputDurationSec = renderDurationSec(plan)
+  const totalFrames = Math.round(outputDurationSec * plan.timing.fps)
   if (
     previousMeta?.renderHash === hash &&
     (await exists(CONFIG.paths.outputVideoPath)) &&
@@ -344,7 +386,7 @@ async function main() {
 
   // Fast iteration: render just the final still composition to the poster.
   if (CONFIG.mosaic.previewPoster) {
-    const time = plan.timing.preRollSec
+    const time = outputDurationSec
     const frameIndex = Math.round(time * plan.timing.fps)
     const window = zoomWindow(time, plan, geometry)
     const framePaths = new Set()
@@ -353,7 +395,7 @@ async function main() {
       if (!intersects(worldRect, window)) continue
       const clip = clipsByKey.get(assignment.candidateKey)
       if (!clip) continue
-      framePaths.add(frameForClip(clip, time, assignment.cellIndex, plan.timing))
+      framePaths.add(frameForClip(clip, time, assignment.cellIndex, plan.timing, plan))
     }
     await loadFrameCache(framePaths, frameCache)
     const jpeg = await renderFrame({
@@ -405,7 +447,7 @@ async function main() {
         if (!intersects(worldRect, window)) continue
         const clip = clipsByKey.get(assignment.candidateKey)
         if (!clip) continue
-        framePaths.add(frameForClip(clip, time, assignment.cellIndex, plan.timing))
+        framePaths.add(frameForClip(clip, time, assignment.cellIndex, plan.timing, plan))
       }
       await loadFrameCache(framePaths, frameCache)
       const jpeg = await renderFrame({
@@ -431,12 +473,13 @@ async function main() {
   }
 
   await encodeFromFrameDir(frameDir)
-  await writePoster()
+  await writePoster(Math.max(0, outputDurationSec - 1 / plan.timing.fps))
   await writeJson(CONFIG.paths.renderMetaPath, {
     renderHash: hash,
     frameDir,
     outputVideoPath: CONFIG.paths.outputVideoPath,
     posterPath: CONFIG.paths.posterPath,
+    outputDurationSec,
     totalFrames,
     generatedAt: new Date().toISOString(),
   })

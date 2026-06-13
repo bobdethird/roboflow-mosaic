@@ -133,6 +133,7 @@ def decode_signatures(video_path: Path, out_path: Path, fps: float) -> int:
         "-hide_banner",
         "-loglevel",
         "error",
+        "-y",
         "-i",
         str(video_path),
         "-vf",
@@ -231,7 +232,7 @@ def build_video_files(paths: list[Path], previous: dict[str, Any]) -> list[Video
                 content_hash=content_hash,
             )
         )
-        print(f"[hash {index}/{len(paths)}] {rel_path}")
+        print(f"[hash {index}/{len(paths)}] {rel_path}", flush=True)
     return out
 
 
@@ -272,11 +273,25 @@ def main() -> int:
             if sig_path.exists() and meta and meta.get("sampleFps") == fps:
                 frame_count = int(meta["frameCount"])
                 probe = meta["probe"]
-                print(f"[reuse {index}/{len(included)}] {video.rel_path} ({frame_count} frames)")
+                print(
+                    f"[reuse {index}/{len(included)}] {video.rel_path} ({frame_count} frames)",
+                    flush=True,
+                )
             else:
                 probe = probe_video(video.path)
-                print(f"[decode {index}/{len(included)}] {video.rel_path}")
+                started_at = time.time()
+                print(
+                    f"[decode {index}/{len(included)}] {video.rel_path} "
+                    f"({probe.get('duration') or 0:.1f}s)",
+                    flush=True,
+                )
                 frame_count = decode_signatures(video.path, sig_path, fps)
+                elapsed = time.time() - started_at
+                print(
+                    f"[done {index}/{len(included)}] {video.rel_path} "
+                    f"-> {frame_count} frames in {elapsed:.1f}s",
+                    flush=True,
+                )
                 meta_path.write_text(
                     json.dumps(
                         {
@@ -342,13 +357,15 @@ def main() -> int:
     MANIFEST_PATH.write_text(json.dumps(manifest, indent=2) + "\n")
     print(
         f"Wrote {frame_offset} signatures from {len(videos_manifest)} videos "
-        f"to {SIGNATURES_PATH.relative_to(PIPELINE_ROOT)}"
+        f"to {SIGNATURES_PATH.relative_to(PIPELINE_ROOT)}",
+        flush=True,
     )
     if duplicates["exactDuplicates"] or duplicates["possibleDuplicateGroups"]:
         print(
             "Duplicate report: "
             f"{len(duplicates['exactDuplicates'])} exact, "
-            f"{len(duplicates['possibleDuplicateGroups'])} possible groups"
+            f"{len(duplicates['possibleDuplicateGroups'])} possible groups",
+            flush=True,
         )
     return 0
 

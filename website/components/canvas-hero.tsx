@@ -97,6 +97,9 @@ type HoveredTile = {
 
 const evenDim = (n: number) => Math.max(2, Math.round(n / 2) * 2)
 
+const clampDensity = (value: number, min: number, max: number) =>
+  Math.min(max, Math.max(min, value))
+
 // Flat mosaic frame sized to the reference's aspect, long edge = CANVAS_LONG_EDGE.
 function frameDimsFor(w: number, h: number): Dims {
   const aspect = w / h
@@ -237,6 +240,8 @@ type CanvasHeroProps = {
   // Optional cap on how many cells a single library photo may occupy in one
   // generated mosaic.
   maxTileReuse?: number
+  // Smaller cells create a higher-resolution mosaic at a higher generation cost.
+  minCellSize?: number
 }
 
 export function CanvasHero({
@@ -244,14 +249,18 @@ export function CanvasHero({
   onSwitchBucket,
   switchLocked = false,
   maxTileReuse,
+  minCellSize = DENSITY_MIN,
 }: CanvasHeroProps) {
+  const densityMin = clampDensity(minCellSize, 1, DENSITY_MAX)
   const [reference, setReference] = React.useState<ReferenceImage | null>(null)
   // Pixel dims of the mosaic frame, derived from the reference's aspect.
   const [frame, setFrame] = React.useState<Dims | null>(null)
   const [isGenerating, setIsGenerating] = React.useState(false)
   const [hasMosaic, setHasMosaic] = React.useState(false)
   // Mosaic resolution as a cell size in px; higher slider = smaller cells.
-  const [density, setDensity] = React.useState(DENSITY_DEFAULT)
+  const [density, setDensity] = React.useState(() =>
+    clampDensity(DENSITY_DEFAULT, densityMin, DENSITY_MAX)
+  )
   const [generateProgress, setGenerateProgress] = React.useState<{
     done: number
     total: number
@@ -285,6 +294,9 @@ export function CanvasHero({
   React.useEffect(() => {
     densityRef.current = density
   }, [density])
+  React.useEffect(() => {
+    setDensity((current) => clampDensity(current, densityMin, DENSITY_MAX))
+  }, [densityMin])
 
   const targetProgressPct =
     generateProgress && generateProgress.total > 0
@@ -357,7 +369,7 @@ export function CanvasHero({
         bgColorRef.current = cached.bgColor
         setReference({ ...cached.reference, url: referenceUrl })
         setFrame(cached.frame)
-        setDensity(cached.density)
+        setDensity(clampDensity(cached.density, densityMin, DENSITY_MAX))
         setHoveredTile(null)
 
         if (stale) {
@@ -377,7 +389,7 @@ export function CanvasHero({
     return () => {
       cancelled = true
     }
-  }, [bucket, maxTileReuse])
+  }, [bucket, maxTileReuse, densityMin])
 
   const referenceRef = React.useRef<ReferenceImage | null>(null)
   React.useEffect(() => {
@@ -832,12 +844,18 @@ export function CanvasHero({
                   </span>
                   <Slider
                     className="w-40"
-                    min={DENSITY_MIN}
+                    min={densityMin}
                     max={DENSITY_MAX}
                     step={2}
-                    value={[DENSITY_MIN + DENSITY_MAX - density]}
+                    value={[densityMin + DENSITY_MAX - density]}
                     onValueChange={(v) =>
-                      setDensity(DENSITY_MIN + DENSITY_MAX - v[0])
+                      setDensity(
+                        clampDensity(
+                          densityMin + DENSITY_MAX - v[0],
+                          densityMin,
+                          DENSITY_MAX
+                        )
+                      )
                     }
                     aria-label="Mosaic resolution"
                   />

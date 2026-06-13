@@ -6,7 +6,14 @@ import { fileURLToPath } from "node:url"
 import sharp from "sharp"
 
 import { ensureDir, readJson, shortHash, writeJson } from "./lib/common.mjs"
-import { lumStd, SIG_BYTES, SIGNATURE_CHANNELS, SIGNATURE_GRID } from "./lib/signature.mjs"
+import {
+  COARSE_LEN,
+  downsampleSig,
+  lumStd,
+  SIG_BYTES,
+  SIGNATURE_CHANNELS,
+  SIGNATURE_GRID,
+} from "./lib/signature.mjs"
 
 const pipelineRoot = path.dirname(fileURLToPath(import.meta.url))
 const repoRoot = path.resolve(pipelineRoot, "..")
@@ -19,6 +26,8 @@ const USER_AGENT =
 
 const MANIFEST_PATH = "manifest.json"
 const SIGNATURES_PATH = "signatures.bin"
+const COARSE_SIGNATURES_PATH = "signatures-coarse.bin"
+const COARSE_SIG_BYTES = COARSE_LEN * 2
 const thumbPath = (id) => `thumbs/${id}.jpg`
 const originalPath = (id) => `originals/${id}`
 
@@ -36,6 +45,11 @@ function parseArgs(argv) {
     apiTimeoutMs: envNumber("KNICKS_PHOTO_API_TIMEOUT_MS", 15000),
     localManifest: path.join(pipelineRoot, "data", "knicks-photo-library-manifest.json"),
     localSignatures: path.join(pipelineRoot, "data", "knicks-photo-library-signatures.bin"),
+    localCoarseSignatures: path.join(
+      pipelineRoot,
+      "data",
+      "knicks-photo-library-signatures-coarse.bin"
+    ),
     offset: 0,
     originalQuality: envNumber("KNICKS_PHOTO_ORIGINAL_JPEG_QUALITY", 90),
     prefix: process.env.KNICKS_PHOTO_LIBRARY_PREFIX || "",
@@ -63,10 +77,13 @@ function parseArgs(argv) {
     else if (arg === "--dry-run") args.dryRun = true
     else if (arg === "--flatness-min") args.flatnessMin = Number(argv[++i])
     else if (arg === "--force") args.force = true
+    else if (arg === "--coarse-only") args.coarseOnly = true
     else if (arg === "--limit-galleries") args.limitGalleries = Number(argv[++i])
     else if (arg === "--limit-photos") args.limitPhotos = Number(argv[++i])
     else if (arg === "--local-manifest") args.localManifest = path.resolve(argv[++i])
     else if (arg === "--local-signatures") args.localSignatures = path.resolve(argv[++i])
+    else if (arg === "--local-coarse-signatures")
+      args.localCoarseSignatures = path.resolve(argv[++i])
     else if (arg === "--offset") args.offset = Number(argv[++i])
     else if (arg === "--original-quality") args.originalQuality = Number(argv[++i])
     else if (arg === "--prefix") args.prefix = argv[++i]
@@ -94,6 +111,7 @@ by the personal website photo mosaic:
 
   manifest.json
   signatures.bin
+  signatures-coarse.bin
   thumbs/<id>.jpg
   originals/<id>
 
@@ -110,6 +128,7 @@ Options:
   --limit-photos <n>       Stop after N source photos
   --concurrency <n>        Parallel indexing/uploads (default: 12)
   --delay-ms <n>           Delay between API pages (default: 5000)
+  --local-coarse-signatures <path> Local coarse signature output
   --flatness-min <n>       Drop near-flat signatures below this stddev (default: 10)
   --original-quality <n>   JPEG quality for stored originals (default: 90)
   --source-manifest <path> Local photo manifest from 05-download (default: ../photos/manifest.json)
@@ -124,6 +143,7 @@ Options:
   --upload-attempts <n>    Attempts per Supabase upload (default: 3)
   --upload-timeout-ms <n>  Timeout per Supabase upload attempt (default: 60000)
   --force                  Re-upload thumbs/originals even if manifest has the id
+  --coarse-only            Build/upload signatures-coarse.bin from local signatures only
   --dry-run                Build local manifest/signatures without uploading
   --help                   Show this help
 `
@@ -959,7 +979,39 @@ async function processImageTask({
   })
 }
 
-async function publishLibrary({ args, config, manifest, signatures }) {
+function buildCoarseSignatures(signatures) {
+  if (signatures.length % SIG_BYTES) {
+    throw new Error(`Full signatures size is not divisible by ${SIG_BYTES}: ${signatures.length}`)
+  }
+  const count = signatures.length / SIG_BYTES
+  const coarse = Buffer.alloc(count * COARSE_SIG_BYTES)
+  for (let i = 0; i < count; i++) {
+    const start = i * SIG_BYTES
+    const sig = signatures.subarray(start, start + SIG_BYTES)
+    const downsampled = downsampleSig(sig)
+    for (let j = 0; j < COARSE_LEN; j++) {
+      // Store the exact sum of the 2x2 source block (downsampled value * 4).
+      // The website worker divides by 4, preserving the current comparison math.
+      coarse.writeUInt16LE(Math.round(downsampled[j] * 4), i * COARSE_SIG_BYTES + j * 2)
+    }
+  }
+  return coarse
+}
+
+async function publishCoarseSignatures({ args, config, coarseSignatures }) {
+  await uploadStorageBuffer({
+    attempts: args.uploadAttempts,
+    bucket: args.bucket,
+    config,
+    contentType: "application/octet-stream",
+    data: coarseSignatures,
+    force: true,
+    objectPath: storagePath(args.prefix, COARSE_SIGNATURES_PATH),
+    timeoutMs: args.uploadTimeoutMs,
+  })
+}
+
+async function publishLibrary({ args, config, manifest, signatures, coarseSignatures }) {
   await uploadStorageBuffer({
     attempts: args.uploadAttempts,
     bucket: args.bucket,
@@ -980,6 +1032,28 @@ async function publishLibrary({ args, config, manifest, signatures }) {
     objectPath: storagePath(args.prefix, SIGNATURES_PATH),
     timeoutMs: args.uploadTimeoutMs,
   })
+  await publishCoarseSignatures({ args, config, coarseSignatures })
+}
+
+async function publishCoarseOnly({ args, config }) {
+  const signatures = await fs.readFile(args.localSignatures)
+  const coarseSignatures = buildCoarseSignatures(signatures)
+  await ensureDir(path.dirname(args.localCoarseSignatures))
+  await fs.writeFile(args.localCoarseSignatures, coarseSignatures)
+  if (!args.dryRun) {
+    await publishCoarseSignatures({ args, config, coarseSignatures })
+  }
+
+  console.log(
+    `Built ${Math.floor(signatures.length / SIG_BYTES)} coarse signatures ` +
+      `(${(coarseSignatures.length / 1e6).toFixed(1)} MB).`
+  )
+  console.log(`Local coarse signatures: ${path.relative(repoRoot, args.localCoarseSignatures)}`)
+  if (!args.dryRun) {
+    console.log(
+      `Published: ${args.bucket}/${storagePath(args.prefix, COARSE_SIGNATURES_PATH)}`
+    )
+  }
 }
 
 async function main() {
@@ -991,6 +1065,10 @@ async function main() {
   validateArgs(args)
   await loadEnvLocal()
   const config = supabaseConfig()
+  if (args.coarseOnly) {
+    await publishCoarseOnly({ args, config })
+    return
+  }
   const existingLibrary = args.dryRun
     ? { byId: new Map(), photos: [] }
     : await downloadExistingManifest({ bucket: args.bucket, config, prefix: args.prefix })
@@ -1195,6 +1273,7 @@ async function main() {
   for (let i = 0; i < sigs.length; i++) {
     signatures.set(sigs[i], i * SIG_BYTES)
   }
+  const coarseSignatures = buildCoarseSignatures(signatures)
 
   const version = new Date().toISOString()
   const manifest = { version, photos }
@@ -1231,6 +1310,7 @@ async function main() {
     skippedObjects,
     storageManifestPath: storagePath(args.prefix, MANIFEST_PATH),
     storageSignaturesPath: storagePath(args.prefix, SIGNATURES_PATH),
+    storageCoarseSignaturesPath: storagePath(args.prefix, COARSE_SIGNATURES_PATH),
     galleries: galleryRecords,
   }
 
@@ -1238,9 +1318,11 @@ async function main() {
   await writeJson(args.localManifest, localDetails)
   await ensureDir(path.dirname(args.localSignatures))
   await fs.writeFile(args.localSignatures, signatures)
+  await ensureDir(path.dirname(args.localCoarseSignatures))
+  await fs.writeFile(args.localCoarseSignatures, coarseSignatures)
 
   if (!args.dryRun) {
-    await publishLibrary({ args, config, manifest, signatures })
+    await publishLibrary({ args, config, manifest, signatures, coarseSignatures })
   }
 
   console.log(
@@ -1249,10 +1331,12 @@ async function main() {
   )
   console.log(`Local details: ${path.relative(repoRoot, args.localManifest)}`)
   console.log(`Local signatures: ${path.relative(repoRoot, args.localSignatures)}`)
+  console.log(`Local coarse signatures: ${path.relative(repoRoot, args.localCoarseSignatures)}`)
   if (!args.dryRun) {
     console.log(
-      `Published: ${args.bucket}/${storagePath(args.prefix, MANIFEST_PATH)} and ` +
-        `${args.bucket}/${storagePath(args.prefix, SIGNATURES_PATH)}`
+      `Published: ${args.bucket}/${storagePath(args.prefix, MANIFEST_PATH)}, ` +
+        `${args.bucket}/${storagePath(args.prefix, SIGNATURES_PATH)}, and ` +
+        `${args.bucket}/${storagePath(args.prefix, COARSE_SIGNATURES_PATH)}`
     )
   }
 }

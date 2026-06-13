@@ -159,8 +159,12 @@ function matchCells({ cellSigs, geometry, pool, order, forcedVideoCells = new Ma
     DUP_MIN_DIST_PITCHES * pitch * (DUP_MIN_DIST_PITCHES * pitch)
   const placements = new Array(nTiles)
   const usedTimesByVideo = new Map()
+  const totalCells = order.length
+  const progressEvery = Math.max(1, Math.floor(totalCells / 20))
+  const startedAt = Date.now()
 
-  for (const cell of order) {
+  for (let orderIndex = 0; orderIndex < totalCells; orderIndex++) {
+    const cell = order[orderIndex]
     const cs = downsampleSig(cellSigs[cell])
     let cr = 0
     let cg = 0
@@ -286,6 +290,15 @@ function matchCells({ cellSigs, geometry, pool, order, forcedVideoCells = new Ma
     const times = usedTimesByVideo.get(tile.videoId) ?? []
     times.push({ keyT: tile.keyT, tileIndex: best })
     usedTimesByVideo.set(tile.videoId, times)
+    const matched = orderIndex + 1
+    if (matched === 1 || matched === totalCells || matched % progressEvery === 0) {
+      const elapsedSec = ((Date.now() - startedAt) / 1000).toFixed(1)
+      const pct = ((matched / totalCells) * 100).toFixed(1)
+      console.log(
+        `Matching ${matched}/${totalCells} cells (${pct}%) ` +
+          `unique=${usedUnique.size} elapsed=${elapsedSec}s`
+      )
+    }
   }
 
   return { assignment, errors }

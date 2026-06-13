@@ -296,14 +296,27 @@ def main() -> int:
         sel = "+".join(f"eq(n\\,{li})" for li in lis)
         vf = f"fps={fps},select='{sel}',{vf_geom}"
         tmp = TILE_CACHE / f"__v{vi}_%d.jpg"
-        subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
-                        "-i", str(PIPE / v["path"]), "-vf", vf, "-vsync", "0",
-                        "-frames:v", str(len(lis)), str(tmp)],
-                       capture_output=True)
+        result = subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                                 "-i", str(PIPE / v["path"]), "-vf", vf, "-vsync", "0",
+                                 "-frames:v", str(len(lis)), str(tmp)],
+                                capture_output=True, text=True)
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"ffmpeg failed for {v['path']} ({len(lis)} frame(s)): "
+                f"{result.stderr.strip() or result.stdout.strip()}"
+            )
+        missing = []
         for k, (_, gidx) in enumerate(pairs, start=1):  # ffmpeg numbers outputs from 1
             src = TILE_CACHE / f"__v{vi}_{k}.jpg"
             if src.exists():
                 src.replace(TILE_CACHE / f"{gidx}.jpg")
+            else:
+                missing.append(gidx)
+        if missing:
+            raise RuntimeError(
+                f"ffmpeg produced {len(lis) - len(missing)}/{len(lis)} tile(s) for "
+                f"{v['path']}; missing global frame(s): {missing[:10]}"
+            )
         with lock:
             done[0] += len(lis)
             print(f"  extracted {done[0]}/{to_extract} tiles ({len(by_video)} videos)")
@@ -322,8 +335,9 @@ def main() -> int:
             if im is None:
                 p = TILE_CACHE / f"{g}.jpg"
                 t = cv2.imread(str(p)) if p.exists() else None
-                im = cv2.resize(t, (tile_px, tile_px), interpolation=cv2.INTER_AREA) \
-                    if t is not None else np.zeros((tile_px, tile_px, 3), np.uint8)
+                if t is None:
+                    raise RuntimeError(f"missing extracted tile for global frame {g}: {p}")
+                im = cv2.resize(t, (tile_px, tile_px), interpolation=cv2.INTER_AREA)
                 cache[g] = im
             canvas[r*tile_px:(r+1)*tile_px, c*tile_px:(c+1)*tile_px] = im
 

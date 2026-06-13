@@ -1,6 +1,7 @@
 import { CanvasHero } from "@/components/canvas-hero"
 
 const KNICKS_MAX_TILE_REUSE = 20
+const KNICKS_MIN_CELL_SIZE = 8
 
 export const metadata = {
   title: "Knicks photo mosaic (experiment)",
@@ -16,6 +17,10 @@ export const metadata = {
 //   pnpm knicks:photo-frames && pnpm knicks:photo-seed
 export default function KnicksMosaicPage() {
   return (
-    <CanvasHero bucket="knicks-mosaic" maxTileReuse={KNICKS_MAX_TILE_REUSE} />
+    <CanvasHero
+      bucket="knicks-mosaic"
+      maxTileReuse={KNICKS_MAX_TILE_REUSE}
+      minCellSize={KNICKS_MIN_CELL_SIZE}
+    />
   )
 }

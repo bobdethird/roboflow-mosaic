@@ -13,7 +13,7 @@ const PROFILES = {
     gridCols: 64,
     gridRows: 36,
     fps: 30,
-    tileFps: 10,
+    tileFps: 30,
     preRollSec: 28,
     freezeSec: 4,
     tileOversample: 2,
@@ -30,7 +30,7 @@ const PROFILES = {
     gridCols: 96,
     gridRows: 54,
     fps: 30,
-    tileFps: 15,
+    tileFps: 30,
     preRollSec: 28,
     freezeSec: 4,
     tileOversample: 2,
@@ -93,6 +93,17 @@ export const CONFIG = {
     fps: envNumber("MOSAIC_FPS", profile.fps),
     tileFps: envNumber("MOSAIC_TILE_FPS", profile.tileFps),
     preRollSec: envNumber("MOSAIC_PREROLL_SEC", profile.preRollSec),
+    // Render-only camera timing. 0 uses the plan's full preRollSec; otherwise
+    // the zoom reaches the full mosaic at this time and holds there.
+    zoomDurationSec: envNumber("MOSAIC_ZOOM_DURATION_SEC", 45),
+    // Hold on the opening/center tile before the zoom-out begins. The hold is
+    // counted inside zoomDurationSec, so MOSAIC_ZOOM_HOLD_SEC=10 means 10s held +
+    // the remaining zoom duration used for zooming.
+    zoomHoldSec: envNumber("MOSAIC_ZOOM_HOLD_SEC", 0),
+    // Delay non-center tile playback; the opening/center tile still plays from
+    // t=0. Useful when the camera holds on the center clip before revealing the
+    // rest of the mosaic.
+    tileStartDelaySec: envNumber("MOSAIC_TILE_START_DELAY_SEC", 0),
     freezeSec: envNumber("MOSAIC_FREEZE_SEC", profile.freezeSec),
     tileOversample: envNumber("MOSAIC_TILE_OVERSAMPLE", profile.tileOversample),
     tileReuseCap: envNumber("MOSAIC_REUSE_CAP", profile.tileReuseCap),

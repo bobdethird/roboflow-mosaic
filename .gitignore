@@ -21,8 +21,48 @@ videos/
 
 # video-generation experiments
 video-generation/.cache/
+video-generation/data/
 video-generation/output/
 video-generation/.DS_Store
+
+# fresh mosaic pipeline
+mosaic-pipeline/data/
+mosaic-pipeline/output/
+mosaic-pipeline/videos/
+
+# photos
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.webp
+*.bmp
+*.tif
+*.tiff
+*.heic
+*.heif
+*.avif
+*.raw
+*.dng
+*.cr2
+*.nef
+*.arw
+
+# videos
+*.mp4
+*.mov
+*.m4v
+*.avi
+*.mkv
+*.webm
+*.flv
+*.wmv
+*.mpeg
+*.mpg
+*.3gp
+*.mts
+*.m2ts
+*.ogv
 
 *.env
 .env
