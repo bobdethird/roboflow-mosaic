@@ -4,8 +4,8 @@ import path from "node:path"
 import { CONFIG } from "./config.mjs"
 import {
   buildGridGeometry,
-  openingCellForCenters,
-  openingCellForGrid,
+  centerBlockCells,
+  openingCellForCells,
 } from "./lib/grid.mjs"
 import {
   cellBBoxes,
@@ -347,20 +347,32 @@ async function main() {
     cellSigs = await referenceCellSignatures(referencePath, gridCols, gridRows)
   }
 
-  const openingCell =
-    layout === "voronoi"
-      ? openingCellForCenters(geometry.centers, outputWidth, outputHeight)
-      : openingCellForGrid(geometry)
-  const order = [
-    openingCell,
-    ...Array.from({ length: cellCount }, (_, i) => i).filter(
-      (i) => i !== openingCell
-    ),
-  ]
+  // Center-only mode (grid layout): match just a centered block of cells and
+  // leave the rest of the frame to the reference photo (drawn at render time).
+  const centerCols = Math.floor(CONFIG.mosaic.centerCols || 0)
+  const centerRows = Math.floor(CONFIG.mosaic.centerRows || 0)
+  const centerOnly = layout === "grid" && centerCols > 0 && centerRows > 0
+  const activeCells = centerOnly
+    ? centerBlockCells(gridCols, gridRows, centerCols, centerRows)
+    : Array.from({ length: cellCount }, (_, i) => i)
+  if (centerOnly) {
+    console.log(
+      `Center-only: matching ${activeCells.length} of ${cellCount} cells ` +
+        `(${centerCols}×${centerRows} block); rest shows the reference photo.`
+    )
+  }
+
+  const openingCell = openingCellForCells(
+    geometry.centers,
+    activeCells,
+    outputWidth,
+    outputHeight
+  )
+  const order = [openingCell, ...activeCells.filter((i) => i !== openingCell)]
   const { assignment, errors } = matchCells({ cellSigs, geometry, pool, order })
 
   const usage = new Map()
-  const assignments = Array.from({ length: assignment.length }, (_, cell) => {
+  const assignments = activeCells.map((cell) => {
     const tile = pool[assignment[cell]]
     usage.set(tile.key, (usage.get(tile.key) ?? 0) + 1)
     return {
@@ -419,6 +431,13 @@ async function main() {
       cellWidth: geometry.cellWidth ?? null,
       cellHeight: geometry.cellHeight ?? null,
       cellCount,
+      activeCellCount: activeCells.length,
+      centerOnly,
+      centerCols: centerOnly ? centerCols : null,
+      centerRows: centerOnly ? centerRows : null,
+      // When true the renderer paints the reference photo behind the tiles so
+      // the unmatched area of the frame is the original picture.
+      referenceBackground: centerOnly,
       tileSize: contour?.tileSize ?? null,
       openingCell,
       reference,

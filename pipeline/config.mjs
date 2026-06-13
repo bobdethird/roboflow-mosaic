@@ -85,6 +85,11 @@ export const CONFIG = {
     outputHeight: envNumber("MOSAIC_OUTPUT_HEIGHT", profile.outputHeight),
     gridCols: envNumber("MOSAIC_GRID_COLS", profile.gridCols),
     gridRows: envNumber("MOSAIC_GRID_ROWS", profile.gridRows),
+    // Grid layout only: when both > 0, only a centered block of
+    // centerCols×centerRows cells is matched to clips; the rest of the frame
+    // shows the reference photo. 0 = match the whole grid (original behavior).
+    centerCols: envNumber("MOSAIC_CENTER_COLS", 0),
+    centerRows: envNumber("MOSAIC_CENTER_ROWS", 0),
     fps: envNumber("MOSAIC_FPS", profile.fps),
     tileFps: envNumber("MOSAIC_TILE_FPS", profile.tileFps),
     preRollSec: envNumber("MOSAIC_PREROLL_SEC", profile.preRollSec),
@@ -109,5 +114,10 @@ export const CONFIG = {
       process.env.MOSAIC_REQUIRE_FULL_PREROLL === undefined
         ? false
         : process.env.MOSAIC_REQUIRE_FULL_PREROLL !== "0",
+    // Render only the final still composition (full frame, every tile on its
+    // matched frame) straight to the poster, skipping the zoom + video encode.
+    // Fast iteration knob for checking the layout before a full render.
+    previewPoster:
+      process.env.MOSAIC_PREVIEW === "1" || process.env.MOSAIC_PREVIEW === "true",
   },
 }

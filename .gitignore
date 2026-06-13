@@ -11,3 +11,4 @@ pipeline/output/
 pipeline/node_modules/
 pipeline/videos*/
 *.env
+.env

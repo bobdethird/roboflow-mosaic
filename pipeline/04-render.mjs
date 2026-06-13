@@ -60,6 +60,19 @@ function drawCover(ctx, image, x, y, w, h) {
   ctx.drawImage(image, sx, sy, sw, sh, x, y, w, h)
 }
 
+// Paint the reference photo so it fills the whole world rect (0,0..output),
+// mapped through the current zoom window. Matched tiles are drawn on top, so
+// the unmatched part of the frame stays the original picture. The reference is
+// stretched to the output rect to match how the matcher samples it.
+function drawReferenceBackground(ctx, image, window, plan) {
+  const { outputWidth, outputHeight } = plan.grid
+  const sx = ((0 - window.x) / window.w) * outputWidth
+  const sy = ((0 - window.y) / window.h) * outputHeight
+  const sw = (outputWidth / window.w) * outputWidth
+  const sh = (outputHeight / window.h) * outputHeight
+  ctx.drawImage(image, 0, 0, image.width, image.height, sx, sy, sw, sh)
+}
+
 // Fraction of a cell inset toward its centroid as grout gap, and the epsilon
 // for pinning vertices that sit on the outer frame (mirrors the web engine).
 const TILE_GAP = 0.125
@@ -191,6 +204,7 @@ function renderHash(plan, clipsManifest) {
       timing: plan.timing,
       grid: plan.grid,
       geometryHash: plan.geometry ? shortHash(JSON.stringify(plan.geometry)) : null,
+      reference: plan.grid.referenceBackground ? plan.referencePath : null,
       output: {
         crf: CONFIG.mosaic.crf,
         encodePreset: CONFIG.mosaic.encodePreset,
@@ -206,11 +220,15 @@ async function renderFrame({
   geometry,
   clipsByKey,
   frameCache,
+  referenceImage = null,
 }) {
   const time = frameIndex / plan.timing.fps
   const window = zoomWindow(time, plan, geometry)
   ctx.fillStyle = plan.grid.backgroundColor || "#050505"
   ctx.fillRect(0, 0, plan.grid.outputWidth, plan.grid.outputHeight)
+  if (referenceImage) {
+    drawReferenceBackground(ctx, referenceImage, window, plan)
+  }
 
   for (const assignment of plan.assignments) {
     const worldRect = cellRectFromPlan(assignment, plan, geometry)
@@ -319,6 +337,40 @@ async function main() {
   const frameCache = new Map()
   let freezeFramePath = null
 
+  const referenceImage =
+    plan.grid.referenceBackground && plan.referencePath
+      ? await loadFrameImage(plan.referencePath)
+      : null
+
+  // Fast iteration: render just the final still composition to the poster.
+  if (CONFIG.mosaic.previewPoster) {
+    const time = plan.timing.preRollSec
+    const frameIndex = Math.round(time * plan.timing.fps)
+    const window = zoomWindow(time, plan, geometry)
+    const framePaths = new Set()
+    for (const assignment of plan.assignments) {
+      const worldRect = cellRectFromPlan(assignment, plan, geometry)
+      if (!intersects(worldRect, window)) continue
+      const clip = clipsByKey.get(assignment.candidateKey)
+      if (!clip) continue
+      framePaths.add(frameForClip(clip, time, assignment.cellIndex, plan.timing))
+    }
+    await loadFrameCache(framePaths, frameCache)
+    const jpeg = await renderFrame({
+      ctx,
+      frameIndex,
+      plan,
+      geometry,
+      clipsByKey,
+      frameCache,
+      referenceImage,
+    })
+    await ensureDir(path.dirname(CONFIG.paths.posterPath))
+    await fs.writeFile(CONFIG.paths.posterPath, jpeg)
+    console.log(`Wrote preview poster ${CONFIG.paths.posterPath}`)
+    return
+  }
+
   // Resume support: keep frames from an interrupted run, but drop the
   // highest-numbered one since it may have been partially written.
   const existingFrames = (await fs.readdir(frameDir).catch(() => []))
@@ -363,6 +415,7 @@ async function main() {
         geometry,
         clipsByKey,
         frameCache,
+        referenceImage,
       })
       await fs.writeFile(outPath, jpeg)
       evictUnused(frameCache, framePaths)

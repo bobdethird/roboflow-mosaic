@@ -49,6 +49,41 @@ export function openingCellForGrid(geometry) {
   return openingCellForCenters(geometry.centers, geometry.width, geometry.height)
 }
 
+// Cell indices of a centered cols×rows block within a `cols`×`rows` grid.
+// Used to restrict matching to the middle of the frame so the rest can show
+// the reference photo. Returned ascending (row-major) for deterministic plans.
+export function centerBlockCells(cols, rows, centerCols, centerRows) {
+  const cc = Math.max(1, Math.min(cols, Math.floor(centerCols)))
+  const cr = Math.max(1, Math.min(rows, Math.floor(centerRows)))
+  const c0 = Math.floor((cols - cc) / 2)
+  const r0 = Math.floor((rows - cr) / 2)
+  const cells = []
+  for (let r = r0; r < r0 + cr; r++) {
+    for (let c = c0; c < c0 + cc; c++) {
+      cells.push(r * cols + c)
+    }
+  }
+  return cells
+}
+
+// Nearest cell center to the focus point, restricted to a subset of cells.
+export function openingCellForCells(centers, cells, width, height) {
+  const fx = width * clamp(CONFIG.mosaic.focusX, 0, 1)
+  const fy = height * clamp(CONFIG.mosaic.focusY, 0, 1)
+  let bestCell = cells.length ? cells[0] : 0
+  let bestDist = Infinity
+  for (const cell of cells) {
+    const dx = centers[cell * 2] - fx
+    const dy = centers[cell * 2 + 1] - fy
+    const d = dx * dx + dy * dy
+    if (d < bestDist) {
+      bestDist = d
+      bestCell = cell
+    }
+  }
+  return bestCell
+}
+
 // World-space bounds of one assignment's cell. For voronoi plans `geometry`
 // (decoded from plan.geometry) provides per-cell polygon bboxes; grid plans
 // derive the rect from row/col.
@@ -74,7 +109,11 @@ export function cellRectFromPlan(assignment, plan, geometry = null) {
 // the window never distorts (voronoi cells have arbitrary aspect).
 export function zoomStartWindow(plan, geometry = null) {
   const { outputWidth, outputHeight } = plan.grid
-  const opening = plan.assignments[plan.grid.openingCell]
+  // assignments may be a sparse subset (center-only grid), so resolve the
+  // opening cell by its cellIndex rather than by array position.
+  const opening =
+    plan.assignments.find((a) => a.cellIndex === plan.grid.openingCell) ??
+    plan.assignments[0]
   const rect = cellRectFromPlan(opening, plan, geometry)
   const aspect = outputWidth / outputHeight
   const w = Math.min(outputWidth, Math.max(rect.w, rect.h * aspect))
