@@ -111,13 +111,25 @@ python3 03-prepare-clips.py
 What it writes:
 
 - `data/clips.json`
-- Cached frame sequences under `data/clip-cache/`.
-- One sequence per distinct frame in `data/matches/grid-plan.json`.
+- Cached proxy clips under `data/clip-cache/`.
+- By default, one `preroll.mp4` plus one exact `match.jpg` per distinct frame in
+  `data/matches/grid-plan.json`.
 
-The last frame of every sequence is always the exact indexed match frame,
-extracted with the same `fps=<sample_fps>` stream used by Step 1. The animated
-pre-roll is extracted near the matched timestamp, then the exact matched frame
-is appended for freeze/render alignment.
+The exact match still is always extracted with the same `fps=<sample_fps>`
+stream used by Step 1. The animated pre-roll is extracted near the matched
+timestamp and cached as a compact proxy video, while `match.jpg` stays pristine
+for the opening/held/final mosaic frame.
+
+If you are migrating from the old JPG-sequence cache, free disk space first and
+rebuild Step 3. The cache key includes the storage format and proxy settings, so
+video clips do not reuse old `frame_*.jpg` directories.
+
+Video caches use adaptive sizing by default: each clip is cached at the largest
+resolution it is displayed during the zoom, sized against the native plan width
+(`grid.outputWidth`) and capped at `1080x1080`. `--opening-width` and
+`--opening-height` still override the opening/center tile and can exceed that
+cap when you want a sharper hero. If you render wider than
+`--target-output-width`, the most-zoomed tiles may upscale.
 
 Useful options:
 
@@ -125,14 +137,23 @@ Useful options:
 python3 03-prepare-clips.py --workers 4
 python3 03-prepare-clips.py --oversample 2
 python3 03-prepare-clips.py --width 96 --height 96
+python3 03-prepare-clips.py --oversample 8 --opening-width 720 --opening-height 720
 python3 03-prepare-clips.py --exact-chunk-size 32
+python3 03-prepare-clips.py --cache-format video --proxy-codec libx264 --proxy-crf 18 --proxy-keyint 15
+python3 03-prepare-clips.py --sizing adaptive --target-output-width 3840 --max-tile-px 1080
+python3 03-prepare-clips.py --sizing uniform --oversample 8
+python3 03-prepare-clips.py --cache-format jpg      # legacy frame sequence mode
 ```
 
 Speed notes:
 
 - Exact matched frames are batched by source video, so each source video is
   decoded in bounded chunks for all exact final frames needed by this plan.
-- Pre-roll frame sequences are prepared in parallel.
+- Pre-roll proxy clips are prepared in parallel.
+- Adaptive sizing starts the largest clips first so high-resolution central
+  tiles do not become the tail of a multi-worker run.
+- Proxy video avoids writing hundreds of thousands of separate JPG files. For a
+  large 96x96 plan, expect `data/clip-cache/` to be low-GB instead of tens of GB.
 - `--seek-margin-sec` controls the hybrid seek: ffmpeg fast-seeks just before
   the clip start, then accurately seeks inside that short window.
 
@@ -179,8 +200,8 @@ What it writes:
 - Cached intermediate frames under `data/render-frames/<hash>/` (interrupted
   renders resume; a matching cache writes nothing).
 
-This requires Step 3 (`data/clips.json`): the video needs the animated tile
-sequences, not just the matched stills.
+This requires Step 3 (`data/clips.json`): the video needs the animated proxy
+clips, not just the matched stills.
 
 The camera math is a direct port of the reference pipeline
 (`../pipeline/lib/grid.mjs` + `../pipeline/04-render.mjs`):
@@ -194,7 +215,12 @@ The camera math is a direct port of the reference pipeline
   frames are identical, so they are rendered once and copied.
 
 By default the zoom spans the full pre-roll and the final mosaic is held for the
-plan's `freezeSec`, so the video is `preRollSec + freezeSec` long.
+plan's `freezeSec`, so the video is `preRollSec + freezeSec` long. If you pass a
+shorter `--zoom-duration-sec`, the camera can finish zooming before the clips
+finish; the renderer keeps the fully zoomed-out mosaic playing until
+`preRollSec`, then holds the final mosaic for `freezeSec`. To slow the zoom
+beyond the current plan, rerun Step 2 with a longer `--pre-roll-sec`, then rerun
+Step 3 so the clip sequences cover the longer animation window.
 
 Useful options:
 
@@ -205,14 +231,22 @@ python3 05-render-video.py --preview-poster        # only the final still, no en
 python3 05-render-video.py --max-seconds 5         # render just the opening, for tests
 python3 05-render-video.py --zoom-duration-sec 20 --zoom-hold-sec 4
 python3 05-render-video.py --freeze-sec 6 --play-start-stagger 0.5
+python3 05-render-video.py --loop-short-clips     # loop clips shorter than pre-roll until final approach
 python3 05-render-video.py --output-width 1920 --crf 20 --preset medium
+python3 05-render-video.py --time-tile-frames 12   # lower RAM, more decoder opens
 python3 05-render-video.py --force                 # ignore the render cache
 ```
 
 Speed notes:
 
-- Frames are rendered in parallel across `--workers` processes, each handling a
-  contiguous range so the per-clip frame cache stays warm.
+- Dynamic frames are rendered in parallel across `--workers` processes as
+  time-tiles. Each tile opens a clip proxy, decodes only the needed frame range,
+  scatters those pixels into the output canvases, then closes the decoder.
+- `--time-tile-frames` trades memory for fewer decoder opens. Higher values are
+  usually faster but hold more full-size canvases in RAM per worker.
+- `--loop-short-clips` keeps short-history clips moving instead of freezing
+  early. They loop until their final approach window, then play forward to the
+  matched frame at the pre-roll finish.
 - The most expensive frames are near full zoom-out (every cell visible); use
   `--scale` or `--max-seconds` for quick iteration before a full render.
 - Tile sharpness at high zoom is limited by Step 3's tile resolution

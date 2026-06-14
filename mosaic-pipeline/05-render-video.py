@@ -39,6 +39,11 @@ from typing import Any
 
 
 PIPELINE_ROOT = Path(__file__).resolve().parent
+if str(PIPELINE_ROOT) not in sys.path:
+    sys.path.insert(0, str(PIPELINE_ROOT))
+
+from camera import window_at_progress, zoom_start_window
+
 DATA_DIR = PIPELINE_ROOT / "data"
 DEFAULT_PLAN_PATH = DATA_DIR / "matches" / "grid-plan.json"
 DEFAULT_CLIPS_PATH = DATA_DIR / "clips.json"
@@ -47,6 +52,7 @@ RENDER_FRAMES_DIR = DATA_DIR / "render-frames"
 
 cv2: Any = None
 np: Any = None
+av: Any = None
 
 # Per-process render context populated by ``_init_worker`` (and by ``main`` for
 # the serial path). Holds the canvas, cell-rect arrays, and clip lookup.
@@ -145,35 +151,18 @@ def opening_cell_rect(plan: dict[str, Any], opening_cell: int) -> tuple[float, f
     return (float(chosen["x"]), float(chosen["y"]), float(chosen["w"]), float(chosen["h"]))
 
 
-def zoom_start_window(rect: tuple[float, float, float, float], world_w: float, world_h: float) -> tuple[float, float, float, float]:
-    """Opening-cell rect expanded to the output aspect, clamped to the world."""
-    rect_x, rect_y, rect_w, rect_h = rect
-    aspect = world_w / world_h
-    w = min(world_w, max(rect_w, rect_h * aspect))
-    h = w / aspect
-    x = clamp(rect_x + rect_w / 2 - w / 2, 0.0, world_w - w)
-    y = clamp(rect_y + rect_h / 2 - h / 2, 0.0, world_h - h)
-    return (x, y, w, h)
-
-
 def zoom_window(time_sec: float, ctx: SimpleNamespace) -> tuple[float, float, float, float]:
     """Window (world coords) at ``time_sec``; constant-factor zoom-out."""
     world_w, world_h = ctx.world_w, ctx.world_h
     effective_zoom = ctx.effective_zoom
     zoom_hold = ctx.zoom_hold
     if time_sec >= effective_zoom:
-        return (0.0, 0.0, world_w, world_h)
-    start_x, start_y, start_w, start_h = ctx.start
+        return window_at_progress(1.0, ctx.start, world_w, world_h)
     if time_sec <= zoom_hold:
-        return ctx.start
+        return window_at_progress(0.0, ctx.start, world_w, world_h)
     raw_t = (time_sec - zoom_hold) / max(0.001, effective_zoom - zoom_hold)
     t = clamp(raw_t, 0.0, 1.0)
-    w = start_w * math.pow(world_w / start_w, t)
-    h = start_h * math.pow(world_h / start_h, t)
-    size_t = clamp((w - start_w) / max(0.001, world_w - start_w), 0.0, 1.0)
-    x = start_x + (0.0 - start_x) * size_t
-    y = start_y + (0.0 - start_y) * size_t
-    return (x, y, w, h)
+    return window_at_progress(t, ctx.start, world_w, world_h)
 
 
 def frame_for_clip(frames_len: int, match_at: float | None, time_sec: float, cell_index: int, ctx: SimpleNamespace) -> int:
@@ -194,6 +183,19 @@ def frame_for_clip(frames_len: int, match_at: float | None, time_sec: float, cel
         progress = clamp((time_sec - delay) / max(0.001, ctx.pre_roll - delay), 0.0, 1.0)
         return int(clamp(start_frame + iround(progress * max_playable), 0, last))
     match_at_sec = match_at if match_at is not None else ctx.pre_roll
+    if ctx.loop_short_clips and 0.001 < match_at_sec < ctx.pre_roll and time_sec < ctx.pre_roll:
+        final_start = max(0.0, ctx.pre_roll - match_at_sec)
+        if time_sec >= final_start:
+            progress = clamp((time_sec - final_start) / max(0.001, match_at_sec), 0.0, 1.0)
+            return int(clamp(iround(progress * last), 0, last))
+        loop_last = max(0, last - 1)
+        if loop_last <= 0:
+            return 0
+        start_frame = iround(stagger * ((hash_int(cell_index) % 1000) / 1000) * loop_last) if stagger > 0 else 0
+        phase_sec = (start_frame / max(1, loop_last)) * match_at_sec
+        loop_time = (max(0.0, time_sec - delay) + phase_sec) % match_at_sec
+        progress = clamp(loop_time / max(0.001, match_at_sec), 0.0, 1.0)
+        return int(clamp(iround(progress * loop_last), 0, loop_last))
     if time_sec >= match_at_sec:
         return last
     start_frame = iround(stagger * ((hash_int(cell_index) % 1000) / 1000) * last) if stagger > 0 else 0
@@ -274,12 +276,33 @@ def build_clips_by_key(clips_manifest: dict[str, Any]) -> dict[str, dict[str, An
         if not clip:
             continue
         frames = clip.get("frames") or []
+        if clip.get("cacheFormat") == "video" or clip.get("matchStill"):
+            pre_count = int(clip.get("preFrameCount") or max(0, int(clip.get("frameCount") or 1) - 1))
+            record = {
+                "format": "video",
+                "preroll_video": (
+                    str(resolve_path(str(clip["prerollVideo"])))
+                    if clip.get("prerollVideo") and pre_count > 0
+                    else None
+                ),
+                "match_still": str(resolve_path(str(clip["matchStill"]))),
+                "match_at": (float(clip["matchAtSec"]) if clip.get("matchAtSec") is not None else None),
+                "n": int(clip.get("frameCount") or (pre_count + 1)),
+                "pre_roll_n": pre_count,
+            }
+            for key_name in ("candidateKey", "key", "cacheKey"):
+                value = clip.get(key_name)
+                if value and str(value) not in out:
+                    out[str(value)] = record
+            continue
         if not frames:
             continue
         record = {
+            "format": "jpg",
             "frames": [str(resolve_path(frame)) for frame in frames],
             "match_at": (float(clip["matchAtSec"]) if clip.get("matchAtSec") is not None else None),
             "n": len(frames),
+            "pre_roll_n": max(0, len(frames) - 1),
         }
         for key_name in ("candidateKey", "key", "cacheKey"):
             value = clip.get(key_name)
@@ -347,8 +370,10 @@ def build_context(plan: dict[str, Any], clips_manifest: dict[str, Any], params: 
         pre_roll=float(params["pre_roll"]),
         effective_zoom=float(params["effective_zoom"]),
         zoom_hold=float(params["zoom_hold"]),
+        tile_fps=float(params["tile_fps"]),
         tile_start_delay=float(params["tile_start_delay"]),
         play_stagger=float(params["play_stagger"]),
+        loop_short_clips=bool(params["loop_short_clips"]),
         jpeg_quality=int(params["jpeg_quality"]),
         frame_dir=Path(params["frame_dir"]),
         background=np.array(background, np.uint8),
@@ -377,6 +402,150 @@ def frame_file(ctx: SimpleNamespace, frame_index: int) -> Path:
     return frame_file_for(ctx.frame_dir, frame_index)
 
 
+def load_av_dependency() -> None:
+    global av
+    if av is not None:
+        return
+    try:
+        import av as av_module
+    except ModuleNotFoundError as exc:
+        raise SystemExit(
+            "Missing Python dependency for video clip caches. Run: "
+            "python3 -m pip install -r mosaic-pipeline/requirements.txt"
+        ) from exc
+    av = av_module
+
+
+def write_canvas_frame(ctx: SimpleNamespace, frame_index: int, canvas: Any) -> Path:
+    out_path = frame_file(ctx, frame_index)
+    tmp_path = out_path.with_name(f"{out_path.name}.{os.getpid()}.tmp.jpg")
+    ok = cv2.imwrite(str(tmp_path), canvas, [cv2.IMWRITE_JPEG_QUALITY, ctx.jpeg_quality])
+    if not ok:
+        tmp_path.unlink(missing_ok=True)
+        raise RuntimeError(f"Failed to write frame {out_path}")
+    if not valid_frame(tmp_path):
+        tmp_path.unlink(missing_ok=True)
+        raise RuntimeError(f"Failed to write complete frame {out_path}")
+    tmp_path.replace(out_path)
+    return out_path
+
+
+def read_still(path: str, cache: dict[str, Any]) -> Any:
+    image = cache.get(path)
+    if image is None:
+        image = cv2.imread(path, cv2.IMREAD_COLOR)
+        if image is None:
+            raise RuntimeError(f"Could not read clip frame: {path}")
+        cache[path] = image
+    return image
+
+
+def decode_video_frames(clip: dict[str, Any], frame_indices: set[int], fps: float) -> dict[int, Any]:
+    if not frame_indices:
+        return {}
+    load_av_dependency()
+    video_path = clip.get("preroll_video")
+    if not video_path:
+        raise RuntimeError("Clip needs preroll frames but has no preroll video")
+
+    needed = sorted(frame_indices)
+    first = needed[0]
+    last = needed[-1]
+    found: dict[int, Any] = {}
+    with av.open(str(video_path)) as container:
+        stream = container.streams.video[0]
+        if stream.time_base:
+            seek_pts = int((first / fps) / stream.time_base)
+            container.seek(max(0, seek_pts), stream=stream, any_frame=False, backward=True)
+        decoded_without_pts = 0
+        for frame in container.decode(stream):
+            if frame.pts is not None and stream.time_base:
+                frame_number = int(round(float(frame.pts * stream.time_base) * fps))
+            else:
+                frame_number = decoded_without_pts
+                decoded_without_pts += 1
+            if frame_number < first:
+                continue
+            if frame_number > last and len(found) == len(needed):
+                break
+            if frame_number in frame_indices and frame_number not in found:
+                found[frame_number] = frame.to_ndarray(format="bgr24")
+                if len(found) == len(needed):
+                    break
+    missing = sorted(frame_indices.difference(found))
+    if missing:
+        raise RuntimeError(f"Could not decode frame(s) {missing[:5]} from {video_path}")
+    return found
+
+
+def clip_image_for_index(clip: dict[str, Any], frame_index: int, ctx: SimpleNamespace) -> Any:
+    if clip.get("format") == "jpg":
+        return read_still(str(clip["frames"][frame_index]), ctx.image_cache)
+    if frame_index >= int(clip["pre_roll_n"]):
+        return read_still(str(clip["match_still"]), ctx.image_cache)
+    cache_key = f"{clip['preroll_video']}#{frame_index}"
+    image = ctx.image_cache.get(cache_key)
+    if image is None:
+        image = decode_video_frames(clip, {frame_index}, ctx.tile_fps)[frame_index]
+        ctx.image_cache[cache_key] = image
+    return image
+
+
+def render_tile(ctx: SimpleNamespace, start_frame: int, stop_frame: int) -> tuple[int, int]:
+    canvases = [np.empty((ctx.canvas_h, ctx.canvas_w, 3), np.uint8) for _ in range(stop_frame - start_frame)]
+    for canvas in canvases:
+        canvas[:] = ctx.background
+
+    placements_by_clip: dict[str, dict[int, list[tuple[int, float, float, float, float]]]] = {}
+    needed_stills: set[str] = set()
+    for offset, frame_index in enumerate(range(start_frame, stop_frame)):
+        time_sec = frame_index / ctx.fps
+        window = zoom_window(time_sec, ctx)
+        cw = ctx.canvas_w
+        ch = ctx.canvas_h
+        wx, wy, ww, wh = window
+        for i in visible_indices(window, ctx):
+            i = int(i)
+            key = ctx.candidate_keys[i]
+            clip = ctx.clips_by_key.get(key)
+            if clip is None:
+                continue
+            f_idx = frame_for_clip(clip["n"], clip["match_at"], time_sec, int(ctx.cell_index[i]), ctx)
+            sx = (ctx.cell_x[i] - wx) / ww * cw
+            sy = (ctx.cell_y[i] - wy) / wh * ch
+            sw = ctx.cell_w[i] / ww * cw
+            sh = ctx.cell_h[i] / wh * ch
+            placements_by_clip.setdefault(key, {}).setdefault(f_idx, []).append((offset, sx, sy, sw, sh))
+            if clip.get("format") == "video" and f_idx >= int(clip["pre_roll_n"]):
+                needed_stills.add(str(clip["match_still"]))
+
+    tile_image_cache: dict[str, Any] = {}
+    still_cache = {path: read_still(path, tile_image_cache) for path in needed_stills}
+    for key, placements_by_frame in placements_by_clip.items():
+        clip = ctx.clips_by_key[key]
+        if clip.get("format") == "jpg":
+            for frame_idx, placements in placements_by_frame.items():
+                image = read_still(str(clip["frames"][frame_idx]), tile_image_cache)
+                for offset, sx, sy, sw, sh in placements:
+                    blit_cover(canvases[offset], image, sx, sy, sw, sh)
+            continue
+
+        pre_indices = {idx for idx in placements_by_frame if idx < int(clip["pre_roll_n"])}
+        decoded = decode_video_frames(clip, pre_indices, ctx.tile_fps) if pre_indices else {}
+        for frame_idx, placements in placements_by_frame.items():
+            image = (
+                decoded[frame_idx]
+                if frame_idx < int(clip["pre_roll_n"])
+                else still_cache[str(clip["match_still"])]
+            )
+            for offset, sx, sy, sw, sh in placements:
+                blit_cover(canvases[offset], image, sx, sy, sw, sh)
+
+    for offset, canvas in enumerate(canvases):
+        write_canvas_frame(ctx, start_frame + offset, canvas)
+    return start_frame, stop_frame - 1
+
+
 def render_frame(ctx: SimpleNamespace, frame_index: int) -> Path:
     time_sec = frame_index / ctx.fps
     window = zoom_window(time_sec, ctx)
@@ -393,28 +562,23 @@ def render_frame(ctx: SimpleNamespace, frame_index: int) -> Path:
     cache = ctx.image_cache
 
     needed: set[str] = set()
-    draws: list[tuple[int, str]] = []
+    draws: list[tuple[int, dict[str, Any], int]] = []
     for i in visible_indices(window, ctx):
         i = int(i)
         clip = ctx.clips_by_key.get(ctx.candidate_keys[i])
         if clip is None:
             continue
         f_idx = frame_for_clip(clip["n"], clip["match_at"], time_sec, int(ctx.cell_index[i]), ctx)
-        path = clip["frames"][f_idx]
-        needed.add(path)
-        draws.append((i, path))
+        if clip.get("format") == "jpg":
+            needed.add(str(clip["frames"][f_idx]))
+        elif f_idx >= int(clip["pre_roll_n"]):
+            needed.add(str(clip["match_still"]))
+        else:
+            needed.add(f"{clip['preroll_video']}#{f_idx}")
+        draws.append((i, clip, f_idx))
 
-    for path in needed:
-        if path not in cache:
-            image = cv2.imread(path, cv2.IMREAD_COLOR)
-            if image is None:
-                raise RuntimeError(f"Could not read clip frame: {path}")
-            cache[path] = image
-
-    for i, path in draws:
-        image = cache.get(path)
-        if image is None:
-            continue
+    for i, clip, f_idx in draws:
+        image = clip_image_for_index(clip, f_idx, ctx)
         sx = (cell_x[i] - wx) / ww * cw
         sy = (cell_y[i] - wy) / wh * ch
         sw = cell_w[i] / ww * cw
@@ -425,11 +589,7 @@ def render_frame(ctx: SimpleNamespace, frame_index: int) -> Path:
         if path not in needed:
             del cache[path]
 
-    out_path = frame_file(ctx, frame_index)
-    ok = cv2.imwrite(str(out_path), canvas, [cv2.IMWRITE_JPEG_QUALITY, ctx.jpeg_quality])
-    if not ok:
-        raise RuntimeError(f"Failed to write frame {out_path}")
-    return out_path
+    return write_canvas_frame(ctx, frame_index, canvas)
 
 
 # --------------------------------------------------------------------------- #
@@ -464,12 +624,31 @@ def _render_chunk(indices: list[int]) -> tuple[int, int, float]:
     return indices[0], indices[-1], time.time() - started
 
 
+def _render_tile(tile: tuple[int, int]) -> tuple[int, int, float]:
+    assert _CTX is not None
+    started = time.time()
+    lo, hi = render_tile(_CTX, tile[0], tile[1])
+    print(
+        f"[render] tile frames {lo + 1}..{hi + 1} "
+        f"(t={lo / _CTX.fps:.2f}s..{hi / _CTX.fps:.2f}s)",
+        flush=True,
+    )
+    return lo, hi, time.time() - started
+
+
 def chunk_indices(indices: list[int], workers: int) -> list[list[int]]:
     """Split sorted indices into ``workers`` contiguous slices for cache locality."""
     if workers <= 1 or len(indices) <= 1:
         return [indices] if indices else []
     size = math.ceil(len(indices) / workers)
     return [indices[i : i + size] for i in range(0, len(indices), size)]
+
+
+def tile_ranges(total_dynamic: int, tile_size: int) -> list[tuple[int, int]]:
+    return [
+        (start, min(total_dynamic, start + tile_size))
+        for start in range(0, total_dynamic, max(1, tile_size))
+    ]
 
 
 # --------------------------------------------------------------------------- #
@@ -490,16 +669,27 @@ def render_cache_key(plan: dict[str, Any], clips_manifest: dict[str, Any], param
         "timing": plan["timing"],
         "canvas": [params["canvas_w"], params["canvas_h"]],
         "fps": params["fps"],
+        "tileFps": params["tile_fps"],
         "preRoll": params["pre_roll"],
         "effectiveZoom": params["effective_zoom"],
         "zoomHold": params["zoom_hold"],
         "freeze": params["freeze"],
         "tileStartDelay": params["tile_start_delay"],
         "playStagger": params["play_stagger"],
+        "loopShortClips": params["loop_short_clips"],
         "jpegQuality": params["jpeg_quality"],
         "background": list(params["background"]),
         "crf": params["crf"],
         "preset": params["preset"],
+        "timeTileFrames": params["time_tile_frames"],
+        "renderDurationMode": "static-after-plus-freeze",
+        "clipFormats": sorted(
+            {
+                str(clip.get("cacheFormat") or ("jpg" if clip.get("frames") else "video"))
+                for clip in clips_manifest.get("clips", [])
+                if clip
+            }
+        ),
     }
     return short_hash(json.dumps(payload, sort_keys=True))
 
@@ -547,7 +737,18 @@ def write_poster(last_frame: Path, poster_path: Path, poster_width: int, poster_
 
 
 def valid_frame(path: Path) -> bool:
-    return path.exists() and path.stat().st_size > 0
+    if not path.exists() or path.stat().st_size <= 2:
+        return False
+    try:
+        with path.open("rb") as handle:
+            handle.seek(-2, os.SEEK_END)
+            return handle.read(2) == b"\xff\xd9"
+    except OSError:
+        return False
+
+
+def valid_frame_sequence(frame_dir: Path, total_frames: int) -> bool:
+    return all(valid_frame(frame_file_for(frame_dir, index)) for index in range(total_frames))
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
@@ -589,6 +790,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         default=0.5,
         help="per-cell randomized clip start offset, as a fraction of clip length",
     )
+    parser.add_argument(
+        "--loop-short-clips",
+        "--loop-short-clip",
+        action="store_true",
+        help="loop clips shorter than the full pre-roll until their final approach to the matched frame",
+    )
     parser.add_argument("--background", type=parse_color, default=parse_color("#050505"), help="background color #rrggbb")
     parser.add_argument("--scale", type=float, default=1.0, help="canvas scale vs plan output size")
     parser.add_argument("--output-width", type=int, default=None, help="explicit canvas width (height from aspect)")
@@ -597,6 +804,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--jpeg-quality", type=int, default=95, help="intermediate frame JPEG quality")
     parser.add_argument("--frames-dir", default=str(RENDER_FRAMES_DIR), help="render frame cache root")
     parser.add_argument("--workers", type=int, default=max(1, min(8, os.cpu_count() or 4)), help="parallel render workers")
+    parser.add_argument(
+        "--time-tile-frames",
+        type=int,
+        default=24,
+        help="output frames rendered per clip-decoding tile; higher is faster but uses more RAM",
+    )
     parser.add_argument("--max-seconds", type=float, default=None, help="cap render duration (useful for tests)")
     parser.add_argument("--preview-poster", action="store_true", help="render only the final still to the poster, skip video")
     parser.add_argument("--force", action="store_true", help="ignore the render cache and re-render")
@@ -616,18 +829,21 @@ def resolve_params(plan: dict[str, Any], args: argparse.Namespace) -> dict[str, 
     canvas_w, canvas_h = output_canvas_size(float(grid["outputWidth"]), float(grid["outputHeight"]), args)
     return {
         "fps": fps,
+        "tile_fps": float(timing.get("tileFps", fps)),
         "pre_roll": pre_roll,
         "effective_zoom": effective_zoom,
         "zoom_hold": zoom_hold,
         "freeze": freeze,
         "tile_start_delay": max(0.0, float(args.tile_start_delay_sec)),
         "play_stagger": max(0.0, float(args.play_start_stagger)),
+        "loop_short_clips": bool(args.loop_short_clips),
         "canvas_w": canvas_w,
         "canvas_h": canvas_h,
         "background": tuple(int(c) for c in args.background),
         "jpeg_quality": max(1, min(100, int(args.jpeg_quality))),
         "crf": int(args.crf),
         "preset": str(args.preset),
+        "time_tile_frames": max(1, int(args.time_tile_frames)),
     }
 
 
@@ -666,13 +882,15 @@ def main(argv: list[str] | None = None) -> int:
     effective_zoom = params["effective_zoom"]
     pre_roll = params["pre_roll"]
     freeze = params["freeze"]
-    render_duration = effective_zoom + freeze
+    # Keep rendering until both the camera is fully zoomed out and every clip has
+    # reached its matched frame. This lets clips continue playing after zoom-out.
+    static_after_sec = max(effective_zoom, pre_roll)
+    render_duration = static_after_sec + freeze
     if args.max_seconds is not None:
         render_duration = min(render_duration, max(0.0, float(args.max_seconds)))
     total_frames = max(1, round(render_duration * fps))
     # The composition is static once the window is full (>= effective_zoom) and
     # every clip is on its matched frame (>= pre_roll): render once, copy the rest.
-    static_after_sec = max(effective_zoom, pre_roll)
     first_static = math.ceil(static_after_sec * fps)
 
     hash_key = render_cache_key(plan, clips_manifest, params)
@@ -697,7 +915,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     print(
         f"Canvas {params['canvas_w']}x{params['canvas_h']} @ {fps:g}fps, "
-        f"zoom {effective_zoom:g}s (hold {params['zoom_hold']:g}s) + freeze {freeze:g}s "
+        f"zoom {effective_zoom:g}s (hold {params['zoom_hold']:g}s), "
+        f"clips finish {pre_roll:g}s + freeze {freeze:g}s "
         f"= {total_frames} frame(s)",
         flush=True,
     )
@@ -725,13 +944,15 @@ def main(argv: list[str] | None = None) -> int:
             previous.get("renderHash") == hash_key
             and out_path.exists()
             and poster_path.exists()
+            and valid_frame_sequence(frame_dir, total_frames)
         ):
             print(f"Render cache hit: {rel(out_path)}")
             return 0
 
     frame_dir.mkdir(parents=True, exist_ok=True)
 
-    dynamic_indices = list(range(0, min(first_static, total_frames)))
+    dynamic_count = min(first_static, total_frames)
+    dynamic_indices = list(range(0, dynamic_count))
     # Resume: trust existing frames, but drop the highest-numbered one (it may
     # have been partially written when a previous run was interrupted).
     existing = [i for i in dynamic_indices if valid_frame(frame_file_for(frame_dir, i))]
@@ -740,33 +961,38 @@ def main(argv: list[str] | None = None) -> int:
         frame_file_for(frame_dir, newest).unlink(missing_ok=True)
         existing.remove(newest)
         print(f"Resuming render: {len(existing)} dynamic frame(s) already done", flush=True)
-    existing_set = set(existing)
-    todo = [i for i in dynamic_indices if i not in existing_set]
+    tiles = [
+        tile
+        for tile in tile_ranges(dynamic_count, int(params["time_tile_frames"]))
+        if not all(valid_frame(frame_file_for(frame_dir, index)) for index in range(tile[0], tile[1]))
+    ]
 
     started = time.time()
-    if todo:
+    if tiles:
         if args.workers <= 1:
             ctx = build_context(plan, clips_manifest, params)
-            for done, frame_index in enumerate(todo, start=1):
-                render_frame(ctx, frame_index)
-                if done == 1 or done == len(todo) or frame_index % int(fps) == 0:
-                    print(
-                        f"[render] frame {frame_index + 1}/{total_frames} "
-                        f"(t={frame_index / fps:.2f}s) [{done}/{len(todo)}]",
-                        flush=True,
-                    )
+            for done, tile in enumerate(tiles, start=1):
+                lo, hi = render_tile(ctx, tile[0], tile[1])
+                print(
+                    f"[render] tile {done}/{len(tiles)} frames {lo + 1}..{hi + 1} "
+                    f"(t={lo / fps:.2f}s..{hi / fps:.2f}s)",
+                    flush=True,
+                )
         else:
-            chunks = chunk_indices(todo, args.workers)
-            print(f"[render] {len(todo)} frame(s) across {len(chunks)} worker chunk(s)", flush=True)
+            print(
+                f"[render] {len(tiles)} time tile(s) "
+                f"({params['time_tile_frames']} frame(s) each) across {args.workers} worker(s)",
+                flush=True,
+            )
             with ProcessPoolExecutor(
                 max_workers=args.workers,
                 initializer=_init_worker,
                 initargs=(str(plan_path), str(clips_path), params),
             ) as pool:
-                futures = {pool.submit(_render_chunk, chunk): chunk for chunk in chunks}
+                futures = {pool.submit(_render_tile, tile): tile for tile in tiles}
                 for future in as_completed(futures):
                     lo, hi, elapsed = future.result()
-                    print(f"[render] chunk frames {lo + 1}..{hi + 1} done ({elapsed:.1f}s)", flush=True)
+                    print(f"[render] tile frames {lo + 1}..{hi + 1} done ({elapsed:.1f}s)", flush=True)
         print(f"[render] dynamic frames done in {time.time() - started:.1f}s", flush=True)
     else:
         print("[render] all dynamic frames cached", flush=True)
@@ -796,6 +1022,7 @@ def main(argv: list[str] | None = None) -> int:
             "totalFrames": total_frames,
             "renderDurationSec": render_duration,
             "effectiveZoomSec": effective_zoom,
+            "staticAfterSec": static_after_sec,
             "zoomHoldSec": params["zoom_hold"],
             "freezeSec": freeze,
         },

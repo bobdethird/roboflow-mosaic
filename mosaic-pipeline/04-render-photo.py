@@ -149,6 +149,9 @@ def clip_by_key(clips_manifest: dict[str, Any]) -> dict[str, dict[str, Any]]:
 
 
 def exact_frame_for_clip(clip: dict[str, Any]) -> Path:
+    match_still = clip.get("matchStill")
+    if match_still:
+        return resolve_path(str(match_still))
     frames = clip.get("frames") or []
     if not frames:
         raise RuntimeError(f"Clip has no frames: {clip.get('key') or clip.get('cacheKey')}")

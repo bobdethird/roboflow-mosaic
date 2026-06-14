@@ -2,7 +2,7 @@
 """Step 1: sync source videos and build the frame-signature index.
 
 This is the fresh pipeline entrypoint for the mosaic project. It makes
-`mosaic-pipeline/videos/` the local source of truth by:
+`source-videos/` the local source of truth by:
 
 1. Importing videos that already exist locally, using hard links by default.
 2. Downloading missing videos from the Supabase Storage bucket.
@@ -46,7 +46,7 @@ VIDEO_SUFFIXES = {".mp4", ".mov", ".m4v", ".webm", ".mkv"}
 
 PIPELINE_ROOT = Path(__file__).resolve().parent
 REPO_ROOT = PIPELINE_ROOT.parent
-VIDEOS_DIR = PIPELINE_ROOT / "videos"
+DEFAULT_VIDEOS_DIR = REPO_ROOT / "source-videos"
 DATA_DIR = PIPELINE_ROOT / "data"
 INDEX_DIR = DATA_DIR / "index"
 CACHE_DIR = INDEX_DIR / "cache"
@@ -127,6 +127,10 @@ def default_worker_count() -> int:
 def resolve_repo_path(value: str | Path) -> Path:
     path = Path(value).expanduser()
     return path if path.is_absolute() else REPO_ROOT / path
+
+
+def rel_to_pipeline(path: Path) -> str:
+    return os.path.relpath(path, PIPELINE_ROOT).replace(os.sep, "/")
 
 
 def is_video_file(path: Path) -> bool:
@@ -388,7 +392,7 @@ def build_video_files(paths: list[Path], previous: dict[str, Any], workers: int)
     to_hash: list[Path] = []
     for path in paths:
         stat = path.stat()
-        rel_path = path.relative_to(PIPELINE_ROOT).as_posix()
+        rel_path = rel_to_pipeline(path)
         cached = previous_by_rel.get(rel_path)
         stats[path] = stat
         if (
@@ -404,7 +408,7 @@ def build_video_files(paths: list[Path], previous: dict[str, Any], workers: int)
     out: list[VideoFile] = []
     for index, path in enumerate(paths, start=1):
         stat = stats[path]
-        rel_path = path.relative_to(PIPELINE_ROOT).as_posix()
+        rel_path = rel_to_pipeline(path)
         content_hash = cached_hashes.get(path) or hashed[path]
         out.append(
             VideoFile(
@@ -454,8 +458,8 @@ def duplicate_report(video_files: list[VideoFile]) -> dict[str, Any]:
     }
 
 
-def unique_destination(name: str, existing_names: set[str], content_hash: str) -> Path:
-    candidate = VIDEOS_DIR / name
+def unique_destination(videos_dir: Path, name: str, existing_names: set[str], content_hash: str) -> Path:
+    candidate = videos_dir / name
     if name not in existing_names:
         existing_names.add(name)
         return candidate
@@ -467,7 +471,7 @@ def unique_destination(name: str, existing_names: set[str], content_hash: str) -
         candidate_name = f"{stem}-{content_hash[:8]}-{counter}{suffix}"
         counter += 1
     existing_names.add(candidate_name)
-    return VIDEOS_DIR / candidate_name
+    return videos_dir / candidate_name
 
 
 def materialize_video(src: Path, dst: Path, mode: str) -> str:
@@ -501,7 +505,7 @@ def default_local_sources(args: argparse.Namespace) -> list[Path]:
             key = resolved.resolve()
         except OSError:
             key = resolved
-        if key == VIDEOS_DIR.resolve() or key in seen:
+        if key == args.videos_dir.resolve() or key in seen:
             continue
         seen.add(key)
         sources.append(resolved)
@@ -511,8 +515,8 @@ def default_local_sources(args: argparse.Namespace) -> list[Path]:
 def import_local_videos(args: argparse.Namespace) -> dict[str, Any]:
     if args.skip_local_import or args.index_only:
         return {"skipped": True, "sources": [], "imported": [], "duplicates": []}
-    VIDEOS_DIR.mkdir(parents=True, exist_ok=True)
-    existing_paths = list_videos(VIDEOS_DIR)
+    args.videos_dir.mkdir(parents=True, exist_ok=True)
+    existing_paths = list_videos(args.videos_dir)
     existing_names = {path.name for path in existing_paths}
     known_hashes = set(hash_paths(existing_paths, args.hash_workers, "hash-existing").values())
     imported: list[dict[str, Any]] = []
@@ -529,13 +533,13 @@ def import_local_videos(args: argparse.Namespace) -> dict[str, Any]:
         if content_hash in known_hashes:
             duplicates.append({"source": str(src), "contentHash": content_hash})
             continue
-        dst = unique_destination(src.name, existing_names, content_hash)
+        dst = unique_destination(args.videos_dir, src.name, existing_names, content_hash)
         action = "would-import" if args.dry_run else materialize_video(src, dst, args.import_mode)
         known_hashes.add(content_hash)
         imported.append(
             {
                 "source": str(src),
-                "destination": dst.relative_to(PIPELINE_ROOT).as_posix(),
+                "destination": rel_to_pipeline(dst),
                 "contentHash": content_hash,
                 "action": action,
             }
@@ -627,7 +631,7 @@ def sync_supabase_videos(args: argparse.Namespace) -> dict[str, Any]:
             "SUPABASE_SECRET_KEY/SUPABASE_SERVICE_ROLE_KEY, or pass --skip-supabase."
         )
     remote_objects = storage.list_objects(args.prefix)
-    existing_names = {path.name for path in list_videos(VIDEOS_DIR)}
+    existing_names = {path.name for path in list_videos(args.videos_dir)}
     planned: list[tuple[int, RemoteObject, Path]] = []
     skipped_existing: list[str] = []
     print(f"[supabase] {args.bucket}/{args.prefix}: {len(remote_objects)} video object(s)", flush=True)
@@ -637,14 +641,14 @@ def sync_supabase_videos(args: argparse.Namespace) -> dict[str, Any]:
             continue
         if args.max_downloads is not None and len(planned) >= args.max_downloads:
             break
-        dst = VIDEOS_DIR / obj.name
+        dst = args.videos_dir / obj.name
         existing_names.add(obj.name)
         planned.append((index, obj, dst))
     if args.dry_run:
         downloaded = [
             {
                 "objectPath": obj.object_path,
-                "destination": dst.relative_to(PIPELINE_ROOT).as_posix(),
+                "destination": rel_to_pipeline(dst),
                 "size": obj.size,
                 "action": "would-download",
             }
@@ -663,7 +667,7 @@ def sync_supabase_videos(args: argparse.Namespace) -> dict[str, Any]:
             return {
                 "index": index,
                 "objectPath": obj.object_path,
-                "destination": dst.relative_to(PIPELINE_ROOT).as_posix(),
+                "destination": rel_to_pipeline(dst),
                 "size": obj.size,
                 "action": "downloaded",
             }
@@ -695,9 +699,9 @@ def build_index(args: argparse.Namespace, fps: float) -> dict[str, Any]:
         return {"skipped": True, "reason": "dry-run"}
     if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
         raise SystemExit("ffmpeg and ffprobe must be installed and available on PATH")
-    paths = list_videos(VIDEOS_DIR)
+    paths = list_videos(args.videos_dir)
     if not paths:
-        raise SystemExit(f"No supported videos found in {VIDEOS_DIR}")
+        raise SystemExit(f"No supported videos found in {args.videos_dir}")
     INDEX_DIR.mkdir(parents=True, exist_ok=True)
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -767,7 +771,7 @@ def build_index(args: argparse.Namespace, fps: float) -> dict[str, Any]:
     manifest = {
         "schemaVersion": SCHEMA_VERSION,
         "generatedAt": utc_now(),
-        "sourceDir": VIDEOS_DIR.relative_to(PIPELINE_ROOT).as_posix(),
+        "sourceDir": rel_to_pipeline(args.videos_dir),
         "sampleFps": fps,
         "sigGrid": SIG_GRID,
         "sigBytes": SIG_BYTES,
@@ -845,6 +849,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help="local folder to import videos from; can be passed multiple times",
     )
     parser.add_argument(
+        "--videos-dir",
+        default=os.environ.get("MOSAIC_SOURCE_VIDEOS_DIR", str(DEFAULT_VIDEOS_DIR)),
+        help="canonical source video folder; relative paths resolve from the repo root",
+    )
+    parser.add_argument(
         "--import-mode",
         choices=["hardlink", "copy", "symlink"],
         default=os.environ.get("MOSAIC_IMPORT_MODE", "hardlink"),
@@ -881,6 +890,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     args.hash_workers = max(1, int(args.hash_workers or args.workers))
     args.download_workers = max(1, int(args.download_workers or args.workers))
     args.index_workers = max(1, int(args.index_workers or args.workers))
+    args.videos_dir = resolve_repo_path(args.videos_dir)
     return args
 
 
