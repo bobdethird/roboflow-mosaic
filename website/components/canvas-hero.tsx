@@ -23,6 +23,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { Slider } from "@/components/ui/slider"
 import { MosaicEngine } from "@/lib/mosaic-client"
+import type { TileWeighting } from "@/lib/mosaic-protocol"
 import {
   averageColor,
   edgeVectorField,
@@ -45,6 +46,19 @@ const FIELD_LONG_EDGE = 360
 const DENSITY_MIN = 16
 const DENSITY_MAX = 80
 const DENSITY_DEFAULT = 40
+
+// Era-emphasis controls (opt-in via the `eraEmphasis` prop, used by the knicks
+// collection whose tiles carry a `takenAt` date). The matcher divides color
+// error by a per-tile weight = 1 + recency·2^(-ageMonths/halfLife) + playoff,
+// so these tilt selection toward recent / playoff photos without overriding a
+// genuinely good color match. Both at 0 ⇒ unbiased (original) matching.
+const RECENCY_STRENGTH_MAX = 3
+const RECENCY_STRENGTH_DEFAULT = 1
+const PLAYOFF_BOOST_MAX = 4
+const PLAYOFF_BOOST_DEFAULT = 1.5
+const RECENCY_HALF_LIFE_MONTHS = 18
+// Years whose April–June window counts as "playoffs" for the playoff boost.
+const PLAYOFF_YEARS = [2025, 2026]
 
 // Largest the displayed mosaic may grow vertically. The center column applies
 // responsive width caps so narrow screens still leave the canvas visible.
@@ -79,6 +93,10 @@ type CachedMosaicBase = {
   // Per-generated-mosaic source-photo reuse cap used for this render. A changed
   // cap means the baked image and assignment map should regenerate.
   maxTileReuse?: number
+  // Era-emphasis slider positions this render was generated with, so a restored
+  // mosaic shows the controls in the state that produced it.
+  recencyStrength?: number
+  playoffBoost?: number
 }
 
 type CachedMosaic =
@@ -89,6 +107,7 @@ type HoveredTile = {
   cell: number
   id: string
   url: string
+  title: string
   x: number
   y: number
   width?: number
@@ -242,6 +261,9 @@ type CanvasHeroProps = {
   maxTileReuse?: number
   // Smaller cells create a higher-resolution mosaic at a higher generation cost.
   minCellSize?: number
+  // Enable the recency/playoff emphasis controls + match bias. Only meaningful
+  // for collections whose tiles carry a `takenAt` date (the knicks library).
+  eraEmphasis?: boolean
 }
 
 export function CanvasHero({
@@ -250,6 +272,7 @@ export function CanvasHero({
   switchLocked = false,
   maxTileReuse,
   minCellSize = DENSITY_MIN,
+  eraEmphasis = false,
 }: CanvasHeroProps) {
   const densityMin = clampDensity(minCellSize, 1, DENSITY_MAX)
   const [reference, setReference] = React.useState<ReferenceImage | null>(null)
@@ -261,6 +284,12 @@ export function CanvasHero({
   const [density, setDensity] = React.useState(() =>
     clampDensity(DENSITY_DEFAULT, densityMin, DENSITY_MAX)
   )
+  // Era-emphasis strengths (knicks only). Default to a gentle tilt so the bias
+  // is visible out of the box; the user can drag either to 0 to compare.
+  const [recencyStrength, setRecencyStrength] = React.useState(
+    RECENCY_STRENGTH_DEFAULT
+  )
+  const [playoffBoost, setPlayoffBoost] = React.useState(PLAYOFF_BOOST_DEFAULT)
   const [generateProgress, setGenerateProgress] = React.useState<{
     done: number
     total: number
@@ -294,6 +323,15 @@ export function CanvasHero({
   React.useEffect(() => {
     densityRef.current = density
   }, [density])
+  // Mirror the emphasis sliders into refs for the same reason.
+  const recencyStrengthRef = React.useRef(recencyStrength)
+  const playoffBoostRef = React.useRef(playoffBoost)
+  React.useEffect(() => {
+    recencyStrengthRef.current = recencyStrength
+  }, [recencyStrength])
+  React.useEffect(() => {
+    playoffBoostRef.current = playoffBoost
+  }, [playoffBoost])
   React.useEffect(() => {
     setDensity((current) => clampDensity(current, densityMin, DENSITY_MAX))
   }, [densityMin])
@@ -370,6 +408,14 @@ export function CanvasHero({
         setReference({ ...cached.reference, url: referenceUrl })
         setFrame(cached.frame)
         setDensity(clampDensity(cached.density, densityMin, DENSITY_MAX))
+        if (eraEmphasis) {
+          if (typeof cached.recencyStrength === "number") {
+            setRecencyStrength(cached.recencyStrength)
+          }
+          if (typeof cached.playoffBoost === "number") {
+            setPlayoffBoost(cached.playoffBoost)
+          }
+        }
         setHoveredTile(null)
 
         if (stale) {
@@ -389,7 +435,7 @@ export function CanvasHero({
     return () => {
       cancelled = true
     }
-  }, [bucket, maxTileReuse, densityMin])
+  }, [bucket, maxTileReuse, densityMin, eraEmphasis])
 
   const referenceRef = React.useRef<ReferenceImage | null>(null)
   React.useEffect(() => {
@@ -484,6 +530,16 @@ export function CanvasHero({
         canvasW,
         canvasH
       )
+      // Era bias is opt-in (knicks). Build it from the live slider refs so the
+      // matcher favors recent/playoff tiles; omitted entirely otherwise.
+      const weighting: TileWeighting | undefined = eraEmphasis
+        ? {
+            recencyStrength: recencyStrengthRef.current,
+            playoffBoost: playoffBoostRef.current,
+            recencyHalfLifeMonths: RECENCY_HALF_LIFE_MONTHS,
+            playoffYears: PLAYOFF_YEARS,
+          }
+        : undefined
       const { assignment, base } = await engine.generate(
         cellSigs,
         grid,
@@ -505,7 +561,7 @@ export function CanvasHero({
           if (token !== generateTokenRef.current) return
           setGenerateProgress({ done: doneCells, total: totalCells })
         },
-        { maxTileReuse }
+        { maxTileReuse, weighting }
       )
       if (token !== generateTokenRef.current) {
         base.close()
@@ -552,6 +608,10 @@ export function CanvasHero({
               savedAt: Date.now(),
               libraryVersion: libraryVersionRef.current,
               maxTileReuse,
+              recencyStrength: eraEmphasis
+                ? recencyStrengthRef.current
+                : undefined,
+              playoffBoost: eraEmphasis ? playoffBoostRef.current : undefined,
             })
           } catch {
             // Quota/private-mode failures should not block the generated mosaic.
@@ -566,7 +626,7 @@ export function CanvasHero({
         setGenerateProgress(null)
       }
     }
-  }, [bucket, maxTileReuse])
+  }, [bucket, maxTileReuse, eraEmphasis])
 
   React.useEffect(() => {
     if (!restoredMosaicUrl || !frame) return
@@ -645,6 +705,7 @@ export function CanvasHero({
         cell,
         id,
         url: item?.fullUrl ?? item?.url ?? thumbUrl(bucket, id),
+        title: item?.galleryTitle ?? item?.gallery ?? id,
         x,
         y,
         width: item?.w,
@@ -756,18 +817,20 @@ export function CanvasHero({
                     })`,
                   }}
                 >
-                  <div className="aspect-square w-full overflow-hidden rounded-xl bg-white">
+                  <div className="relative aspect-square w-full overflow-hidden rounded-xl bg-white">
                     {/* eslint-disable-next-line @next/next/no-img-element -- public library URL, shown only as a hover preview */}
                     <img
                       src={hoveredTile.url}
-                      alt=""
+                      alt={hoveredTile.title}
                       draggable={false}
                       className="size-full object-contain"
                     />
+                    <span className="absolute inset-x-0 bottom-0 line-clamp-2 bg-black/70 px-2 py-1.5 text-left text-xs font-medium text-white">
+                      {hoveredTile.title}
+                    </span>
                   </div>
-                  <div className="mt-2 flex items-center justify-between gap-3 px-1 text-xs text-muted-foreground">
-                    <span>source tile</span>
-                    <span>click to open</span>
+                  <div className="mt-2 px-1 text-xs text-muted-foreground">
+                    <span className="text-muted-foreground">click to open</span>
                   </div>
                 </div>
               )}
@@ -860,6 +923,38 @@ export function CanvasHero({
                     aria-label="Mosaic resolution"
                   />
                 </div>
+                {eraEmphasis && (
+                  <>
+                    <div className="flex items-center gap-3">
+                      <span className="text-sm text-muted-foreground">
+                        Recent
+                      </span>
+                      <Slider
+                        className="w-40"
+                        min={0}
+                        max={RECENCY_STRENGTH_MAX}
+                        step={0.25}
+                        value={[recencyStrength]}
+                        onValueChange={(v) => setRecencyStrength(v[0])}
+                        aria-label="Recent-photo emphasis"
+                      />
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <span className="text-sm text-muted-foreground">
+                        Playoffs
+                      </span>
+                      <Slider
+                        className="w-40"
+                        min={0}
+                        max={PLAYOFF_BOOST_MAX}
+                        step={0.25}
+                        value={[playoffBoost]}
+                        onValueChange={(v) => setPlayoffBoost(v[0])}
+                        aria-label="Playoff-photo emphasis"
+                      />
+                    </div>
+                  </>
+                )}
                 <Button
                   onClick={() => void handleGenerate()}
                   disabled={tileCount === 0 || isGenerating}

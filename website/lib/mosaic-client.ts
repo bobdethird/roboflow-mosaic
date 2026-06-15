@@ -4,6 +4,7 @@
 import type { Grid } from "./mosaic"
 import type {
   HydrateItem,
+  TileWeighting,
   WorkerRequest,
   WorkerResponse,
 } from "./mosaic-protocol"
@@ -22,6 +23,8 @@ export type GenerateProgressCallback = (done: number, total: number) => void
 
 export type GenerateOptions = {
   maxTileReuse?: number
+  // Optional era bias (recency + playoff emphasis); omitted ⇒ unbiased matching.
+  weighting?: TileWeighting
 }
 
 type Pending = {
@@ -95,6 +98,7 @@ export class MosaicEngine {
         polys,
         offsets,
         maxTileReuse: options.maxTileReuse,
+        weighting: options.weighting,
       })
     })
   }

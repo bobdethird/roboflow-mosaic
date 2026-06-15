@@ -12,6 +12,7 @@
 import { SIGNATURE_GRID, drawPolygonCell, type Grid } from "./mosaic"
 import type {
   HydrateItem,
+  TileWeighting,
   WorkerRequest,
   WorkerResponse,
 } from "./mosaic-protocol"
@@ -109,6 +110,8 @@ type Entry = {
   w: number
   h: number
   url: string
+  // Epoch ms of the tile's photo (NaN when unknown), for the era match bias.
+  takenAtMs: number
 }
 
 type PreparedLibrary = {
@@ -116,6 +119,8 @@ type PreparedLibrary = {
   coarse: Float32Array[]
   means: Float32Array
   meanBins: MeanBinIndex
+  // Per-tile photo date (epoch ms; NaN when unknown), index-aligned with `ids`.
+  takenAtMs: Float64Array
 }
 
 type MeanBinIndex = {
@@ -219,10 +224,62 @@ function coarseError(
   return sum
 }
 
+// Parse a tile's ISO `takenAt` into epoch ms, or NaN when absent/unparseable.
+function parseTakenAtMs(takenAt: string | undefined): number {
+  if (!takenAt) return Number.NaN
+  const ms = Date.parse(takenAt)
+  return Number.isFinite(ms) ? ms : Number.NaN
+}
+
+const MS_PER_MONTH = (365.25 / 12) * 24 * 60 * 60 * 1000
+
+// Per-tile multiplicative match weight (≥ 1) from the era-bias config. A weight
+// of 1 leaves a tile's color error unchanged; larger weights shrink its
+// effective error so it wins more contested cells. Returns null when the bias is
+// neutral (no recency or playoff term), so the matcher can skip the weighting
+// entirely and stay byte-for-byte identical to the unbiased path.
+function buildTileWeights(
+  takenAtMs: Float64Array,
+  weighting: TileWeighting | undefined
+): Float32Array | null {
+  if (!weighting) return null
+  const recencyStrength = Math.max(0, weighting.recencyStrength ?? 0)
+  const playoffBoost = Math.max(0, weighting.playoffBoost ?? 0)
+  if (recencyStrength === 0 && playoffBoost === 0) return null
+
+  const halfLife = Math.max(0.1, weighting.recencyHalfLifeMonths ?? 18)
+  const nowMs = weighting.nowMs ?? Date.now()
+  const playoffYears = new Set(weighting.playoffYears ?? [2025, 2026])
+
+  const weights = new Float32Array(takenAtMs.length)
+  for (let i = 0; i < takenAtMs.length; i++) {
+    const ms = takenAtMs[i]
+    if (!Number.isFinite(ms)) {
+      weights[i] = 1
+      continue
+    }
+    let w = 1
+    if (recencyStrength > 0) {
+      const ageMonths = Math.max(0, (nowMs - ms) / MS_PER_MONTH)
+      w += recencyStrength * Math.pow(2, -ageMonths / halfLife)
+    }
+    if (playoffBoost > 0) {
+      const d = new Date(ms)
+      const month = d.getUTCMonth() // 0-indexed: Apr–Jun ⇒ 3..5
+      if (month >= 3 && month <= 5 && playoffYears.has(d.getUTCFullYear())) {
+        w += playoffBoost
+      }
+    }
+    weights[i] = w
+  }
+  return weights
+}
+
 function prepareLibrary(items: HydrateItem[]): PreparedLibrary {
   const ids = new Array<string>(items.length)
   const coarse = new Array<Float32Array>(items.length)
   const means = new Float32Array(items.length * 3)
+  const takenAtMs = new Float64Array(items.length)
   for (let i = 0; i < items.length; i++) {
     const item = items[i]
     ids[i] = item.id
@@ -232,8 +289,15 @@ function prepareLibrary(items: HydrateItem[]): PreparedLibrary {
     means[i * 3] = r
     means[i * 3 + 1] = g
     means[i * 3 + 2] = b
+    takenAtMs[i] = parseTakenAtMs(item.takenAt)
   }
-  return { ids, coarse, means, meanBins: buildMeanBinIndex(means, items.length) }
+  return {
+    ids,
+    coarse,
+    means,
+    meanBins: buildMeanBinIndex(means, items.length),
+    takenAtMs,
+  }
 }
 
 function preparedMatchesIds(library: PreparedLibrary, ids: string[]): boolean {
@@ -251,6 +315,7 @@ function getPreparedLibrary(ids: string[]): PreparedLibrary {
 
   const coarse = new Array<Float32Array>(ids.length)
   const means = new Float32Array(ids.length * 3)
+  const takenAtMs = new Float64Array(ids.length)
   const empty = new Float32Array(COARSE_LEN)
   for (let i = 0; i < ids.length; i++) {
     const entry = store.get(ids[i])
@@ -259,12 +324,14 @@ function getPreparedLibrary(ids: string[]): PreparedLibrary {
     means[i * 3] = entry?.meanR ?? 0
     means[i * 3 + 1] = entry?.meanG ?? 0
     means[i * 3 + 2] = entry?.meanB ?? 0
+    takenAtMs[i] = entry?.takenAtMs ?? Number.NaN
   }
   return {
     ids: [...ids],
     coarse,
     means,
     meanBins: buildMeanBinIndex(means, ids.length),
+    takenAtMs,
   }
 }
 
@@ -350,7 +417,8 @@ async function handleGenerate(
   angles: Float32Array,
   polys: Float32Array,
   offsets: Int32Array,
-  maxTileReuse?: number
+  maxTileReuse?: number,
+  weighting?: TileWeighting
 ): Promise<void> {
   activeGenerate = reqId
 
@@ -362,6 +430,9 @@ async function handleGenerate(
   if (nTiles === 0) return
   const tileCoarse = library.coarse
   const meanBins = library.meanBins
+  // Optional era bias: a per-tile weight (≥ 1) the matcher divides color error
+  // by, so favored eras win contested cells. Null when neutral (no extra cost).
+  const tileWeights = buildTileWeights(library.takenAtMs, weighting)
   const reuseCap =
     maxTileReuse !== undefined && Number.isFinite(maxTileReuse)
       ? Math.max(1, Math.floor(maxTileReuse))
@@ -490,12 +561,28 @@ async function handleGenerate(
         }
       }
 
-      for (let i = 0; i < candidateCount; i++) {
-        const t = candidates[i]
-        const err = coarseError(cs, tileCoarse[t], bestErr)
-        if (err < bestErr) {
-          bestErr = err
-          best = t
+      if (tileWeights === null) {
+        for (let i = 0; i < candidateCount; i++) {
+          const t = candidates[i]
+          const err = coarseError(cs, tileCoarse[t], bestErr)
+          if (err < bestErr) {
+            bestErr = err
+            best = t
+          }
+        }
+      } else {
+        // `bestErr` tracks the best *effective* error (raw color SSD / weight).
+        // A tile can only win if raw/w < bestErr ⇔ raw < bestErr · w, so that
+        // product is the exact early-out bound passed to coarseError.
+        for (let i = 0; i < candidateCount; i++) {
+          const t = candidates[i]
+          const w = tileWeights[t]
+          const raw = coarseError(cs, tileCoarse[t], bestErr * w)
+          const eff = raw / w
+          if (eff < bestErr) {
+            bestErr = eff
+            best = t
+          }
         }
       }
     }
@@ -659,7 +746,8 @@ scope.onmessage = (e: MessageEvent<WorkerRequest>) => {
         msg.angles,
         msg.polys,
         msg.offsets,
-        msg.maxTileReuse
+        msg.maxTileReuse,
+        msg.weighting
       )
       break
     case "hydrate":
@@ -678,6 +766,7 @@ scope.onmessage = (e: MessageEvent<WorkerRequest>) => {
           w: it.w,
           h: it.h,
           url: it.url,
+          takenAtMs: preparedLibrary.takenAtMs[i],
         })
       }
       break

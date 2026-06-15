@@ -21,6 +21,7 @@ export default function KnicksMosaicPage() {
       bucket="knicks-mosaic"
       maxTileReuse={KNICKS_MAX_TILE_REUSE}
       minCellSize={KNICKS_MIN_CELL_SIZE}
+      eraEmphasis
     />
   )
 }

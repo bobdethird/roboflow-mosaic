@@ -153,6 +153,9 @@ export type ManifestPhoto = {
   h: number
   fullPath?: string
   takenAt?: string
+  gallery?: string
+  galleryTitle?: string
+  sourceUrl?: string
   location?: {
     lat: number
     lng: number
@@ -170,6 +173,9 @@ export type LibraryItem = {
   w: number
   h: number
   takenAt?: string
+  gallery?: string
+  galleryTitle?: string
+  sourceUrl?: string
   location?: ManifestPhoto["location"]
   // Source video id for frame-sampled tiles (see ManifestPhoto.video).
   video?: string
@@ -335,7 +341,18 @@ export async function loadLibrary(
     }
     const items: LibraryItem[] = new Array(n)
     for (let i = 0; i < n; i++) {
-      const { id, w, h, fullPath, takenAt, location, video } =
+      const {
+        id,
+        w,
+        h,
+        fullPath,
+        takenAt,
+        gallery,
+        galleryTitle,
+        sourceUrl,
+        location,
+        video,
+      } =
         manifest.photos[i]
       const base = i * bytesPerSig
       items[i] = {
@@ -344,6 +361,9 @@ export async function loadLibrary(
         w,
         h,
         takenAt,
+        gallery,
+        galleryTitle,
+        sourceUrl,
         location,
         video,
         fullUrl: fullPath ? mosaicObjectUrl(bucket, fullPath) : undefined,
