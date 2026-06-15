@@ -165,42 +165,143 @@ def zoom_window(time_sec: float, ctx: SimpleNamespace) -> tuple[float, float, fl
     return window_at_progress(t, ctx.start, world_w, world_h)
 
 
+def cell_finish_sec(cell_index: int, ctx: SimpleNamespace) -> float:
+    """Wall-clock time at which a non-opening cell reaches its matched frame.
+
+    With ``--finish-distribution end`` every cell converges at ``clip_finish_sec``
+    (the legacy behavior). Otherwise each cell draws a stable, per-cell finish
+    time so tiles settle across the timeline instead of all at the same instant.
+    The value is always clamped to ``[finish_earliest, clip_finish_sec]`` so the
+    full mosaic is guaranteed to be assembled by the time the freeze begins.
+    """
+    clip_finish = ctx.clip_finish_sec
+    if ctx.finish_distribution == "end":
+        return clip_finish
+    earliest = min(ctx.finish_earliest, clip_finish)
+    seed = ctx.finish_seed
+    # Two decorrelated, stable per-cell uniforms in (0, 1).
+    h1 = hash_int((cell_index + 1) * 2654435761 + seed * 40503)
+    u1 = (h1 % 1_000_000 + 1) / 1_000_001.0
+    if ctx.finish_distribution == "uniform":
+        return clamp(earliest + u1 * (clip_finish - earliest), earliest, clip_finish)
+    # Normal (Box-Muller), clamped to +/-3 sigma to avoid extreme outliers.
+    h2 = hash_int(((cell_index + 1) ^ 0x5BD1E995) + seed * 19349663)
+    u2 = (h2 % 1_000_000) / 1_000_000.0
+    z = clamp(math.sqrt(-2.0 * math.log(u1)) * math.cos(2.0 * math.pi * u2), -3.0, 3.0)
+    return clamp(ctx.finish_center + z * ctx.finish_spread, earliest, clip_finish)
+
+
+def finish_for_cell(cell_index: int, ctx: SimpleNamespace) -> float:
+    """``cell_finish_sec`` with a per-context memo (populated in ``build_context``)."""
+    cache = getattr(ctx, "finish_by_cell", None)
+    if cache:
+        cached = cache.get(cell_index)
+        if cached is not None:
+            return cached
+    return cell_finish_sec(cell_index, ctx)
+
+
 def frame_for_clip(frames_len: int, match_at: float | None, time_sec: float, cell_index: int, ctx: SimpleNamespace) -> int:
-    """Index into a clip's frames at ``time_sec`` (ported from frameForClip)."""
+    """Index into a clip's frames at ``time_sec``.
+
+    The opening cell and ``--finish-distribution end`` use the legacy mapping
+    where every tile converges on its matched frame at ``clip_finish_sec``.
+    Otherwise each non-opening cell reaches its matched frame at its own
+    distributed finish time (see ``cell_finish_sec``) and then holds.
+    """
+    if cell_index == ctx.opening_cell or ctx.finish_distribution == "end":
+        return _frame_for_clip_legacy(frames_len, match_at, time_sec, cell_index, ctx)
+    return _frame_for_clip_distributed(frames_len, match_at, time_sec, cell_index, ctx)
+
+
+def _frame_for_clip_distributed(
+    frames_len: int, match_at: float | None, time_sec: float, cell_index: int, ctx: SimpleNamespace
+) -> int:
+    """Play a tile so it reaches its matched frame at its per-cell finish time.
+
+    The clip plays the trailing portion of its pre-roll, ending exactly on the
+    matched frame at ``finish``. Cells whose finish is early therefore show a
+    shorter run-up; cells whose finish is late show more of the pre-roll. When a
+    cell's play window is longer than the cached pre-roll, the clip loops (with
+    ``--loop-short-clips``) or holds its first frame until the final approach.
+    """
     last = max(0, frames_len - 1)
+    if last <= 0:
+        return 0
+    finish_sec = finish_for_cell(cell_index, ctx)
+    if time_sec >= finish_sec:
+        return last
+    clip_start = ctx.clip_start_sec
+    match_at_sec = match_at if (match_at is not None and match_at > 0.001) else ctx.pre_roll
+    # Tiles do not advance before their start; clamp the clock to the start.
+    eff_t = time_sec if time_sec > clip_start else clip_start
+    play_len = finish_sec - clip_start
+    if play_len <= 0.001:
+        return last
+    if play_len <= match_at_sec + 0.0005:
+        # Show only the trailing ``play_len`` seconds of the pre-roll.
+        preroll_pos = match_at_sec - (finish_sec - eff_t)
+        progress = clamp(preroll_pos / max(0.001, match_at_sec), 0.0, 1.0)
+        return int(clamp(iround(progress * last), 0, last))
+    # Pre-roll is shorter than this cell's play window: loop/hold, then approach.
+    final_start = finish_sec - match_at_sec
+    if eff_t >= final_start:
+        progress = clamp((eff_t - final_start) / max(0.001, match_at_sec), 0.0, 1.0)
+        return int(clamp(iround(progress * last), 0, last))
+    if not ctx.loop_short_clips:
+        return 0
+    loop_last = max(0, last - 1)
+    if loop_last <= 0:
+        return 0
+    loop_time = (eff_t - clip_start) % match_at_sec
+    progress = clamp(loop_time / max(0.001, match_at_sec), 0.0, 1.0)
+    return int(clamp(iround(progress * loop_last), 0, loop_last))
+
+
+def _frame_for_clip_legacy(frames_len: int, match_at: float | None, time_sec: float, cell_index: int, ctx: SimpleNamespace) -> int:
+    """Legacy mapping (ported from frameForClip): every tile lands at ``clip_finish_sec``."""
+    last = max(0, frames_len - 1)
+    if time_sec >= ctx.clip_finish_sec:
+        return last
     is_opening = cell_index == ctx.opening_cell
+    clip_start_sec = 0.0 if is_opening else ctx.clip_start_sec
+    jitter = 0.0
+    if (not is_opening) and ctx.repeat_time_jitter > 0:
+        # Stable random-looking offset per placement so repeated cells do not sync.
+        jitter = ((hash_int(cell_index) % 2001) / 1000.0 - 1.0) * ctx.repeat_time_jitter
+    clip_time_sec = max(0.0, time_sec - clip_start_sec + jitter)
     delay = (
         min(max(0.0, ctx.tile_start_delay), max(0.0, ctx.pre_roll - 0.001))
         if (not is_opening and ctx.tile_start_delay)
         else 0.0
     )
     stagger = ctx.play_stagger
-    if delay > 0 and time_sec < delay:
+    if delay > 0 and clip_time_sec < delay:
         return 0
-    if delay > 0 and time_sec < ctx.pre_roll:
+    if delay > 0 and clip_time_sec < ctx.pre_roll:
         start_frame = iround(stagger * ((hash_int(cell_index) % 1000) / 1000) * last) if stagger > 0 else 0
         max_playable = max(0, last - start_frame)
-        progress = clamp((time_sec - delay) / max(0.001, ctx.pre_roll - delay), 0.0, 1.0)
+        progress = clamp((clip_time_sec - delay) / max(0.001, ctx.pre_roll - delay), 0.0, 1.0)
         return int(clamp(start_frame + iround(progress * max_playable), 0, last))
     match_at_sec = match_at if match_at is not None else ctx.pre_roll
-    if ctx.loop_short_clips and 0.001 < match_at_sec < ctx.pre_roll and time_sec < ctx.pre_roll:
+    if ctx.loop_short_clips and 0.001 < match_at_sec < ctx.pre_roll and clip_time_sec < ctx.pre_roll:
         final_start = max(0.0, ctx.pre_roll - match_at_sec)
-        if time_sec >= final_start:
-            progress = clamp((time_sec - final_start) / max(0.001, match_at_sec), 0.0, 1.0)
+        if clip_time_sec >= final_start:
+            progress = clamp((clip_time_sec - final_start) / max(0.001, match_at_sec), 0.0, 1.0)
             return int(clamp(iround(progress * last), 0, last))
         loop_last = max(0, last - 1)
         if loop_last <= 0:
             return 0
         start_frame = iround(stagger * ((hash_int(cell_index) % 1000) / 1000) * loop_last) if stagger > 0 else 0
         phase_sec = (start_frame / max(1, loop_last)) * match_at_sec
-        loop_time = (max(0.0, time_sec - delay) + phase_sec) % match_at_sec
+        loop_time = (max(0.0, clip_time_sec - delay) + phase_sec) % match_at_sec
         progress = clamp(loop_time / max(0.001, match_at_sec), 0.0, 1.0)
         return int(clamp(iround(progress * loop_last), 0, loop_last))
-    if time_sec >= match_at_sec:
+    if clip_time_sec >= match_at_sec:
         return last
     start_frame = iround(stagger * ((hash_int(cell_index) % 1000) / 1000) * last) if stagger > 0 else 0
     max_playable = max(0, last - start_frame)
-    progress = clamp(time_sec / max(0.001, match_at_sec), 0.0, 1.0)
+    progress = clamp(clip_time_sec / max(0.001, match_at_sec), 0.0, 1.0)
     return int(clamp(start_frame + iround(progress * max_playable), 0, last))
 
 
@@ -368,17 +469,32 @@ def build_context(plan: dict[str, Any], clips_manifest: dict[str, Any], params: 
         start=zoom_start_window(opening_rect, world_w, world_h),
         fps=float(params["fps"]),
         pre_roll=float(params["pre_roll"]),
+        clip_start_sec=float(params["clip_start_sec"]),
+        clip_finish_sec=float(params["clip_finish_sec"]),
         effective_zoom=float(params["effective_zoom"]),
         zoom_hold=float(params["zoom_hold"]),
         tile_fps=float(params["tile_fps"]),
         tile_start_delay=float(params["tile_start_delay"]),
         play_stagger=float(params["play_stagger"]),
+        repeat_time_jitter=float(params["repeat_time_jitter"]),
         loop_short_clips=bool(params["loop_short_clips"]),
+        finish_distribution=str(params["finish_distribution"]),
+        finish_center=float(params["finish_center"]),
+        finish_spread=float(params["finish_spread"]),
+        finish_earliest=float(params["finish_earliest"]),
+        finish_seed=int(params["finish_seed"]),
         jpeg_quality=int(params["jpeg_quality"]),
         frame_dir=Path(params["frame_dir"]),
         background=np.array(background, np.uint8),
         canvas=np.empty((canvas_h, canvas_w, 3), np.uint8),
         image_cache={},
+    )
+    # Memoize each cell's distributed finish time so the per-frame hot path is a
+    # dict lookup rather than a Box-Muller draw.
+    ctx.finish_by_cell = (
+        {int(c): cell_finish_sec(int(c), ctx) for c in cell_index}
+        if ctx.finish_distribution != "end"
+        else {}
     )
     return ctx
 
@@ -452,18 +568,27 @@ def decode_video_frames(clip: dict[str, Any], frame_indices: set[int], fps: floa
     first = needed[0]
     last = needed[-1]
     found: dict[int, Any] = {}
+    tail_img = None  # pixels of the proxy's true last frame, for over-the-end requests
+    tail_number = -1  # highest frame number the proxy actually contains
     with av.open(str(video_path)) as container:
         stream = container.streams.video[0]
         if stream.time_base:
-            seek_pts = int((first / fps) / stream.time_base)
+            seek_pts = (stream.start_time or 0) + int((first / fps) / stream.time_base)
             container.seek(max(0, seek_pts), stream=stream, any_frame=False, backward=True)
         decoded_without_pts = 0
+        tail_frame = None
         for frame in container.decode(stream):
             if frame.pts is not None and stream.time_base:
-                frame_number = int(round(float(frame.pts * stream.time_base) * fps))
+                start_pts = stream.start_time or 0
+                frame_number = int(round(float((frame.pts - start_pts) * stream.time_base) * fps))
             else:
                 frame_number = decoded_without_pts
                 decoded_without_pts += 1
+            # Track the highest decoded frame even when it is below ``first`` so
+            # we can still satisfy a lone over-the-end request.
+            if frame_number > tail_number:
+                tail_number = frame_number
+                tail_frame = frame
             if frame_number < first:
                 continue
             if frame_number > last and len(found) == len(needed):
@@ -472,7 +597,26 @@ def decode_video_frames(clip: dict[str, Any], frame_indices: set[int], fps: floa
                 found[frame_number] = frame.to_ndarray(format="bgr24")
                 if len(found) == len(needed):
                     break
+        # Some proxies are a frame or two shorter than the manifest's
+        # ``preFrameCount`` claims. If a requested index is past the proxy's real
+        # end, reuse its last real frame (converted while the container is open).
+        if tail_frame is not None and any(
+            (fn not in found and fn >= tail_number) for fn in frame_indices
+        ):
+            tail_img = tail_frame.to_ndarray(format="bgr24")
     missing = sorted(frame_indices.difference(found))
+    if missing and found:
+        last_decoded = max(found)
+        for frame_number in missing:
+            if frame_number > last_decoded:
+                found[frame_number] = found[last_decoded]
+        missing = sorted(frame_indices.difference(found))
+    if missing and tail_img is not None:
+        # Requests beyond the proxy's real end (e.g. the off-by-one final frame).
+        for frame_number in list(missing):
+            if frame_number >= tail_number:
+                found[frame_number] = tail_img
+        missing = sorted(frame_indices.difference(found))
     if missing:
         raise RuntimeError(f"Could not decode frame(s) {missing[:5]} from {video_path}")
     return found
@@ -671,12 +815,19 @@ def render_cache_key(plan: dict[str, Any], clips_manifest: dict[str, Any], param
         "fps": params["fps"],
         "tileFps": params["tile_fps"],
         "preRoll": params["pre_roll"],
+        "clipStartSec": params["clip_start_sec"],
         "effectiveZoom": params["effective_zoom"],
         "zoomHold": params["zoom_hold"],
         "freeze": params["freeze"],
         "tileStartDelay": params["tile_start_delay"],
         "playStagger": params["play_stagger"],
+        "repeatTimeJitter": params["repeat_time_jitter"],
         "loopShortClips": params["loop_short_clips"],
+        "finishDistribution": params["finish_distribution"],
+        "finishCenter": params["finish_center"],
+        "finishSpread": params["finish_spread"],
+        "finishEarliest": params["finish_earliest"],
+        "finishSeed": params["finish_seed"],
         "jpegQuality": params["jpeg_quality"],
         "background": list(params["background"]),
         "crf": params["crf"],
@@ -791,10 +942,54 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help="per-cell randomized clip start offset, as a fraction of clip length",
     )
     parser.add_argument(
+        "--repeat-time-jitter-sec",
+        type=float,
+        default=2.0,
+        help="(--finish-distribution end only) stable per-cell timeline jitter so repeated clips desync",
+    )
+    parser.add_argument(
+        "--finish-distribution",
+        choices=("normal", "uniform", "end"),
+        default="normal",
+        help=(
+            "how tile finish (matched-frame) times are spread: 'normal' (default) bell curve, "
+            "'uniform' even spread, 'end' legacy behavior where every tile lands together"
+        ),
+    )
+    parser.add_argument(
+        "--finish-center-sec",
+        type=float,
+        default=None,
+        help="mean finish time for --finish-distribution normal (default: clipFinish - 2*spread)",
+    )
+    parser.add_argument(
+        "--finish-spread-sec",
+        type=float,
+        default=2.5,
+        help="finish-time std dev for normal (or half-range bias for uniform), in seconds",
+    )
+    parser.add_argument(
+        "--finish-earliest-sec",
+        type=float,
+        default=None,
+        help="earliest a tile may finish, in render seconds (default: clipStart + max(2s, 10%% of pre-roll))",
+    )
+    parser.add_argument(
+        "--finish-seed",
+        type=int,
+        default=0,
+        help="reshuffle the per-cell finish-time pattern without changing its shape",
+    )
+    parser.add_argument(
         "--loop-short-clips",
         "--loop-short-clip",
         action="store_true",
         help="loop clips shorter than the full pre-roll until their final approach to the matched frame",
+    )
+    parser.add_argument(
+        "--start-clips-after-zoom-hold",
+        action="store_true",
+        help="start tile clip playback after --zoom-hold-sec instead of at t=0",
     )
     parser.add_argument("--background", type=parse_color, default=parse_color("#050505"), help="background color #rrggbb")
     parser.add_argument("--scale", type=float, default=1.0, help="canvas scale vs plan output size")
@@ -824,19 +1019,42 @@ def resolve_params(plan: dict[str, Any], args: argparse.Namespace) -> dict[str, 
     zoom_duration = max(0.0, float(args.zoom_duration_sec))
     effective_zoom = min(zoom_duration, pre_roll) if zoom_duration > 0 else pre_roll
     zoom_hold = clamp(float(args.zoom_hold_sec), 0.0, max(0.0, effective_zoom - 0.001))
+    clip_start_sec = zoom_hold if args.start_clips_after_zoom_hold else 0.0
     freeze = float(args.freeze_sec) if args.freeze_sec is not None else float(timing.get("freezeSec", 0.0))
     freeze = max(0.0, freeze)
     canvas_w, canvas_h = output_canvas_size(float(grid["outputWidth"]), float(grid["outputHeight"]), args)
+
+    clip_finish_sec = clip_start_sec + pre_roll
+    finish_distribution = str(args.finish_distribution)
+    finish_spread = max(0.1, float(args.finish_spread_sec))
+    if args.finish_earliest_sec is not None:
+        finish_earliest = clamp(float(args.finish_earliest_sec), 0.0, clip_finish_sec - 0.001)
+    else:
+        finish_earliest = min(clip_start_sec + max(2.0, 0.1 * pre_roll), clip_finish_sec - 0.001)
+    if args.finish_center_sec is not None:
+        finish_center = float(args.finish_center_sec)
+    else:
+        finish_center = clip_finish_sec - 2.0 * finish_spread
+    finish_center = clamp(finish_center, finish_earliest, clip_finish_sec)
+
     return {
         "fps": fps,
         "tile_fps": float(timing.get("tileFps", fps)),
         "pre_roll": pre_roll,
+        "clip_start_sec": clip_start_sec,
+        "clip_finish_sec": clip_finish_sec,
         "effective_zoom": effective_zoom,
         "zoom_hold": zoom_hold,
         "freeze": freeze,
         "tile_start_delay": max(0.0, float(args.tile_start_delay_sec)),
         "play_stagger": max(0.0, float(args.play_start_stagger)),
+        "repeat_time_jitter": max(0.0, float(args.repeat_time_jitter_sec)),
         "loop_short_clips": bool(args.loop_short_clips),
+        "finish_distribution": finish_distribution,
+        "finish_center": finish_center,
+        "finish_spread": finish_spread,
+        "finish_earliest": finish_earliest,
+        "finish_seed": int(args.finish_seed),
         "canvas_w": canvas_w,
         "canvas_h": canvas_h,
         "background": tuple(int(c) for c in args.background),
@@ -881,10 +1099,12 @@ def main(argv: list[str] | None = None) -> int:
     fps = params["fps"]
     effective_zoom = params["effective_zoom"]
     pre_roll = params["pre_roll"]
+    clip_start = params["clip_start_sec"]
     freeze = params["freeze"]
     # Keep rendering until both the camera is fully zoomed out and every clip has
     # reached its matched frame. This lets clips continue playing after zoom-out.
-    static_after_sec = max(effective_zoom, pre_roll)
+    clips_finish_sec = params["clip_finish_sec"]
+    static_after_sec = max(effective_zoom, clips_finish_sec)
     render_duration = static_after_sec + freeze
     if args.max_seconds is not None:
         render_duration = min(render_duration, max(0.0, float(args.max_seconds)))
@@ -916,10 +1136,24 @@ def main(argv: list[str] | None = None) -> int:
     print(
         f"Canvas {params['canvas_w']}x{params['canvas_h']} @ {fps:g}fps, "
         f"zoom {effective_zoom:g}s (hold {params['zoom_hold']:g}s), "
-        f"clips finish {pre_roll:g}s + freeze {freeze:g}s "
+        f"clips start {clip_start:g}s, finish {clips_finish_sec:g}s + freeze {freeze:g}s "
         f"= {total_frames} frame(s)",
         flush=True,
     )
+    if params["finish_distribution"] == "normal":
+        print(
+            f"Tile finish: normal(center {params['finish_center']:.1f}s, "
+            f"spread {params['finish_spread']:.1f}s) in "
+            f"[{params['finish_earliest']:.1f}s, {clips_finish_sec:g}s]",
+            flush=True,
+        )
+    elif params["finish_distribution"] == "uniform":
+        print(
+            f"Tile finish: uniform in [{params['finish_earliest']:.1f}s, {clips_finish_sec:g}s]",
+            flush=True,
+        )
+    else:
+        print("Tile finish: end (all tiles land together at clip finish)", flush=True)
     print(
         f"Opening cell {opening_cell} -> start window {tuple(round(v, 1) for v in start_window)}",
         flush=True,
@@ -1022,6 +1256,8 @@ def main(argv: list[str] | None = None) -> int:
             "totalFrames": total_frames,
             "renderDurationSec": render_duration,
             "effectiveZoomSec": effective_zoom,
+            "clipStartSec": clip_start,
+            "clipsFinishSec": clips_finish_sec,
             "staticAfterSec": static_after_sec,
             "zoomHoldSec": params["zoom_hold"],
             "freezeSec": freeze,

@@ -209,10 +209,34 @@ The camera math is a direct port of the reference pipeline
 - The camera opens framed on the opening cell (expanded to the output aspect so
   it never distorts) and zooms out with a constant zoom factor (window size is
   geometric in time), panning the top-left toward `(0, 0)`.
-- Each tile plays from a per-cell staggered start toward its matched frame,
-  reaching the exact matched frame at the clip's `matchAtSec`.
+- Each tile plays the trailing portion of its pre-roll and settles onto its
+  matched frame at a per-cell **finish time**, then holds. Finish times are
+  spread across the timeline (see `--finish-distribution`) so tiles lock in
+  progressively instead of all landing at once.
 - After the zoom completes the final mosaic is held for `freezeSec`. Those
   frames are identical, so they are rendered once and copied.
+
+### Tile finish times (`--finish-distribution`)
+
+Earlier builds played every tile its full `matchAtSec` of pre-roll and converged
+on the matched frame at `clipFinishSec`. Because Step 2 caps each clip's pre-roll
+at `preRollSec`, ~80% of clips share the exact same `matchAtSec`, so the vast
+majority of tiles snapped to their final frame in the last instant. The renderer
+now gives each non-opening cell its own finish time:
+
+- `normal` (default): finish times follow a clamped bell curve centered before
+  the end, so most tiles settle through the middle of the timeline and only a
+  few stragglers remain for the final reveal.
+- `uniform`: finish times are spread evenly across the window.
+- `end`: legacy behavior — every tile lands together at `clipFinishSec`
+  (this is the mode that honors `--repeat-time-jitter-sec`,
+  `--play-start-stagger`, and `--tile-start-delay-sec`).
+
+A cell whose finish time is early simply shows a shorter run-up (the tail of its
+pre-roll); a cell with a late finish shows more of it. Whatever the distribution,
+every tile is guaranteed to be on its matched frame by `clipFinishSec`, so the
+freeze always shows the complete mosaic. Changing any finish setting invalidates
+the render cache and re-renders the dynamic frames.
 
 By default the zoom spans the full pre-roll and the final mosaic is held for the
 plan's `freezeSec`, so the video is `preRollSec + freezeSec` long. If you pass a
@@ -232,6 +256,13 @@ python3 05-render-video.py --max-seconds 5         # render just the opening, fo
 python3 05-render-video.py --zoom-duration-sec 20 --zoom-hold-sec 4
 python3 05-render-video.py --freeze-sec 6 --play-start-stagger 0.5
 python3 05-render-video.py --loop-short-clips     # loop clips shorter than pre-roll until final approach
+python3 05-render-video.py --start-clips-after-zoom-hold
+python3 05-render-video.py --finish-distribution normal --finish-spread-sec 2.5
+python3 05-render-video.py --finish-distribution normal --finish-center-sec 31 --finish-spread-sec 4
+python3 05-render-video.py --finish-distribution uniform   # even spread of finish times
+python3 05-render-video.py --finish-distribution end       # legacy: all tiles land together
+python3 05-render-video.py --finish-seed 7                 # reshuffle which tiles finish when
+python3 05-render-video.py --repeat-time-jitter-sec 2      # only used with --finish-distribution end
 python3 05-render-video.py --output-width 1920 --crf 20 --preset medium
 python3 05-render-video.py --time-tile-frames 12   # lower RAM, more decoder opens
 python3 05-render-video.py --force                 # ignore the render cache
@@ -244,9 +275,22 @@ Speed notes:
   scatters those pixels into the output canvases, then closes the decoder.
 - `--time-tile-frames` trades memory for fewer decoder opens. Higher values are
   usually faster but hold more full-size canvases in RAM per worker.
-- `--loop-short-clips` keeps short-history clips moving instead of freezing
-  early. They loop until their final approach window, then play forward to the
-  matched frame at the pre-roll finish.
+- `--finish-distribution` controls how tile finish (matched-frame) times are
+  spread. `normal` (default) settles tiles across the timeline on a bell curve;
+  `--finish-center-sec` / `--finish-spread-sec` / `--finish-earliest-sec` tune
+  it (defaults: center `clipFinish - 2*spread`, spread `2.5s`, earliest
+  `clipStart + max(2s, 10% of pre-roll)`). `--finish-seed` reshuffles which
+  cells finish when without changing the shape.
+- `--loop-short-clips` keeps clips whose pre-roll is shorter than their assigned
+  play window moving instead of freezing early. They loop until their final
+  approach window, then play forward to the matched frame at their finish time.
+- `--start-clips-after-zoom-hold` keeps the opening frame still during
+  `--zoom-hold-sec`, then starts tile playback. The final mosaic hold begins at
+  `zoomHoldSec + preRollSec` if that is later than the zoom completion.
+- `--repeat-time-jitter-sec`, `--play-start-stagger`, and
+  `--tile-start-delay-sec` only apply to `--finish-distribution end`; the
+  distributed modes desync repeated clips via their per-cell finish times. The
+  opening cell always plays from `t=0` and is never delayed by any of these.
 - The most expensive frames are near full zoom-out (every cell visible); use
   `--scale` or `--max-seconds` for quick iteration before a full render.
 - Tile sharpness at high zoom is limited by Step 3's tile resolution
