@@ -68,3 +68,6 @@ mosaic-pipeline/videos/
 *.env
 .env
 .gstack/
+
+# website static assets — re-include despite the global image/video ignores above
+!website/public/**

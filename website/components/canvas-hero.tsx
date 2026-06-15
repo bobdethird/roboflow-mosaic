@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import Link from "next/link"
-import { ArrowLeft, Lock } from "lucide-react"
+import { ArrowLeft, Download, Lock } from "lucide-react"
 
 import {
   loadLibrary,
@@ -628,6 +628,30 @@ export function CanvasHero({
     }
   }, [bucket, maxTileReuse, eraEmphasis])
 
+  // Export the current mosaic canvas as a downloaded PNG. The canvas is never
+  // tainted (tiles are fetched with CORS — the same toBlob path backs the
+  // generated-mosaic cache), so toBlob succeeds at full frame resolution.
+  const handleDownload = React.useCallback(async () => {
+    const canvas = mosaicCanvasRef.current
+    if (!canvas || !hasMosaic) return
+    try {
+      const blob = await canvasToBlob(canvas)
+      if (!blob) return
+      const url = URL.createObjectURL(blob)
+      const base =
+        reference?.name.replace(/\.[^./\\]+$/, "").trim() || bucket
+      const a = document.createElement("a")
+      a.href = url
+      a.download = `${base}-mosaic.png`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(url)
+    } catch {
+      // Download is best-effort; failure leaves the on-screen mosaic intact.
+    }
+  }, [hasMosaic, reference, bucket])
+
   React.useEffect(() => {
     if (!restoredMosaicUrl || !frame) return
     let cancelled = false
@@ -965,6 +989,16 @@ export function CanvasHero({
                       ? "Regenerate"
                       : "Generate mosaic"}
                 </Button>
+                {hasMosaic && (
+                  <Button
+                    variant="outline"
+                    onClick={() => void handleDownload()}
+                    disabled={isGenerating}
+                  >
+                    <Download />
+                    Save image
+                  </Button>
+                )}
               </div>
             )}
           </div>
