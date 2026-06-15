@@ -5,11 +5,14 @@ __pycache__/
 .streamlit/
 .DS_Store
 
+# generated data and dependencies
+**/data/
+**/node_module/
+**/node_modules/
+
 # mosaic photo pipeline (.mjs scripts)
 photos/
-pipeline/data/
 pipeline/output/
-pipeline/node_modules/
 pipeline/videos*/
 
 # diversity clip pipeline (diversity.py)
@@ -21,12 +24,10 @@ videos/
 
 # video-generation experiments
 video-generation/.cache/
-video-generation/data/
 video-generation/output/
 video-generation/.DS_Store
 
 # fresh mosaic pipeline
-mosaic-pipeline/data/
 mosaic-pipeline/output/
 mosaic-pipeline/videos/
 
