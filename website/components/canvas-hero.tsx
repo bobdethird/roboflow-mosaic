@@ -106,7 +106,7 @@ function ControlsSidebarTrigger({
   return (
     <Button
       type="button"
-      variant="outline"
+      variant="ghost"
       size={isMobile ? "default" : "icon-sm"}
       aria-label={isOpen ? "Hide controls sidebar" : "Show controls sidebar"}
       aria-expanded={isOpen}
@@ -944,7 +944,7 @@ export function CanvasHero({
       <section className="relative min-h-svh min-w-0 flex-1 overflow-x-hidden bg-background select-none xl:h-svh xl:overflow-hidden">
         <ControlsSidebarTrigger
           onToggle={closeAdvanced}
-          className="fixed inset-x-4 bottom-[calc(env(safe-area-inset-bottom,0px)+1rem)] z-30 h-10 justify-center border bg-background shadow-lg md:absolute md:inset-x-auto md:top-6 md:right-6 md:bottom-auto md:size-7 md:shadow-none xl:top-8 xl:right-8"
+          className="fixed inset-x-4 bottom-[calc(env(safe-area-inset-bottom,0px)+1rem)] z-30 h-10 justify-center bg-background shadow-lg md:absolute md:inset-x-auto md:top-6 md:right-6 md:bottom-auto md:size-7 md:shadow-none xl:top-8 xl:right-8"
         />
 
         <div
