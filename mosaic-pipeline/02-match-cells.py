@@ -330,11 +330,10 @@ def match_cells(
         if selected is None
         else np.isin(video_by_global, np.array(selected, dtype=np.int32))
     )
-    preroll_ok = (
-        local_by_global >= int(math.ceil(args.pre_roll_sec * fps))
-        if args.require_full_preroll
-        else np.ones(total_frames, dtype=bool)
-    )
+    min_clip_sec = max(0.0, float(args.min_clip_sec))
+    if args.require_full_preroll:
+        min_clip_sec = max(min_clip_sec, float(args.pre_roll_sec))
+    preroll_ok = local_by_global >= int(math.ceil(min_clip_sec * fps))
     keep = np.where((signature_lstd >= args.flatness_min) & video_ok & preroll_ok)[0]
     if keep.size == 0:
         raise SystemExit("No usable frame candidates after filters.")
@@ -459,6 +458,7 @@ def match_cells(
         "candidateFrames": int(keep.size),
         "totalIndexedFrames": int(total_frames),
         "distinctFramesUsed": int(len(set(assignments.tolist()))),
+        "minClipSec": min_clip_sec,
         "selectedVideoIndices": selected,
         "openingVideoIndices": opening_selected,
         "openingNeighborhoodVideoIndices": neighborhood_selected,
@@ -572,6 +572,7 @@ def write_plan(
             "flatnessMin": args.flatness_min,
             "cleanRms": args.clean_rms,
             "candK": args.cand_k,
+            "minClipSec": args.min_clip_sec,
             "requireFullPreroll": args.require_full_preroll,
             "openingVideoIndices": args.opening_video_indices,
             "openingVideoIds": args.opening_video_ids,
@@ -618,6 +619,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--clean-rms", type=float, default=12.0, help="texture tiebreak radius; 0 disables")
     parser.add_argument("--cand-k", type=int, default=256, help="candidate pool for texture tiebreak")
     parser.add_argument("--match-grid", type=int, default=8, choices=[2, 4, 8, 16])
+    parser.add_argument(
+        "--min-clip-sec",
+        type=float,
+        default=0.0,
+        help="only match frames at least this many seconds into their source video",
+    )
     parser.add_argument("--require-full-preroll", action="store_true")
     parser.add_argument("--video-indices", default=None, help="comma-separated manifest video indices")
     parser.add_argument("--video-ids", default=None, help="comma-separated video id/path substrings")

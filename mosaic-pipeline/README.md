@@ -3,6 +3,71 @@
 Fresh mosaic video pipeline. This folder is the new canonical pipeline root; old
 pipeline files are useful as reference only.
 
+## Current Run Commands
+
+These are the commands for the current Knicks mosaic video setup: 35 seconds of
+clip pre-roll, 3 seconds of final freeze, max frame reuse of 3, minimum 10
+seconds of source footage before each matched frame, adaptive proxy clips sized
+for a 3840 plan, and a 1920x1920 final video render.
+
+```bash
+cd mosaic-pipeline
+python3 -m pip install -r requirements.txt
+```
+
+Step 1 only needs to be rerun when the source video set changes:
+
+```bash
+python3 01-sync-and-index.py
+```
+
+Step 2 creates the match plan:
+
+```bash
+python3 02-match-cells.py \
+  --reference ref-final.jpeg \
+  --pre-roll-sec 35 \
+  --freeze-sec 3 \
+  --reuse-cap 3 \
+  --min-clip-sec 10 \
+  --center-video-ids 0-v1.mp4,0-v2.mp4,0-v3.mp4
+```
+
+Step 3 prepares adaptive video proxy clips:
+
+```bash
+python3 03-prepare-clips.py \
+  --workers 4 \
+  --cache-format video \
+  --sizing adaptive \
+  --target-output-width 3840 \
+  --max-tile-px 1080
+```
+
+Step 4 is optional for a still mosaic preview:
+
+```bash
+python3 04-render-photo.py \
+  --poster-width 1920
+```
+
+Step 5 renders the video:
+
+```bash
+python3 05-render-video.py \
+  --workers 4 \
+  --output-width 1920 \
+  --zoom-hold-sec 3 \
+  --zoom-duration-sec 33 \
+  --freeze-sec 3 \
+  --loop-short-clips \
+  --start-clips-after-zoom-hold
+```
+
+The Step 5 finish distribution defaults are currently tuned for this timing:
+`normal`, center `33s`, spread `2.5s`, latest finish `38s`, then a final frozen
+mosaic from `38s` to `41s`.
+
 ## Step 1: Sync Videos And Index Frames
 
 ```bash
@@ -64,7 +129,13 @@ timestamp seeking.
 
 ```bash
 cd mosaic-pipeline
-python3 02-match-cells.py --reference ../reference.png
+python3 02-match-cells.py \
+  --reference ref-final.jpeg \
+  --pre-roll-sec 35 \
+  --freeze-sec 3 \
+  --reuse-cap 3 \
+  --min-clip-sec 10 \
+  --center-video-ids 0-v1.mp4,0-v2.mp4,0-v3.mp4
 ```
 
 What it writes:
@@ -86,6 +157,7 @@ python3 02-match-cells.py --cols 96 --rows 54
 python3 02-match-cells.py --cells 5000
 python3 02-match-cells.py --reuse-cap 20 --min-dist 4
 python3 02-match-cells.py --match-grid 8 --clean-rms 12
+python3 02-match-cells.py --reuse-cap 3 --min-clip-sec 10
 python3 02-match-cells.py --require-full-preroll --pre-roll-sec 28
 ```
 
@@ -100,12 +172,20 @@ Matching uses the lessons from the still-image work:
 - Use a texture/cleanliness tiebreak (`--clean-rms`) for color-tied frames.
 - Avoid exact-frame clustering with `--reuse-cap` and `--min-dist`.
 - Block only near-identical same-video neighbors inside `--exclude-sec`.
+- Use `--min-clip-sec` to require each matched frame to be at least that many
+  seconds into its source video; `--require-full-preroll` is the stricter form
+  that requires at least `--pre-roll-sec`.
 
 ## Step 3: Prepare Tile Clips
 
 ```bash
 cd mosaic-pipeline
-python3 03-prepare-clips.py
+python3 03-prepare-clips.py \
+  --workers 4 \
+  --cache-format video \
+  --sizing adaptive \
+  --target-output-width 3840 \
+  --max-tile-px 1080
 ```
 
 What it writes:
@@ -190,7 +270,14 @@ python3 04-render-photo.py --use-clips
 
 ```bash
 cd mosaic-pipeline
-python3 05-render-video.py
+python3 05-render-video.py \
+  --workers 4 \
+  --output-width 1920 \
+  --zoom-hold-sec 3 \
+  --zoom-duration-sec 33 \
+  --freeze-sec 3 \
+  --loop-short-clips \
+  --start-clips-after-zoom-hold
 ```
 
 What it writes:

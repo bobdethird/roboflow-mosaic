@@ -73,6 +73,17 @@ def run(command: list[str]) -> None:
         raise RuntimeError(f"{rendered} failed ({result.returncode}): {detail[:1200]}")
 
 
+def valid_jpeg(path: Path) -> bool:
+    if not path.exists() or path.stat().st_size <= 2:
+        return False
+    try:
+        with path.open("rb") as handle:
+            handle.seek(-2, os.SEEK_END)
+            return handle.read(2) == b"\xff\xd9"
+    except OSError:
+        return False
+
+
 def frame_list(cache_dir: Path) -> list[Path]:
     return sorted(cache_dir.glob("frame_*.jpg"))
 
@@ -323,8 +334,6 @@ def extract_exact_frames(records: list[dict[str, Any]], plan: dict[str, Any], ar
         return {}
     sample_fps = float(plan["index"]["sampleFps"])
     exact_root = CLIP_CACHE_DIR / "__exact"
-    if exact_root.exists():
-        shutil.rmtree(exact_root)
     exact_root.mkdir(parents=True, exist_ok=True)
 
     print(
@@ -337,32 +346,58 @@ def extract_exact_frames(records: list[dict[str, Any]], plan: dict[str, Any], ar
         frame_index = int(record["frameIndex"])
         width, height = int(record["width"]), int(record["height"])
         out = exact_root / f"{record['cacheKey']}.jpg"
+        if valid_jpeg(out):
+            return str(record["cacheKey"]), out, 0.0
         seek = max(0.0, frame_index / sample_fps - args.seek_margin_sec)
         started = time.time()
-        run(
-            [
-                "ffmpeg",
-                "-hide_banner",
-                "-loglevel",
-                "error",
-                "-y",
-                "-copyts",
-                "-ss",
-                ffmpeg_time(seek),
-                "-i",
-                record["videoPath"],
-                "-vf",
-                seek_exact_vf(frame_index, sample_fps, width, height),
-                "-vsync",
-                "0",
-                "-frames:v",
-                "1",
-                "-q:v",
-                str(args.jpeg_quality),
-                str(out),
-            ]
-        )
-        if not out.exists():
+        command = [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-copyts",
+            "-ss",
+            ffmpeg_time(seek),
+            "-i",
+            record["videoPath"],
+            "-vf",
+            seek_exact_vf(frame_index, sample_fps, width, height),
+            "-vsync",
+            "0",
+            "-frames:v",
+            "1",
+            "-q:v",
+            str(args.jpeg_quality),
+            str(out),
+        ]
+        try:
+            subprocess.run(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=True,
+                timeout=args.exact_timeout_sec,
+            )
+        except subprocess.TimeoutExpired as exc:
+            if valid_jpeg(out):
+                print(
+                    f"[warn] exact ffmpeg timed out after {args.exact_timeout_sec:g}s "
+                    f"but wrote {out.name}; continuing",
+                    flush=True,
+                )
+            else:
+                rendered = " ".join(command[:8] + ["..."])
+                raise RuntimeError(
+                    f"{rendered} timed out after {args.exact_timeout_sec:g}s "
+                    f"without a complete JPEG for {record['key']}"
+                ) from exc
+        except subprocess.CalledProcessError as exc:
+            rendered = " ".join(command[:8] + ["..."])
+            detail = (exc.stderr or exc.stdout or "no ffmpeg output").strip()
+            raise RuntimeError(f"{rendered} failed ({exc.returncode}): {detail[:1200]}") from exc
+        if not valid_jpeg(out):
             raise RuntimeError(f"ffmpeg did not produce exact frame for {record['key']}")
         return str(record["cacheKey"]), out, time.time() - started
 
@@ -604,6 +639,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         default=1.0,
         help="seconds decoded before each target: locks the exact fps grid and the preroll window",
     )
+    parser.add_argument(
+        "--exact-timeout-sec",
+        type=float,
+        default=60.0,
+        help="timeout per exact-frame ffmpeg extraction; accepts complete JPEGs already written",
+    )
     return parser.parse_args(argv)
 
 
@@ -619,6 +660,7 @@ def main(argv: list[str] | None = None) -> int:
     args.min_tile_px = max(1, min(int(args.min_tile_px), args.max_tile_px))
     args.size_margin = max(0.01, float(args.size_margin))
     args.size_samples = max(2, int(args.size_samples))
+    args.exact_timeout_sec = max(1.0, float(args.exact_timeout_sec))
     if bool(args.opening_width) != bool(args.opening_height):
         raise SystemExit("--opening-width and --opening-height must be passed together")
     if args.opening_width is not None:
