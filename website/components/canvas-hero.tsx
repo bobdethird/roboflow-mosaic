@@ -944,16 +944,16 @@ export function CanvasHero({
       <section className="relative min-h-svh min-w-0 flex-1 overflow-x-hidden bg-background select-none xl:h-svh xl:overflow-hidden">
         <ControlsSidebarTrigger
           onToggle={closeAdvanced}
-          className="fixed inset-x-4 bottom-4 z-30 h-10 justify-center border bg-background shadow-lg md:absolute md:inset-x-auto md:top-6 md:right-6 md:bottom-auto md:size-7 md:shadow-none xl:top-8 xl:right-8"
+          className="fixed inset-x-4 bottom-[calc(env(safe-area-inset-bottom,0px)+1rem)] z-30 h-10 justify-center border bg-background shadow-lg md:absolute md:inset-x-auto md:top-6 md:right-6 md:bottom-auto md:size-7 md:shadow-none xl:top-8 xl:right-8"
         />
 
         <div
-          className="box-border grid min-h-svh w-full grid-cols-1 gap-8 px-3 py-4 sm:px-4 md:p-6 xl:h-svh xl:items-stretch xl:gap-8 xl:p-8 xl:[grid-template-columns:minmax(0,1fr)_minmax(0,var(--mosaic-col-max))_minmax(0,1fr)]"
+          className="box-border grid min-h-svh w-full grid-cols-1 gap-8 px-3 py-4 sm:px-4 max-md:flex max-md:flex-col max-md:gap-0 max-md:pb-[calc(env(safe-area-inset-bottom,0px)+1rem+2.5rem+1rem)] max-md:pt-[calc(env(safe-area-inset-top,0px)+1rem+1.5rem+1rem)] md:p-6 xl:h-svh xl:items-stretch xl:gap-8 xl:p-8 xl:[grid-template-columns:minmax(0,1fr)_minmax(0,var(--mosaic-col-max))_minmax(0,1fr)]"
           style={
             { "--mosaic-col-max": MOSAIC_CENTER_COLUMN_MAX } as React.CSSProperties
           }
         >
-          <div className="z-20 flex min-w-0 flex-col items-start">
+          <div className="z-20 flex min-w-0 flex-col items-start max-md:absolute max-md:inset-x-3 max-md:top-[calc(env(safe-area-inset-top,0px)+1rem)] sm:max-md:inset-x-4">
             <Button variant="link" asChild className="h-auto p-0 underline">
               <Link href="/">
                 <ArrowLeft />
@@ -962,7 +962,7 @@ export function CanvasHero({
             </Button>
           </div>
 
-          <div className="mx-auto grid w-full min-w-0 place-items-center md:max-w-[94vw] xl:max-w-none">
+          <div className="mx-auto grid w-full min-w-0 place-items-center max-md:flex max-md:flex-1 max-md:items-center max-md:justify-center md:max-w-[94vw] xl:max-w-none">
             {/* The flat mosaic, centered in the dominant middle column. */}
             {reference && frame ? (
               <div
@@ -1088,15 +1088,14 @@ export function CanvasHero({
             </SidebarGroupContent>
           </SidebarGroup>
 
-          {reference && (
-            <>
-              <SidebarSeparator className="mx-0" />
+          {reference && <SidebarSeparator className="mx-0" />}
 
-              <SidebarGroup className="gap-3 p-0">
-                <SidebarGroupLabel className="h-auto px-0 text-sm text-muted-foreground">
-                  Resolution
-                </SidebarGroupLabel>
-                <SidebarGroupContent className="flex flex-col gap-3">
+          {reference && (
+            <SidebarGroup className="gap-3 p-0">
+              <SidebarGroupLabel className="h-auto px-0 text-sm text-muted-foreground">
+                Resolution
+              </SidebarGroupLabel>
+              <SidebarGroupContent className="flex flex-col gap-3">
                 <div
                   className="grid grid-cols-3 gap-1"
                   role="group"
@@ -1146,7 +1145,6 @@ export function CanvasHero({
                 )}
               </SidebarGroupContent>
             </SidebarGroup>
-            </>
           )}
         </SidebarContent>
 
