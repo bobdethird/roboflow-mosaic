@@ -48,9 +48,8 @@ interface ReferenceEmptyCardProps {
   onSelect: (file: File) => void
 }
 
-// Compact empty-state card that lives in the side reference area. Click to
-// browse or drop an image onto it (pasting also works, handled by the canvas).
-// No forced full-screen prompt.
+// Compact empty-state card. Click to browse or drop an image onto it (pasting
+// also works, handled by the canvas). No forced full-screen prompt.
 export function ReferenceEmptyCard({ onSelect }: ReferenceEmptyCardProps) {
   const inputRef = React.useRef<HTMLInputElement>(null)
   const [isDragOver, setIsDragOver] = React.useState(false)
@@ -85,16 +84,81 @@ export function ReferenceEmptyCard({ onSelect }: ReferenceEmptyCardProps) {
         }}
         aria-label="Add reference image"
         className={cn(
-          "flex w-56 flex-col items-center gap-2 rounded-2xl border border-dashed p-4 text-center",
+          "flex aspect-square w-[28rem] max-w-[86vw] flex-col items-center justify-center rounded-2xl border border-dashed p-8 text-center",
           "hover:bg-accent focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/30",
           isDragOver && "border-primary bg-accent"
         )}
       >
-        <span className="grid size-9 place-items-center rounded-full bg-muted text-muted-foreground">
+        <span className="grid size-12 place-items-center rounded-full bg-muted text-muted-foreground">
+          <ImageUp className="size-5" />
+        </span>
+        <span className="text-lg text-muted-foreground">
+          Add a reference image to begin
+        </span>
+        <span className="text-sm text-muted-foreground">click, drop, or paste</span>
+      </button>
+
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={(e) => {
+          const file = firstImage(e.target.files)
+          if (file) onSelect(file)
+          e.target.value = ""
+        }}
+      />
+    </div>
+  )
+}
+
+interface ReferencePanelEmptyProps {
+  onSelect: (file: File) => void
+}
+
+// Compact empty state for the sidebar reference panel.
+export function ReferencePanelEmpty({ onSelect }: ReferencePanelEmptyProps) {
+  const inputRef = React.useRef<HTMLInputElement>(null)
+  const [isDragOver, setIsDragOver] = React.useState(false)
+  const dragDepth = React.useRef(0)
+
+  return (
+    <div data-no-pan>
+      <button
+        type="button"
+        onClick={() => inputRef.current?.click()}
+        onDragEnter={(e) => {
+          if (!e.dataTransfer.types.includes("Files")) return
+          e.preventDefault()
+          dragDepth.current++
+          setIsDragOver(true)
+        }}
+        onDragOver={(e) => {
+          if (e.dataTransfer.types.includes("Files")) e.preventDefault()
+        }}
+        onDragLeave={() => {
+          dragDepth.current = Math.max(0, dragDepth.current - 1)
+          if (dragDepth.current === 0) setIsDragOver(false)
+        }}
+        onDrop={(e) => {
+          e.preventDefault()
+          dragDepth.current = 0
+          setIsDragOver(false)
+          const file = firstImage(e.dataTransfer.files)
+          if (file) onSelect(file)
+        }}
+        aria-label="Add reference image"
+        className={cn(
+          "flex w-full flex-col items-center gap-2 rounded-xl border border-dashed p-4 text-center",
+          "hover:bg-accent focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/30",
+          isDragOver && "border-primary bg-accent"
+        )}
+      >
+        <span className="grid size-10 place-items-center rounded-full bg-muted text-muted-foreground">
           <ImageUp className="size-4" />
         </span>
-        <span className="text-xs text-muted-foreground">Reference</span>
-        <span className="text-sm font-medium">Add reference image</span>
+        <span className="text-sm text-muted-foreground">Add a reference image</span>
         <span className="text-xs text-muted-foreground">click, drop, or paste</span>
       </button>
 
@@ -127,10 +191,7 @@ export function ReferenceCard({
 }: ReferenceCardProps) {
   const inputRef = React.useRef<HTMLInputElement>(null)
   return (
-    <div
-      data-no-pan
-      className="flex w-56 items-start gap-3 rounded-2xl border bg-card p-3"
-    >
+    <div data-no-pan className="flex w-full items-start gap-3">
       <div className="size-14 shrink-0 overflow-hidden rounded-md bg-muted">
         {/* eslint-disable-next-line @next/next/no-img-element -- object URL, no next/image benefit */}
         <img
@@ -142,7 +203,6 @@ export function ReferenceCard({
       </div>
 
       <div className="flex min-w-0 flex-col gap-1">
-        <span className="text-xs text-muted-foreground">Reference</span>
         <span className="truncate text-sm font-medium" title={reference.name}>
           {reference.name}
         </span>

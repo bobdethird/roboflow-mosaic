@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import Link from "next/link"
-import { ArrowLeft, Download, Lock } from "lucide-react"
+import { ArrowLeft, Download, Lock, PanelRight } from "lucide-react"
 
 import {
   loadLibrary,
@@ -17,10 +17,22 @@ import {
 import {
   ReferenceCard,
   ReferenceEmptyCard,
+  ReferencePanelEmpty,
   makeReferenceFromFile,
   type ReferenceImage,
 } from "@/components/reference-image"
 import { Button } from "@/components/ui/button"
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarFooter,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarGroupLabel,
+  SidebarProvider,
+  SidebarSeparator,
+  useSidebar,
+} from "@/components/ui/sidebar"
 import { Slider } from "@/components/ui/slider"
 import { MosaicEngine } from "@/lib/mosaic-client"
 import type { TileWeighting } from "@/lib/mosaic-protocol"
@@ -42,10 +54,121 @@ const CANVAS_LONG_EDGE = 1600
 const FIELD_LONG_EDGE = 360
 
 // Mosaic cell size in px (within the frame). Smaller = finer grid (more tiles,
-// higher resolution). The resolution slider tunes this between the bounds.
+// higher resolution). Resolution is chosen from three fixed presets below.
 const DENSITY_MIN = 16
 const DENSITY_MAX = 80
-const DENSITY_DEFAULT = 40
+
+const RESOLUTION_MODES = {
+  low: 70,
+  medium: 76,
+  high: 80,
+} as const
+
+type ResolutionMode = keyof typeof RESOLUTION_MODES
+
+const RESOLUTION_MODE_ORDER: ResolutionMode[] = ["low", "medium", "high"]
+
+function densityForResolution(resolution: number, densityMin: number) {
+  return clampDensity(densityMin + DENSITY_MAX - resolution, densityMin, DENSITY_MAX)
+}
+
+function resolutionForDensity(density: number, densityMin: number) {
+  return densityMin + DENSITY_MAX - density
+}
+
+function nearestResolutionMode(
+  density: number,
+  densityMin: number
+): ResolutionMode {
+  const resolution = resolutionForDensity(density, densityMin)
+  let best: ResolutionMode = "medium"
+  let bestDiff = Infinity
+  for (const mode of RESOLUTION_MODE_ORDER) {
+    const diff = Math.abs(RESOLUTION_MODES[mode] - resolution)
+    if (diff < bestDiff) {
+      bestDiff = diff
+      best = mode
+    }
+  }
+  return best
+}
+
+function ControlsSidebarTrigger({
+  className,
+  onToggle,
+}: {
+  className?: string
+  onToggle?: () => void
+}) {
+  const { isMobile, open, openMobile, toggleSidebar } = useSidebar()
+  const isOpen = isMobile ? openMobile : open
+
+  return (
+    <Button
+      type="button"
+      variant="outline"
+      size={isMobile ? "default" : "icon-sm"}
+      aria-label={isOpen ? "Hide controls sidebar" : "Show controls sidebar"}
+      aria-expanded={isOpen}
+      className={className}
+      onClick={() => {
+        onToggle?.()
+        toggleSidebar()
+      }}
+    >
+      <PanelRight />
+      <span className={isMobile ? "" : "sr-only"}>Controls</span>
+    </Button>
+  )
+}
+
+function CloseAdvancedWhenSidebarCloses({ onClose }: { onClose: () => void }) {
+  const { isMobile, open, openMobile } = useSidebar()
+  const isOpen = isMobile ? openMobile : open
+
+  React.useEffect(() => {
+    if (!isOpen) onClose()
+  }, [isOpen, onClose])
+
+  return null
+}
+
+function SidebarExpandableControls({
+  id,
+  label,
+  open,
+  onOpenChange,
+  children,
+}: {
+  id: string
+  label: string
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  children: React.ReactNode
+}) {
+  return (
+    <div className="flex flex-col gap-3">
+      {open && (
+        <>
+          <div id={id} className="flex flex-col gap-3">
+            {children}
+          </div>
+          <SidebarSeparator className="mx-0" />
+        </>
+      )}
+      <Button
+        type="button"
+        variant="outline"
+        className="w-full justify-start"
+        aria-expanded={open}
+        aria-controls={id}
+        onClick={() => onOpenChange(!open)}
+      >
+        {label}
+      </Button>
+    </div>
+  )
+}
 
 // Era-emphasis controls (opt-in via the `eraEmphasis` prop, used by the knicks
 // collection whose tiles carry a `takenAt` date). The matcher divides color
@@ -60,9 +183,10 @@ const RECENCY_HALF_LIFE_MONTHS = 18
 // Years whose April–June window counts as "playoffs" for the playoff boost.
 const PLAYOFF_YEARS = [2025, 2026]
 
-// Largest the displayed mosaic may grow vertically. The center column applies
-// responsive width caps so narrow screens still leave the canvas visible.
-const MOSAIC_VIEWPORT_HEIGHT_PCT = 83.5
+// Largest the displayed mosaic may grow vertically (portrait refs). On desktop,
+// landscape refs are usually limited by MOSAIC_CENTER_COLUMN_MAX instead.
+const MOSAIC_VIEWPORT_HEIGHT_PCT = 85
+const MOSAIC_CENTER_COLUMN_MAX = "65vw"
 
 type Dims = { w: number; h: number }
 
@@ -118,6 +242,11 @@ const evenDim = (n: number) => Math.max(2, Math.round(n / 2) * 2)
 
 const clampDensity = (value: number, min: number, max: number) =>
   Math.min(max, Math.max(min, value))
+
+const formatSliderValue = (value: number) =>
+  Number.isInteger(value)
+    ? value.toString()
+    : value.toFixed(2).replace(/0+$/, "").replace(/\.$/, "")
 
 // Flat mosaic frame sized to the reference's aspect, long edge = CANVAS_LONG_EDGE.
 function frameDimsFor(w: number, h: number): Dims {
@@ -264,6 +393,11 @@ type CanvasHeroProps = {
   // Enable the recency/playoff emphasis controls + match bias. Only meaningful
   // for collections whose tiles carry a `takenAt` date (the knicks library).
   eraEmphasis?: boolean
+  // Hide the intro heading and description for standalone pages that only need
+  // the controls and mosaic canvas.
+  hideIntroCopy?: boolean
+  // Hide the small current-collection label above the controls.
+  hideCollectionLabel?: boolean
 }
 
 export function CanvasHero({
@@ -273,6 +407,8 @@ export function CanvasHero({
   maxTileReuse,
   minCellSize = DENSITY_MIN,
   eraEmphasis = false,
+  hideIntroCopy = false,
+  hideCollectionLabel = false,
 }: CanvasHeroProps) {
   const densityMin = clampDensity(minCellSize, 1, DENSITY_MAX)
   const [reference, setReference] = React.useState<ReferenceImage | null>(null)
@@ -280,9 +416,9 @@ export function CanvasHero({
   const [frame, setFrame] = React.useState<Dims | null>(null)
   const [isGenerating, setIsGenerating] = React.useState(false)
   const [hasMosaic, setHasMosaic] = React.useState(false)
-  // Mosaic resolution as a cell size in px; higher slider = smaller cells.
+  // Mosaic resolution as a cell size in px; smaller cells = higher resolution.
   const [density, setDensity] = React.useState(() =>
-    clampDensity(DENSITY_DEFAULT, densityMin, DENSITY_MAX)
+    densityForResolution(RESOLUTION_MODES.medium, densityMin)
   )
   // Era-emphasis strengths (knicks only). Default to a gentle tilt so the bias
   // is visible out of the box; the user can drag either to 0 to compare.
@@ -290,6 +426,7 @@ export function CanvasHero({
     RECENCY_STRENGTH_DEFAULT
   )
   const [playoffBoost, setPlayoffBoost] = React.useState(PLAYOFF_BOOST_DEFAULT)
+  const [showAdvanced, setShowAdvanced] = React.useState(false)
   const [generateProgress, setGenerateProgress] = React.useState<{
     done: number
     total: number
@@ -332,9 +469,6 @@ export function CanvasHero({
   React.useEffect(() => {
     playoffBoostRef.current = playoffBoost
   }, [playoffBoost])
-  React.useEffect(() => {
-    setDensity((current) => clampDensity(current, densityMin, DENSITY_MAX))
-  }, [densityMin])
 
   const targetProgressPct =
     generateProgress && generateProgress.total > 0
@@ -407,7 +541,12 @@ export function CanvasHero({
         bgColorRef.current = cached.bgColor
         setReference({ ...cached.reference, url: referenceUrl })
         setFrame(cached.frame)
-        setDensity(clampDensity(cached.density, densityMin, DENSITY_MAX))
+        setDensity(
+          densityForResolution(
+            RESOLUTION_MODES[nearestResolutionMode(cached.density, densityMin)],
+            densityMin
+          )
+        )
         if (eraEmphasis) {
           if (typeof cached.recencyStrength === "number") {
             setRecencyStrength(cached.recencyStrength)
@@ -791,194 +930,200 @@ export function CanvasHero({
   const currentLabel = BUCKET_LABELS[bucket]
   const otherLabel = BUCKET_LABELS[otherBucket]
   const copy = BUCKET_COPY[bucket]
+  const resolutionValue = resolutionForDensity(density, densityMin)
+  const resolutionMode = nearestResolutionMode(density, densityMin)
+  const closeAdvanced = React.useCallback(() => setShowAdvanced(false), [])
 
   return (
-    <section className="relative min-h-svh w-full overflow-x-hidden bg-background select-none xl:h-svh xl:overflow-hidden">
-      <div className="box-border grid min-h-svh w-full grid-cols-1 gap-8 px-3 py-4 sm:px-4 md:p-6 xl:h-svh xl:grid-cols-[minmax(0,1fr)_minmax(0,50vw)_minmax(0,1fr)] xl:items-stretch xl:gap-8 xl:p-8">
-        <div className="z-20 flex min-w-0 flex-col items-start">
-          <Button variant="link" asChild className="h-auto p-0 underline">
-            <Link href="/">
-              <ArrowLeft />
-              back to home
-            </Link>
-          </Button>
-        </div>
+    <SidebarProvider
+      defaultOpen
+      style={{ "--sidebar-width": "18rem" } as React.CSSProperties}
+    >
+      <CloseAdvancedWhenSidebarCloses onClose={closeAdvanced} />
 
-        <div className="mx-auto grid w-full min-w-0 place-items-center md:max-w-[88vw] xl:max-w-none">
-          {/* The flat mosaic, centered in the dominant middle column. */}
-          {reference && frame ? (
-            <div
-              className="relative w-full"
-              style={{
-                maxWidth: `calc(${MOSAIC_VIEWPORT_HEIGHT_PCT}svh * ${frame.w} / ${frame.h})`,
-                aspectRatio: `${frame.w} / ${frame.h}`,
-              }}
-              onPointerMove={handleTilePointerMove}
-              onPointerLeave={() => setHoveredTile(null)}
-              onClick={handleTileClick}
-            >
-              <canvas
-                ref={mosaicCanvasRef}
-                width={frame.w}
-                height={frame.h}
-                className="absolute inset-0 block size-full"
-              />
-              {hoveredTile && hasMosaic && (
-                <div
-                  aria-hidden="true"
-                  className="pointer-events-none absolute z-10 w-56 overflow-hidden rounded-2xl border bg-white p-2 shadow-lg"
-                  style={{
-                    left: `${(hoveredTile.x / frame.w) * 100}%`,
-                    top: `${(hoveredTile.y / frame.h) * 100}%`,
-                    transform: `translate(${
-                      hoveredTile.x > frame.w * 0.5
-                        ? "calc(-100% - 12px)"
-                        : "12px"
-                    }, ${
-                      hoveredTile.y > frame.h * 0.5
-                        ? "calc(-100% - 12px)"
-                        : "12px"
-                    })`,
-                  }}
-                >
-                  <div className="relative aspect-square w-full overflow-hidden rounded-xl bg-white">
-                    {/* eslint-disable-next-line @next/next/no-img-element -- public library URL, shown only as a hover preview */}
-                    <img
-                      src={hoveredTile.url}
-                      alt={hoveredTile.title}
-                      draggable={false}
-                      className="size-full object-contain"
-                    />
-                    <span className="absolute inset-x-0 bottom-0 line-clamp-2 bg-black/70 px-2 py-1.5 text-left text-xs font-medium text-white">
-                      {hoveredTile.title}
-                    </span>
-                  </div>
-                  <div className="mt-2 px-1 text-xs text-muted-foreground">
-                    <span className="text-muted-foreground">click to open</span>
-                  </div>
-                </div>
-              )}
-              {!hasMosaic && !isGenerating && (
-                <div className="pointer-events-none absolute inset-0 grid place-items-center text-sm text-muted-foreground">
-                  press generate
-                </div>
-              )}
-            </div>
-          ) : (
-            <p className="px-6 text-center text-sm text-muted-foreground">
-              Add a reference image to begin
-            </p>
-          )}
-        </div>
+      <section className="relative min-h-svh min-w-0 flex-1 overflow-x-hidden bg-background select-none xl:h-svh xl:overflow-hidden">
+        <ControlsSidebarTrigger
+          onToggle={closeAdvanced}
+          className="fixed inset-x-4 bottom-4 z-30 h-10 justify-center border bg-background shadow-lg md:absolute md:inset-x-auto md:top-6 md:right-6 md:bottom-auto md:size-7 md:shadow-none xl:top-8 xl:right-8"
+        />
 
-        <aside className="z-20 flex min-w-0 flex-col gap-6 xl:items-end xl:text-right">
-          <div className="flex items-center gap-2 text-sm text-muted-foreground xl:justify-end">
-            <span>{currentLabel}</span>
-            {onSwitchBucket && (
-              <>
-                <span aria-hidden="true">·</span>
-                <Button
-                  variant="link"
-                  onClick={onSwitchBucket}
-                  className="h-auto gap-1 p-0 underline"
-                >
-                  {switchLocked && (
-                    <Lock className="size-3" aria-hidden="true" />
-                  )}
-                  switch to {otherLabel}
-                </Button>
-              </>
-            )}
+        <div
+          className="box-border grid min-h-svh w-full grid-cols-1 gap-8 px-3 py-4 sm:px-4 md:p-6 xl:h-svh xl:items-stretch xl:gap-8 xl:p-8 xl:[grid-template-columns:minmax(0,1fr)_minmax(0,var(--mosaic-col-max))_minmax(0,1fr)]"
+          style={
+            { "--mosaic-col-max": MOSAIC_CENTER_COLUMN_MAX } as React.CSSProperties
+          }
+        >
+          <div className="z-20 flex min-w-0 flex-col items-start">
+            <Button variant="link" asChild className="h-auto p-0 underline">
+              <Link href="/">
+                <ArrowLeft />
+                back to home
+              </Link>
+            </Button>
           </div>
 
-          <div className="flex flex-col gap-4 xl:items-end">
-            <h1 className="text-3xl font-semibold tracking-tight text-balance text-foreground">
-              {copy.heading}
-            </h1>
-            <p className="text-sm leading-relaxed text-pretty text-muted-foreground">
-              {copy.description}
-            </p>
-            {hasMosaic && mosaicStats && (
-              <p className="text-xs text-muted-foreground">
-                {mosaicStats.cells.toLocaleString()} tiles ·{" "}
-                {mosaicStats.uniquePhotos.toLocaleString()} unique photos
-                {mosaicStats.uniqueClips !== null && (
-                  <>
-                    {" "}
-                    · {mosaicStats.uniqueClips.toLocaleString()} unique clips
-                  </>
+          <div className="mx-auto grid w-full min-w-0 place-items-center md:max-w-[94vw] xl:max-w-none">
+            {/* The flat mosaic, centered in the dominant middle column. */}
+            {reference && frame ? (
+              <div
+                className="relative w-full"
+                style={{
+                  maxWidth: `calc(${MOSAIC_VIEWPORT_HEIGHT_PCT}svh * ${frame.w} / ${frame.h})`,
+                  aspectRatio: `${frame.w} / ${frame.h}`,
+                }}
+                onPointerMove={handleTilePointerMove}
+                onPointerLeave={() => setHoveredTile(null)}
+                onClick={handleTileClick}
+              >
+                <canvas
+                  ref={mosaicCanvasRef}
+                  width={frame.w}
+                  height={frame.h}
+                  className="absolute inset-0 block size-full"
+                />
+                {hoveredTile && hasMosaic && (
+                  <div
+                    aria-hidden="true"
+                    className="pointer-events-none absolute z-10 w-56 overflow-hidden rounded-2xl border bg-white p-2 shadow-lg"
+                    style={{
+                      left: `${(hoveredTile.x / frame.w) * 100}%`,
+                      top: `${(hoveredTile.y / frame.h) * 100}%`,
+                      transform: `translate(${
+                        hoveredTile.x > frame.w * 0.5
+                          ? "calc(-100% - 12px)"
+                          : "12px"
+                      }, ${
+                        hoveredTile.y > frame.h * 0.5
+                          ? "calc(-100% - 12px)"
+                          : "12px"
+                      })`,
+                    }}
+                  >
+                    <div className="relative aspect-square w-full overflow-hidden rounded-xl bg-white">
+                      {/* eslint-disable-next-line @next/next/no-img-element -- public library URL, shown only as a hover preview */}
+                      <img
+                        src={hoveredTile.url}
+                        alt={hoveredTile.title}
+                        draggable={false}
+                        className="size-full object-contain"
+                      />
+                      <span className="absolute inset-x-0 bottom-0 line-clamp-2 bg-black/70 px-2 py-1.5 text-left text-xs font-medium text-white">
+                        {hoveredTile.title}
+                      </span>
+                    </div>
+                    <div className="mt-2 px-1 text-xs text-muted-foreground">
+                      <span className="text-muted-foreground">
+                        click to open
+                      </span>
+                    </div>
+                  </div>
                 )}
-              </p>
-            )}
-          </div>
-
-          <div className="mt-auto flex flex-col gap-3 xl:items-end">
-            {reference ? (
-              <ReferenceCard
-                reference={reference}
-                onReplace={handleSetReference}
-                onRemove={handleRemoveReference}
-              />
+                {!hasMosaic && !isGenerating && (
+                  <div className="pointer-events-none absolute inset-0 grid place-items-center text-sm text-muted-foreground">
+                    press generate
+                  </div>
+                )}
+              </div>
             ) : (
               <ReferenceEmptyCard onSelect={handleSetReference} />
             )}
+          </div>
+        </div>
+      </section>
 
-            {reference && (
-              <div className="flex w-56 flex-col gap-3 border bg-card p-4">
-                <div className="flex items-center gap-3">
-                  <span className="text-sm text-muted-foreground">
-                    Resolution
-                  </span>
-                  <Slider
-                    className="w-40"
-                    min={densityMin}
-                    max={DENSITY_MAX}
-                    step={2}
-                    value={[densityMin + DENSITY_MAX - density]}
-                    onValueChange={(v) =>
-                      setDensity(
-                        clampDensity(
-                          densityMin + DENSITY_MAX - v[0],
-                          densityMin,
-                          DENSITY_MAX
-                        )
-                      )
-                    }
-                    aria-label="Mosaic resolution"
-                  />
-                </div>
-                {eraEmphasis && (
+      <Sidebar side="right" mobileSide="bottom" collapsible="offcanvas">
+        <SidebarContent className="gap-4 p-4">
+          {(!hideCollectionLabel || onSwitchBucket) && (
+            <SidebarGroup className="p-0">
+              <SidebarGroupContent className="flex items-center gap-2 text-sm text-muted-foreground">
+                {!hideCollectionLabel && <span>{currentLabel}</span>}
+                {onSwitchBucket && (
                   <>
-                    <div className="flex items-center gap-3">
-                      <span className="text-sm text-muted-foreground">
-                        Recent
-                      </span>
-                      <Slider
-                        className="w-40"
-                        min={0}
-                        max={RECENCY_STRENGTH_MAX}
-                        step={0.25}
-                        value={[recencyStrength]}
-                        onValueChange={(v) => setRecencyStrength(v[0])}
-                        aria-label="Recent-photo emphasis"
-                      />
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <span className="text-sm text-muted-foreground">
-                        Playoffs
-                      </span>
-                      <Slider
-                        className="w-40"
-                        min={0}
-                        max={PLAYOFF_BOOST_MAX}
-                        step={0.25}
-                        value={[playoffBoost]}
-                        onValueChange={(v) => setPlayoffBoost(v[0])}
-                        aria-label="Playoff-photo emphasis"
-                      />
-                    </div>
+                    {!hideCollectionLabel && <span aria-hidden="true">·</span>}
+                    <Button
+                      variant="link"
+                      onClick={onSwitchBucket}
+                      className="h-auto gap-1 p-0 underline"
+                    >
+                      {switchLocked && (
+                        <Lock className="size-3" aria-hidden="true" />
+                      )}
+                      switch to {otherLabel}
+                    </Button>
                   </>
                 )}
+              </SidebarGroupContent>
+            </SidebarGroup>
+          )}
+
+          {!hideIntroCopy && (
+            <SidebarGroup className="gap-3 p-0">
+              <h1 className="text-2xl font-semibold tracking-tight text-balance text-foreground">
+                {copy.heading}
+              </h1>
+              <p className="text-sm leading-relaxed text-pretty text-muted-foreground">
+                {copy.description}
+              </p>
+            </SidebarGroup>
+          )}
+
+          {((!hideCollectionLabel || onSwitchBucket) || !hideIntroCopy) && (
+            <SidebarSeparator className="mx-0" />
+          )}
+
+          <SidebarGroup className="gap-3 p-0">
+            <SidebarGroupLabel className="h-auto px-0 text-sm text-muted-foreground">
+              Reference
+            </SidebarGroupLabel>
+            <SidebarGroupContent>
+              {reference ? (
+                <ReferenceCard
+                  reference={reference}
+                  onReplace={handleSetReference}
+                  onRemove={handleRemoveReference}
+                />
+              ) : (
+                <ReferencePanelEmpty onSelect={handleSetReference} />
+              )}
+            </SidebarGroupContent>
+          </SidebarGroup>
+
+          {reference && (
+            <>
+              <SidebarSeparator className="mx-0" />
+
+              <SidebarGroup className="gap-3 p-0">
+                <SidebarGroupLabel className="h-auto px-0 text-sm text-muted-foreground">
+                  Resolution
+                </SidebarGroupLabel>
+                <SidebarGroupContent className="flex flex-col gap-3">
+                <div
+                  className="grid grid-cols-3 gap-1"
+                  role="group"
+                  aria-label="Mosaic resolution"
+                >
+                  {RESOLUTION_MODE_ORDER.map((mode) => (
+                    <Button
+                      key={mode}
+                      type="button"
+                      size="sm"
+                      variant={resolutionMode === mode ? "default" : "outline"}
+                      className="capitalize"
+                      aria-pressed={resolutionMode === mode}
+                      onClick={() =>
+                        setDensity(
+                          densityForResolution(
+                            RESOLUTION_MODES[mode],
+                            densityMin
+                          )
+                        )
+                      }
+                    >
+                      {mode}
+                    </Button>
+                  ))}
+                </div>
+
                 <Button
                   onClick={() => void handleGenerate()}
                   disabled={tileCount === 0 || isGenerating}
@@ -999,11 +1144,94 @@ export function CanvasHero({
                     Save image
                   </Button>
                 )}
-              </div>
+              </SidebarGroupContent>
+            </SidebarGroup>
+            </>
+          )}
+        </SidebarContent>
+
+        <SidebarFooter className="mt-auto flex flex-col gap-3 border-t p-4">
+          <SidebarExpandableControls
+            id="mosaic-advanced-controls"
+            label="Advanced"
+            open={showAdvanced}
+            onOpenChange={setShowAdvanced}
+          >
+            {hasMosaic && mosaicStats && (
+              <p className="text-xs text-muted-foreground">
+                {mosaicStats.cells.toLocaleString()} tiles ·{" "}
+                {mosaicStats.uniquePhotos.toLocaleString()} unique photos
+                {mosaicStats.uniqueClips !== null && (
+                  <>
+                    {" "}
+                    · {mosaicStats.uniqueClips.toLocaleString()} unique clips
+                  </>
+                )}
+              </p>
             )}
-          </div>
-        </aside>
-      </div>
-    </section>
+
+            <div className="flex flex-col gap-1.5">
+              <div className="flex items-center justify-between gap-3 text-sm text-muted-foreground">
+                <span>Resolution</span>
+                <span className="tabular-nums">
+                  {formatSliderValue(resolutionValue)}
+                </span>
+              </div>
+              <Slider
+                className="w-full"
+                min={densityMin}
+                max={DENSITY_MAX}
+                step={2}
+                value={[resolutionValue]}
+                onValueChange={(v) =>
+                  setDensity(densityForResolution(v[0], densityMin))
+                }
+                aria-label="Mosaic resolution"
+              />
+            </div>
+
+            {eraEmphasis && (
+              <>
+                <div className="flex flex-col gap-1.5">
+                  <div className="flex items-center justify-between gap-3 text-sm text-muted-foreground">
+                    <span>Recent</span>
+                    <span className="tabular-nums">
+                      {formatSliderValue(recencyStrength)}
+                    </span>
+                  </div>
+                  <Slider
+                    className="w-full"
+                    min={0}
+                    max={RECENCY_STRENGTH_MAX}
+                    step={0.25}
+                    value={[recencyStrength]}
+                    onValueChange={(v) => setRecencyStrength(v[0])}
+                    aria-label="Recent-photo emphasis"
+                  />
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <div className="flex items-center justify-between gap-3 text-sm text-muted-foreground">
+                    <span>Playoffs</span>
+                    <span className="tabular-nums">
+                      {formatSliderValue(playoffBoost)}
+                    </span>
+                  </div>
+                  <Slider
+                    className="w-full"
+                    min={0}
+                    max={PLAYOFF_BOOST_MAX}
+                    step={0.25}
+                    value={[playoffBoost]}
+                    onValueChange={(v) => setPlayoffBoost(v[0])}
+                    aria-label="Playoff-photo emphasis"
+                  />
+                </div>
+              </>
+            )}
+          </SidebarExpandableControls>
+        </SidebarFooter>
+      </Sidebar>
+    </SidebarProvider>
   )
 }

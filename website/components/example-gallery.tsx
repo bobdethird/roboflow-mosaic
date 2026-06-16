@@ -90,7 +90,7 @@ export function ExampleGallery({ examples }: { examples: Example[] }) {
             width={ex.width}
             height={ex.height}
             alt={ex.alt}
-            priority={i < count}
+            priority
             sizes="(min-width: 1024px) 40vw, 70vw"
             draggable={false}
             onLoad={measure}

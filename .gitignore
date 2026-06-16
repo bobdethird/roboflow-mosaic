@@ -64,6 +64,7 @@ mosaic-pipeline/videos/
 *.mts
 *.m2ts
 *.ogv
+*.mp3
 
 *.env
 .env

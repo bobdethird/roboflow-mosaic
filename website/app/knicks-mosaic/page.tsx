@@ -22,6 +22,8 @@ export default function KnicksMosaicPage() {
       maxTileReuse={KNICKS_MAX_TILE_REUSE}
       minCellSize={KNICKS_MIN_CELL_SIZE}
       eraEmphasis
+      hideIntroCopy
+      hideCollectionLabel
     />
   )
 }

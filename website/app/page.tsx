@@ -41,7 +41,10 @@ const EXAMPLES: Example[] = [
 
 export default function Page() {
   return (
-    <main className="flex min-h-svh flex-col items-center justify-center gap-12 px-6 py-16 sm:py-20">
+    <main
+      className="flex min-h-svh flex-col items-center justify-center gap-12 px-6 py-16 sm:py-20"
+      style={{ fontFamily: "var(--font-mean-hand)" }}
+    >
       <ThemeToggle />
 
       {/* Small intro — the meaning of the piece. */}
@@ -49,7 +52,7 @@ export default function Page() {
         <p className="font-mono text-xs tracking-[0.2em] text-muted-foreground uppercase">
           Mosaic
         </p>
-        <p className="text-sm leading-relaxed text-balance text-muted-foreground">
+        <p className="text-sm leading-relaxed text-balance text-muted-foreground uppercase">
           This one's for you, New York.
         </p>
       </header>
