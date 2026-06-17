@@ -19,12 +19,15 @@ export default function Page() {
         <h1 className="max-w-[11ch] text-left text-5xl leading-none font-light tracking-tight text-balance sm:text-6xl md:text-7xl lg:text-8xl">
           NEW YORK OR NOWHERE
         </h1>
-        <p className="max-w-md self-end font-sans text-sm leading-relaxed text-right text-pretty text-muted-foreground sm:text-base">
-          This project turns a reference image into a photo mosaic assembled from
-          frames of Knicks footage. It experiments with matching color, shape,
-          and motion history so thousands of small moments can rebuild one
-          larger image. This placeholder copy will later explain the pipeline,
-          the source library, and how the interactive mosaic renderer works.
+        <p className="max-w-lg self-end font-sans text-sm leading-relaxed text-right text-pretty text-muted-foreground sm:text-base">
+          the whole is greater than the sum of its parts <br /> <br />
+          
+          New York City, and especially the Knicks, are a beautiful reflection of 
+          this theme. The diversity of backgrounds, experiences, and perspectives
+          that make the melting pot of the city so special. This project pays homage
+          to what makes New York so special. Each mosaic is composed of thousands of 
+          tiles - each a different moment of Knicks history that led to this point. 
+          Whether it be the players, the fans, or the legacy the team has built.
         </p>
       </header>
 
