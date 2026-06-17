@@ -187,6 +187,7 @@ export default function BakePage() {
           const item = libraryById.get(id)
           tiles.push({
             url: item?.fullUrl ?? item?.url ?? thumbUrl(BUCKET, id),
+            previewUrl: item?.url ?? thumbUrl(BUCKET, id),
             title: item?.galleryTitle ?? item?.gallery ?? id,
           })
           ci = tiles.length - 1

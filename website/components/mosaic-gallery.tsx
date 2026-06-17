@@ -12,6 +12,7 @@ import {
 import { cn } from "@/lib/utils"
 
 type Hover = { tile: GalleryTile; fx: number; fy: number }
+type PointerCoords = { clientX: number; clientY: number }
 
 function shuffled<T>(items: T[]): T[] {
   const next = [...items]
@@ -47,34 +48,79 @@ function tileAt(
   return idx >= 0 ? (tiles[idx] ?? null) : null
 }
 
+function previewUrlFor(tile: GalleryTile): string {
+  if (tile.previewUrl) return tile.previewUrl
+
+  const originalMatch = tile.url.match(/^(.*\/)originals\/([^?#]+)([?#].*)?$/)
+  if (!originalMatch) return tile.url
+
+  return `${originalMatch[1]}thumbs/${originalMatch[2]}.jpg${originalMatch[3] ?? ""}`
+}
+
+function HoverPreviewImage({ tile }: { tile: GalleryTile }) {
+  const primarySrc = previewUrlFor(tile)
+  const [useFallback, setUseFallback] = React.useState(false)
+  const src = useFallback ? tile.url : primarySrc
+
+  return (
+    // eslint-disable-next-line @next/next/no-img-element -- proxied library URL, hover preview only
+    <img
+      src={src}
+      alt={tile.title}
+      decoding="async"
+      draggable={false}
+      onError={() => {
+        if (src !== tile.url) setUseFallback(true)
+      }}
+      className="size-full object-contain"
+    />
+  )
+}
+
 // One baked mosaic: a static image whose hover reveals the Knicks source frame
 // behind the spot under the cursor, just like /knicks-mosaic. The per-mosaic hit
 // map is fetched lazily the first time the pointer enters the tile.
 function MosaicCell({ item }: { item: GalleryIndexEntry }) {
   const [hover, setHover] = React.useState<Hover | null>(null)
+  const cellRef = React.useRef<HTMLDivElement | null>(null)
   const mapRef = React.useRef<GalleryTileMap | null>(null)
-  const loadingRef = React.useRef(false)
+  const mapPromiseRef = React.useRef<Promise<GalleryTileMap | null> | null>(null)
+  const hoveringRef = React.useRef(false)
+  const lastPointerRef = React.useRef<PointerCoords | null>(null)
+  const frameRef = React.useRef<number | null>(null)
 
   const ensureMap = React.useCallback(() => {
-    if (mapRef.current || loadingRef.current) return
-    loadingRef.current = true
-    void (async () => {
+    if (mapRef.current) return Promise.resolve(mapRef.current)
+    if (mapPromiseRef.current) return mapPromiseRef.current
+
+    mapPromiseRef.current = (async () => {
       try {
         const res = await fetch(tileMapUrlFor(item.src))
-        if (res.ok) mapRef.current = (await res.json()) as GalleryTileMap
+        if (!res.ok) return null
+        const map = (await res.json()) as GalleryTileMap
+        mapRef.current = map
+        return map
       } catch {
         // Hover preview is best-effort; the image still shows without it.
+        return null
+      } finally {
+        mapPromiseRef.current = null
       }
     })()
+
+    return mapPromiseRef.current
   }, [item.src])
 
-  const onMove = React.useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+  const updateHover = React.useCallback((coords: PointerCoords) => {
     const map = mapRef.current
-    if (!map) return
-    const rect = e.currentTarget.getBoundingClientRect()
-    const fx = (e.clientX - rect.left) / rect.width
-    const fy = (e.clientY - rect.top) / rect.height
+    const node = cellRef.current
+    if (!map || !node) return
+
+    const rect = node.getBoundingClientRect()
+    const fx = (coords.clientX - rect.left) / rect.width
+    const fy = (coords.clientY - rect.top) / rect.height
     if (fx < 0 || fx > 1 || fy < 0 || fy > 1) return
+
     const tile = tileAt(map, fx, fy)
     setHover((prev) => {
       if (!tile) return prev === null ? prev : null
@@ -85,13 +131,67 @@ function MosaicCell({ item }: { item: GalleryIndexEntry }) {
     })
   }, [])
 
+  const scheduleHoverUpdate = React.useCallback(
+    (coords: PointerCoords) => {
+      lastPointerRef.current = coords
+      if (frameRef.current !== null) return
+
+      frameRef.current = window.requestAnimationFrame(() => {
+        frameRef.current = null
+        const latest = lastPointerRef.current
+        if (latest && hoveringRef.current) updateHover(latest)
+      })
+    },
+    [updateHover]
+  )
+
+  const onEnter = React.useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      hoveringRef.current = true
+      scheduleHoverUpdate({ clientX: e.clientX, clientY: e.clientY })
+      void ensureMap().then((map) => {
+        const latest = lastPointerRef.current
+        if (map && latest && hoveringRef.current) scheduleHoverUpdate(latest)
+      })
+    },
+    [ensureMap, scheduleHoverUpdate]
+  )
+
+  const onMove = React.useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      scheduleHoverUpdate({ clientX: e.clientX, clientY: e.clientY })
+    },
+    [scheduleHoverUpdate]
+  )
+
+  const onLeave = React.useCallback(() => {
+    hoveringRef.current = false
+    lastPointerRef.current = null
+    if (frameRef.current !== null) {
+      window.cancelAnimationFrame(frameRef.current)
+      frameRef.current = null
+    }
+    setHover(null)
+  }, [])
+
+  React.useEffect(() => {
+    return () => {
+      hoveringRef.current = false
+      lastPointerRef.current = null
+      if (frameRef.current !== null) {
+        window.cancelAnimationFrame(frameRef.current)
+      }
+    }
+  }, [])
+
   return (
     <div
+      ref={cellRef}
       className="relative mb-3 block w-full cursor-pointer break-inside-avoid"
       style={{ zIndex: hover ? 30 : undefined }}
-      onPointerEnter={ensureMap}
+      onPointerEnter={onEnter}
       onPointerMove={onMove}
-      onPointerLeave={() => setHover(null)}
+      onPointerLeave={onLeave}
       onClick={() => {
         if (hover) {
           window.open(hover.tile.url, "_blank", "noopener,noreferrer")
@@ -122,12 +222,9 @@ function MosaicCell({ item }: { item: GalleryIndexEntry }) {
           }}
         >
           <div className="relative aspect-square w-full overflow-hidden rounded-xl bg-white">
-            {/* eslint-disable-next-line @next/next/no-img-element -- proxied library URL, hover preview only */}
-            <img
-              src={hover.tile.url}
-              alt={hover.tile.title}
-              draggable={false}
-              className="size-full object-contain"
+            <HoverPreviewImage
+              key={previewUrlFor(hover.tile)}
+              tile={hover.tile}
             />
             <span className="absolute inset-x-0 bottom-0 line-clamp-2 bg-black/70 px-2 py-1.5 text-left text-xs font-medium text-white">
               {hover.tile.title}

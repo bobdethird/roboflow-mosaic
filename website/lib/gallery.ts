@@ -13,8 +13,9 @@ export type GalleryIndexEntry = {
   alt: string
 }
 
-// A single source frame revealed in the hover popup.
-export type GalleryTile = { url: string; title: string }
+// A single source frame revealed in the hover popup. `url` is the click-through
+// source frame; `previewUrl` can point at a smaller thumbnail for hover rendering.
+export type GalleryTile = { url: string; title: string; previewUrl?: string }
 
 // Per-mosaic hover hit-map (public/gallery/<name>.json). The frame is divided
 // into a cols×rows grid; each bucket stores the index (into `tiles`) of the
