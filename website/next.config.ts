@@ -3,8 +3,9 @@ import { dirname } from "node:path"
 import { fileURLToPath } from "node:url"
 
 const appRoot = dirname(fileURLToPath(import.meta.url))
+const isVercel = process.env.VERCEL === "1"
 
-const nextConfig: NextConfig = {
+const localRootConfig: NextConfig = {
   // Pin the workspace root to this directory. Without this, Next's root
   // inference walks up looking for a lockfile and finds a stray
   // ~/package-lock.json, treating the entire home folder (incl. the 12GB
@@ -16,5 +17,7 @@ const nextConfig: NextConfig = {
     root: appRoot,
   },
 }
+
+const nextConfig: NextConfig = isVercel ? {} : localRootConfig
 
 export default nextConfig
