@@ -5,7 +5,6 @@ import * as React from "react"
 const COOKIE_NAME = "tile_hint_dismissed"
 // Keep the cookie around for a year so returning visitors don't see it again.
 const COOKIE_MAX_AGE = 60 * 60 * 24 * 365
-const VISIBLE_MS = 10_000
 
 function hasDismissedCookie() {
   return document.cookie
@@ -49,8 +48,8 @@ export function MobileTileHint() {
 
 // Static hand-drawn nudge in the left margin, pointing right into the first
 // mosaic so visitors notice the hover-to-peek interaction. Desktop only (it
-// lives in the page gutter, which only exists on wide screens). Shows once,
-// then auto-dismisses after ten seconds and won't return (cookie-gated).
+// lives in the page gutter, which only exists on wide screens). Stays put for
+// the whole first visit, then won't return on reloads/revisits (cookie-gated).
 export function TileHint() {
   const [visible, setVisible] = React.useState(false)
 
@@ -58,12 +57,7 @@ export function TileHint() {
     if (hasDismissedCookie()) return
 
     setVisible(true)
-    const timer = window.setTimeout(() => {
-      setVisible(false)
-      setDismissedCookie()
-    }, VISIBLE_MS)
-
-    return () => window.clearTimeout(timer)
+    setDismissedCookie()
   }, [])
 
   if (!visible) return null

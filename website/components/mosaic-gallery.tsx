@@ -5,6 +5,7 @@ import { X } from "lucide-react"
 
 import {
   GALLERY_INDEX_URL,
+  NY_MOSAIC_NAME_PREFIX,
   tileMapUrlFor,
   type GalleryIndexEntry,
   type GalleryTile,
@@ -483,9 +484,6 @@ function MosaicLightbox({
                 </span>
               </div>
             </a>
-            <div className="mt-2 px-1 text-xs text-muted-foreground">
-              tap to open
-            </div>
           </div>
         )}
       </div>
@@ -518,7 +516,11 @@ export function MosaicGallery({ className }: { className?: string }) {
         const res = await fetch(GALLERY_INDEX_URL)
         if (!res.ok) return
         const data = (await res.json()) as GalleryIndexEntry[]
-        if (!cancelled) setItems(shuffled(data))
+        // Skip the New York page's hero so it doesn't show up in the masonry.
+        const filtered = data.filter(
+          (it) => !it.name.startsWith(NY_MOSAIC_NAME_PREFIX)
+        )
+        if (!cancelled) setItems(shuffled(filtered))
       } catch {
         // No baked gallery yet — render nothing rather than erroring.
       }
@@ -558,5 +560,31 @@ export function MosaicGallery({ className }: { className?: string }) {
         />
       )}
     </>
+  )
+}
+
+// A single baked mosaic (e.g. the New York page hero) with the same interaction
+// as the gallery: hover to reveal source frames on desktop, tap to open the
+// drag-to-reveal lightbox on touch. Width is capped so the rendered height fits
+// the viewport, leaving room for surrounding content.
+export function SingleMosaic({
+  entry,
+  className,
+  maxViewportHeight = 58,
+}: {
+  entry: GalleryIndexEntry
+  className?: string
+  maxViewportHeight?: number
+}) {
+  const [open, setOpen] = React.useState(false)
+
+  return (
+    <div
+      className={cn("mx-auto w-full", className)}
+      style={{ maxWidth: `calc(${maxViewportHeight}svh * ${entry.w} / ${entry.h})` }}
+    >
+      <MosaicCell item={entry} onOpen={() => setOpen(true)} />
+      {open && <MosaicLightbox item={entry} onClose={() => setOpen(false)} />}
+    </div>
   )
 }

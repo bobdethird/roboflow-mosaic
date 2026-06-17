@@ -32,6 +32,11 @@ export type GalleryTileMap = {
 
 export const GALLERY_INDEX_URL = "/gallery/index.json"
 
+// The /newyork-mosaic page bakes its hero through the same pipeline, so it lands
+// in the shared gallery index. This prefix lets the home masonry skip it while
+// the New York page picks it out.
+export const NY_MOSAIC_NAME_PREFIX = "nyc-lunch"
+
 // The hover hit-map sits beside each baked image (foo.jpg → foo.json).
 export function tileMapUrlFor(src: string): string {
   return src.replace(/\.jpg$/i, ".json")

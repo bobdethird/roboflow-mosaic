@@ -103,5 +103,12 @@
     "w": 1000,
     "h": 563,
     "alt": "trophy rebuilt as a medium resolution mosaic of Knicks footage frames"
+  },
+  {
+    "name": "nyc-lunch-high",
+    "src": "/gallery/nyc-lunch-high.jpg",
+    "w": 1000,
+    "h": 786,
+    "alt": "nyc lunch rebuilt as a high resolution mosaic of Knicks footage frames"
   }
 ]

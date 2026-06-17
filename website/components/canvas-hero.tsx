@@ -1230,6 +1230,10 @@ export function CanvasHero({
             )}
           </div>
         </div>
+
+        {/* Credit anchored to the bottom of the main page (not the sidebar).
+            Hidden on mobile, where the fixed action bar owns the bottom edge. */}
+        <SiteCredit className="absolute inset-x-0 bottom-5 z-10 text-center max-md:hidden" />
       </section>
 
       <Sidebar side="right" mobileSide="bottom" collapsible="offcanvas">
@@ -1394,8 +1398,6 @@ export function CanvasHero({
               </>
             )}
           </SidebarExpandableControls>
-
-          <SiteCredit className="text-center" />
         </SidebarFooter>
       </Sidebar>
     </SidebarProvider>
