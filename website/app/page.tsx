@@ -4,6 +4,7 @@ import { ArrowRight } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { SiteCredit } from "@/components/site-credit"
 import { MosaicGallery } from "@/components/mosaic-gallery"
+import { TileHint, MobileTileHint } from "@/components/tile-hint"
 import { ThemeToggle } from "@/components/theme-toggle"
 
 export default function Page() {
@@ -15,11 +16,11 @@ export default function Page() {
       <ThemeToggle />
 
       {/* Hero title + small intro. */}
-      <header className="flex w-full max-w-7xl flex-col gap-4 md:flex-row md:items-end md:justify-between md:gap-8">
-        <h1 className="max-w-[11ch] text-left text-5xl leading-none font-light tracking-tight text-balance sm:text-6xl md:text-7xl lg:text-8xl">
+      <header className="flex w-full max-w-7xl flex-col items-center gap-4 md:flex-row md:items-end md:justify-between md:gap-8">
+        <h1 className="max-w-[11ch] text-center text-5xl leading-none font-light tracking-tight text-balance sm:text-6xl md:text-left md:text-7xl lg:text-8xl">
           NEW YORK OR NOWHERE
         </h1>
-        <p className="max-w-lg self-end font-sans text-sm leading-[1.80] text-right text-pretty text-foreground sm:text-base">
+        <p className="max-w-lg self-center text-center font-sans text-sm leading-[1.80] text-pretty text-foreground sm:text-base md:self-end md:text-right">
           <Link
             href="/newyork-mosaic"
             className="underline underline-offset-4 transition-colors hover:text-foreground"
@@ -39,18 +40,15 @@ export default function Page() {
         </p>
       </header>
 
-      {/* Hint on how to peek at the photo behind a tile. */}
-      <p className="w-full max-w-7xl font-sans text-xs text-muted-foreground sm:text-sm">
-        <span className="hidden md:inline">
-          hover over a tile to see the smaller Knicks pictures
-        </span>
-        <span className="md:hidden">
-          tap a picture, then hover over a tile to see the smaller ones that comprise the whole
-        </span>
-      </p>
+      {/* Hint for mobile + tablet; the wide desktop gutter gets the curly arrow
+          instead. Hidden after the first visit (cookie-gated). */}
+      <MobileTileHint />
 
       {/* Gallery of mosaics — hover any one to see the footage frame behind a tile. */}
-      <MosaicGallery className="w-full max-w-7xl" />
+      <div className="relative w-full max-w-7xl">
+        <TileHint />
+        <MosaicGallery className="w-full" />
+      </div>
 
       {/* Docked call to action. */}
       <div className="fixed inset-x-0 bottom-8 z-40 flex justify-center px-4 sm:bottom-10">

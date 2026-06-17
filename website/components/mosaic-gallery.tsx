@@ -175,12 +175,10 @@ function MosaicCell({
   const hoveringRef = React.useRef(false)
   const lastPointerRef = React.useRef<PointerCoords | null>(null)
   const frameRef = React.useRef<number | null>(null)
-  // Track touch double-taps (no hover on touch, so a double-tap opens the
-  // enlarged view) and the last pointer type so a single tap doesn't try to
-  // open a tile the way a desktop hover-click does.
-  const lastTapRef = React.useRef<{ time: number; x: number; y: number } | null>(
-    null
-  )
+  // Track where a touch started so a scroll/swipe isn't mistaken for a tap (a
+  // tap opens the enlarged view on touch). Also remember the last pointer type
+  // so a single tap doesn't try to open a tile the way a desktop hover-click does.
+  const tapStartRef = React.useRef<{ x: number; y: number } | null>(null)
   const pointerTypeRef = React.useRef<string>("mouse")
 
   const ensureMap = React.useCallback(() => {
@@ -263,22 +261,25 @@ function MosaicCell({
     [scheduleHoverUpdate]
   )
 
-  // Detect a double-tap on touch/pen and open the enlarged view.
+  const onPointerDown = React.useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      pointerTypeRef.current = e.pointerType
+      if (e.pointerType === "mouse") return
+      tapStartRef.current = { x: e.clientX, y: e.clientY }
+    },
+    []
+  )
+
+  // A single tap on touch/pen opens the enlarged view — as long as the finger
+  // didn't travel far (which would be a scroll, not a tap).
   const onPointerUp = React.useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
       pointerTypeRef.current = e.pointerType
       if (e.pointerType === "mouse") return
-      const now = Date.now()
-      const prev = lastTapRef.current
-      if (
-        prev &&
-        now - prev.time < 300 &&
-        Math.hypot(e.clientX - prev.x, e.clientY - prev.y) < 30
-      ) {
-        lastTapRef.current = null
+      const start = tapStartRef.current
+      tapStartRef.current = null
+      if (start && Math.hypot(e.clientX - start.x, e.clientY - start.y) < 12) {
         onOpen()
-      } else {
-        lastTapRef.current = { time: now, x: e.clientX, y: e.clientY }
       }
     },
     [onOpen]
@@ -312,6 +313,7 @@ function MosaicCell({
       onPointerEnter={onEnter}
       onPointerMove={onMove}
       onPointerLeave={onLeave}
+      onPointerDown={onPointerDown}
       onPointerUp={onPointerUp}
       onClick={() => {
         if (pointerTypeRef.current !== "mouse") return
