@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button"
 import { ThemeToggle } from "@/components/theme-toggle"
 
 const FORM_URL =
-  "https://docs.google.com/forms/d/e/1FAIpQLSdm6zqyMquEWXAcvz8Gr3Q8i4xlYSeOyvq_1uxtcz4bPcPRFg/viewform?usp=dialog"
+  "https://docs.google.com/forms/d/e/1FAIpQLSfPRaVa9D3Ex0U6sF0G1VUckbJd41X1-8inZ_0oknivex9gRw/viewform"
 
 export default function Page() {
   return (

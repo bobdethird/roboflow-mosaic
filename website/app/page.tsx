@@ -39,6 +39,16 @@ export default function Page() {
         </p>
       </header>
 
+      {/* Hint on how to peek at the photo behind a tile. */}
+      <p className="w-full max-w-7xl font-sans text-xs text-muted-foreground sm:text-sm">
+        <span className="hidden md:inline">
+          hover over a tile to see the smaller Knicks pictures
+        </span>
+        <span className="md:hidden">
+          tap a picture, then hover over a tile to see the smaller ones that comprise the whole
+        </span>
+      </p>
+
       {/* Gallery of mosaics — hover any one to see the footage frame behind a tile. */}
       <MosaicGallery className="w-full max-w-7xl" />
 
