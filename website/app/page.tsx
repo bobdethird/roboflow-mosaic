@@ -20,13 +20,23 @@ export default function Page() {
           NEW YORK OR NOWHERE
         </h1>
         <p className="max-w-lg self-end font-sans text-sm leading-relaxed text-right text-pretty text-muted-foreground sm:text-base">
-          the whole is greater than the sum of its parts <br /> <br />
+          <Link
+            href="/newyork-mosaic"
+            className="underline underline-offset-4 transition-colors hover:text-foreground"
+          >
+            the whole is greater than the sum of its parts
+          </Link>{" "}
+          <br /> <br />
           
           New York City, and especially the Knicks, are a beautiful reflection of 
           this theme. The diversity of backgrounds, experiences, and perspectives
-          that make the melting pot of the city so special. This project pays homage
-          to what makes New York so special. Each mosaic is composed of thousands of 
-          tiles - each a different moment of Knicks history that led to this point. 
+          that make a unique melting pot. This project pays homage
+          to what makes New York so special. 
+          
+          <br /> <br />
+          
+          Each mosaic is composed of thousands of 
+          tiles; each a different moment of Knicks history that led to this point. 
           Whether it be the players, the fans, or the legacy the team has built.
         </p>
       </header>
