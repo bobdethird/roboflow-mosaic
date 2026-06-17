@@ -16,7 +16,7 @@ export default function Page() {
       <ThemeToggle />
 
       <header className="flex w-full max-w-3xl flex-col gap-4">
-        <Button variant="link" asChild className="h-auto self-start p-0 underline">
+        <Button variant="link" asChild className="h-auto self-start p-0 font-sans font-normal underline">
           <Link href="/">
             <ArrowLeft />
             back to home

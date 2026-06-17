@@ -19,7 +19,7 @@ export default function Page() {
         <h1 className="max-w-[11ch] text-left text-5xl leading-none font-light tracking-tight text-balance sm:text-6xl md:text-7xl lg:text-8xl">
           NEW YORK OR NOWHERE
         </h1>
-        <p className="max-w-lg self-end font-sans text-sm leading-relaxed text-right text-pretty text-muted-foreground sm:text-base">
+        <p className="max-w-lg self-end font-sans text-sm leading-relaxed text-right text-pretty text-foreground sm:text-base">
           <Link
             href="/newyork-mosaic"
             className="underline underline-offset-4 transition-colors hover:text-foreground"
