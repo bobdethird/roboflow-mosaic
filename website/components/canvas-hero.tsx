@@ -1149,7 +1149,7 @@ export function CanvasHero({
                 {hoveredTile && hasMosaic && (
                   <div
                     aria-hidden="true"
-                    className="pointer-events-none absolute z-10 w-56 overflow-hidden rounded-2xl border bg-white p-2 shadow-lg"
+                    className="pointer-events-none absolute z-10 w-56 overflow-hidden rounded-2xl border bg-popover p-2 shadow-lg"
                     style={{
                       left: `${(hoveredTile.x / frame.w) * 100}%`,
                       top: `${(hoveredTile.y / frame.h) * 100}%`,
@@ -1164,7 +1164,7 @@ export function CanvasHero({
                       })`,
                     }}
                   >
-                    <div className="relative aspect-square w-full overflow-hidden rounded-xl bg-white">
+                    <div className="relative aspect-square w-full overflow-hidden rounded-xl bg-card">
                       {/* eslint-disable-next-line @next/next/no-img-element -- public library URL, shown only as a hover preview */}
                       <img
                         src={hoveredTile.url}
@@ -1172,7 +1172,7 @@ export function CanvasHero({
                         draggable={false}
                         className="size-full object-contain"
                       />
-                      <span className="absolute inset-x-0 bottom-0 line-clamp-2 bg-black/70 px-2 py-1.5 text-left text-xs font-medium text-white">
+                      <span className="absolute inset-x-0 bottom-0 line-clamp-2 bg-black/70 px-2 py-1.5 text-left text-xs font-medium text-[var(--cream)]">
                         {hoveredTile.title}
                       </span>
                     </div>

@@ -248,7 +248,7 @@ function MosaicCell({ item }: { item: GalleryIndexEntry }) {
       {hover && (
         <div
           aria-hidden
-          className="pointer-events-none absolute z-10 w-40 overflow-hidden rounded-2xl border bg-white p-2 font-sans shadow-lg sm:w-52"
+          className="pointer-events-none absolute z-10 w-40 overflow-hidden rounded-2xl border bg-popover p-2 font-sans shadow-lg sm:w-52"
           style={{
             left: `${hover.fx * 100}%`,
             top: `${hover.fy * 100}%`,
@@ -257,12 +257,12 @@ function MosaicCell({ item }: { item: GalleryIndexEntry }) {
             }, ${hover.fy > 0.5 ? "calc(-100% - 12px)" : "12px"})`,
           }}
         >
-          <div className="relative aspect-square w-full overflow-hidden rounded-xl bg-white">
+          <div className="relative aspect-square w-full overflow-hidden rounded-xl bg-card">
             <HoverPreviewImage
               key={previewUrlFor(hover.tile)}
               tile={hover.tile}
             />
-            <span className="absolute inset-x-0 bottom-0 line-clamp-2 bg-black/70 px-2 py-1.5 text-left text-xs font-medium text-white">
+            <span className="absolute inset-x-0 bottom-0 line-clamp-2 bg-black/70 px-2 py-1.5 text-left text-xs font-medium text-[var(--cream)]">
               {hover.tile.title}
             </span>
           </div>

@@ -51,9 +51,9 @@
     --cream: oklch(0.982 0.006 92.8);
     --background: var(--cream);
     --foreground: oklch(0.145 0 0);
-    --card: oklch(1 0 0);
+    --card: var(--cream);
     --card-foreground: oklch(0.145 0 0);
-    --popover: oklch(1 0 0);
+    --popover: var(--cream);
     --popover-foreground: oklch(0.145 0 0);
     --primary: oklch(0.205 0 0);
     --primary-foreground: var(--cream);
@@ -73,7 +73,7 @@
     --chart-4: oklch(0.371 0 0);
     --chart-5: oklch(0.269 0 0);
     --radius: 0;
-    --sidebar: oklch(0.985 0 0);
+    --sidebar: var(--cream);
     --sidebar-foreground: oklch(0.145 0 0);
     --sidebar-primary: oklch(0.205 0 0);
     --sidebar-primary-foreground: var(--cream);
@@ -99,8 +99,8 @@
     --accent: oklch(0.269 0 0);
     --accent-foreground: var(--cream);
     --destructive: oklch(0.704 0.191 22.216);
-    --border: oklch(1 0 0 / 10%);
-    --input: oklch(1 0 0 / 15%);
+    --border: color-mix(in oklch, var(--cream) 10%, transparent);
+    --input: color-mix(in oklch, var(--cream) 15%, transparent);
     --ring: oklch(0.556 0 0);
     --chart-1: oklch(0.87 0 0);
     --chart-2: oklch(0.556 0 0);
@@ -113,7 +113,7 @@
     --sidebar-primary-foreground: var(--cream);
     --sidebar-accent: oklch(0.269 0 0);
     --sidebar-accent-foreground: var(--cream);
-    --sidebar-border: oklch(1 0 0 / 10%);
+    --sidebar-border: color-mix(in oklch, var(--cream) 10%, transparent);
     --sidebar-ring: oklch(0.556 0 0);
 }
 
@@ -127,4 +127,29 @@
   html {
     @apply font-sans;
     }
+}
+
+/* Keep shadcn's light surfaces aligned after generated color fallback rules. */
+:root:not(.dark),
+.light {
+    --background: var(--cream);
+    --card: var(--cream);
+    --popover: var(--cream);
+    --primary-foreground: var(--cream);
+    --sidebar: var(--cream);
+    --sidebar-primary-foreground: var(--cream);
+}
+
+.dark {
+    --foreground: var(--cream);
+    --card-foreground: var(--cream);
+    --popover-foreground: var(--cream);
+    --secondary-foreground: var(--cream);
+    --accent-foreground: var(--cream);
+    --border: color-mix(in oklch, var(--cream) 10%, transparent);
+    --input: color-mix(in oklch, var(--cream) 15%, transparent);
+    --sidebar-foreground: var(--cream);
+    --sidebar-primary-foreground: var(--cream);
+    --sidebar-accent-foreground: var(--cream);
+    --sidebar-border: color-mix(in oklch, var(--cream) 10%, transparent);
 }
