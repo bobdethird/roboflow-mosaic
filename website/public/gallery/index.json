@@ -1,0 +1,107 @@
+[
+  {
+    "name": "arena",
+    "src": "/gallery/arena.jpg",
+    "w": 1000,
+    "h": 668,
+    "alt": "arena rebuilt as a mosaic of Knicks footage frames"
+  },
+  {
+    "name": "arena2",
+    "src": "/gallery/arena2.jpg",
+    "w": 1000,
+    "h": 668,
+    "alt": "arena2 rebuilt as a mosaic of Knicks footage frames"
+  },
+  {
+    "name": "brunson",
+    "src": "/gallery/brunson.jpg",
+    "w": 800,
+    "h": 1000,
+    "alt": "brunson rebuilt as a mosaic of Knicks footage frames"
+  },
+  {
+    "name": "brunson2",
+    "src": "/gallery/brunson2.jpg",
+    "w": 800,
+    "h": 1000,
+    "alt": "brunson2 rebuilt as a mosaic of Knicks footage frames"
+  },
+  {
+    "name": "cops",
+    "src": "/gallery/cops.jpg",
+    "w": 1000,
+    "h": 666,
+    "alt": "cops rebuilt as a mosaic of Knicks footage frames"
+  },
+  {
+    "name": "crowd",
+    "src": "/gallery/crowd.jpg",
+    "w": 1000,
+    "h": 666,
+    "alt": "crowd rebuilt as a mosaic of Knicks footage frames"
+  },
+  {
+    "name": "fans",
+    "src": "/gallery/fans.jpg",
+    "w": 1000,
+    "h": 563,
+    "alt": "fans rebuilt as a mosaic of Knicks footage frames"
+  },
+  {
+    "name": "hart",
+    "src": "/gallery/hart.jpg",
+    "w": 800,
+    "h": 1000,
+    "alt": "hart rebuilt as a mosaic of Knicks footage frames"
+  },
+  {
+    "name": "kat",
+    "src": "/gallery/kat.jpg",
+    "w": 800,
+    "h": 1000,
+    "alt": "kat rebuilt as a mosaic of Knicks footage frames"
+  },
+  {
+    "name": "knicks-in-4",
+    "src": "/gallery/knicks-in-4.jpg",
+    "w": 616,
+    "h": 1000,
+    "alt": "knicks in 4 rebuilt as a mosaic of Knicks footage frames"
+  },
+  {
+    "name": "og-dunk",
+    "src": "/gallery/og-dunk.jpg",
+    "w": 1000,
+    "h": 1000,
+    "alt": "og dunk rebuilt as a mosaic of Knicks footage frames"
+  },
+  {
+    "name": "og",
+    "src": "/gallery/og.jpg",
+    "w": 800,
+    "h": 1000,
+    "alt": "og rebuilt as a mosaic of Knicks footage frames"
+  },
+  {
+    "name": "skyline",
+    "src": "/gallery/skyline.jpg",
+    "w": 1000,
+    "h": 666,
+    "alt": "skyline rebuilt as a mosaic of Knicks footage frames"
+  },
+  {
+    "name": "trophy",
+    "src": "/gallery/trophy.jpg",
+    "w": 1000,
+    "h": 563,
+    "alt": "trophy rebuilt as a mosaic of Knicks footage frames"
+  },
+  {
+    "name": "trophy-2",
+    "src": "/gallery/trophy-2.jpg",
+    "w": 1000,
+    "h": 563,
+    "alt": "trophy rebuilt as a mosaic of Knicks footage frames"
+  }
+]

@@ -3,75 +3,46 @@ import { ArrowRight } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { SiteCredit } from "@/components/site-credit"
-import { ExampleGallery, type Example } from "@/components/example-gallery"
+import { MosaicGallery } from "@/components/mosaic-gallery"
 import { ThemeToggle } from "@/components/theme-toggle"
-
-const EXAMPLES: Example[] = [
-  {
-    src: "/examples/mosaic-player.jpg",
-    width: 960,
-    height: 1200,
-    alt: "Captain clutch, rebuilt as a mosaic of thousands of footage frames",
-  },
-  {
-    src: "/examples/mosaic-celebration.jpg",
-    width: 1900,
-    height: 1192,
-    alt: "Knicks players and fans celebrating, rebuilt as a mosaic of thousands of footage frames",
-  },
-  {
-    src: "/examples/mosaic-crowd.jpg",
-    width: 1600,
-    height: 900,
-    alt: "A jubilant Knicks crowd, rebuilt as a mosaic of thousands of footage frames",
-  },
-  {
-    src: "/examples/mosaic-arena.jpg",
-    width: 1600,
-    height: 1068,
-    alt: "A packed Madison Square Garden, rebuilt as a mosaic of thousands of footage frames",
-  },
-  {
-    src: "/examples/mosaic-action.jpg",
-    width: 1600,
-    height: 1068,
-    alt: "Knicks game action, rebuilt as a mosaic of thousands of footage frames",
-  },
-]
 
 export default function Page() {
   return (
     <main
-      className="flex min-h-svh flex-col items-center justify-center gap-12 px-6 py-16 sm:py-20"
+      className="flex min-h-svh flex-col items-center gap-9 px-2 pt-10 pb-28 sm:pt-12 sm:pb-32"
       style={{ fontFamily: "var(--font-mean-hand)" }}
     >
       <ThemeToggle />
 
-      {/* Small intro — the meaning of the piece. */}
-      <header className="flex max-w-xl flex-col items-center gap-3 text-center">
-        <p className="font-mono text-xs tracking-[0.2em] text-muted-foreground uppercase">
-          Mosaic
-        </p>
-        <p className="text-sm leading-relaxed text-balance text-muted-foreground uppercase">
-          This one's for you, New York.
+      {/* Hero title + small intro. */}
+      <header className="flex w-full max-w-7xl flex-col gap-4 md:flex-row md:items-end md:justify-between md:gap-8">
+        <h1 className="max-w-[11ch] text-left text-5xl leading-none font-light tracking-tight text-balance sm:text-6xl md:text-7xl lg:text-8xl">
+          NEW YORK OR NOWHERE
+        </h1>
+        <p className="max-w-md self-end font-sans text-sm leading-relaxed text-right text-pretty text-muted-foreground sm:text-base">
+          This project turns a reference image into a photo mosaic assembled from
+          frames of Knicks footage. It experiments with matching color, shape,
+          and motion history so thousands of small moments can rebuild one
+          larger image. This placeholder copy will later explain the pipeline,
+          the source library, and how the interactive mosaic renderer works.
         </p>
       </header>
 
-      {/* Examples of what the mosaic produces. */}
-      <div className="flex flex-col items-center gap-3">
-        <ExampleGallery examples={EXAMPLES} />
-        <p className="font-mono text-[0.7rem] tracking-wide text-muted-foreground">
-          How it works: reconstruct an image entirely from Knicks photos.
-        </p>
-      </div>
+      {/* Gallery of mosaics — hover any one to see the footage frame behind a tile. */}
+      <MosaicGallery className="w-full max-w-7xl" />
 
-      {/* Call to action. */}
-      <Button asChild className="h-10 px-5 text-sm">
-        <Link href="/knicks-mosaic">
-          try it out
-          <ArrowRight />
-        </Link>
-      </Button>
+      {/* Docked call to action. */}
+      <div className="fixed inset-x-0 bottom-5 z-40 flex justify-center px-4 sm:bottom-6">
+        <Button
+          asChild
+          className="h-10 rounded-none border-0 px-5 text-sm shadow-lg ring-0"
+        >
+          <Link href="/knicks-mosaic">
+            try it out
+            <ArrowRight />
+          </Link>
+        </Button>
+      </div>
 
       <SiteCredit />
     </main>
