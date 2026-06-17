@@ -104,10 +104,10 @@ export async function GET(
   // Caching policy turns on two things: whether the object is content-addressed
   // and whether the bucket is gated.
   //
-  //  - Thumbnails, originals, and versioned thumbnail atlases are immutable: a
-  //    given URL's content never changes. Cache them hard so a generate does not
-  //    re-pay the Supabase round-trip for every placed tile — the main lever for
-  //    fast generation. Gated objects stay `private` (cached per-device, behind
+  //  - Thumbnails and originals are keyed by a hash of their bytes (see the seeder),
+  //    so a given URL's content never changes. Cache them hard so a generate does
+  //    not re-pay the Supabase round-trip for every placed tile — the main lever
+  //    for fast generation. Gated objects stay `private` (cached per-device, behind
   //    the unlock cookie); public objects also carry `s-maxage` so a shared CDN
   //    (e.g. Vercel's edge) can serve them without hitting this route at all.
   //  - The mutable library files (manifest, signatures) must stay fresh so a
@@ -119,10 +119,7 @@ export async function GET(
   // does not strip the explicit Cache-Control we set here — that header is what a
   // CDN/browser keys on — so there is no need to relax it for the public path.
   const gated = isGatedBucket(bucket)
-  const immutable =
-    objectPath[0] === "thumbs" ||
-    objectPath[0] === "originals" ||
-    objectPath[0] === "atlases"
+  const immutable = objectPath[0] === "thumbs" || objectPath[0] === "originals"
   const responseHeaders = new Headers()
   for (const header of PASSTHROUGH_HEADERS) {
     // cache-control is always set explicitly below; for gated objects also drop
