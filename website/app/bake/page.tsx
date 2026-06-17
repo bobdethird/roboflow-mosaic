@@ -20,8 +20,13 @@ import { Button } from "@/components/ui/button"
 // region resolves to on hover — are identical to a live generate.
 
 const BUCKET = "knicks-mosaic" as const
-// Match the /knicks-mosaic "high" resolution preset (8px cells) for maximum detail.
-const CELL_SIZE = 8
+// Match the /knicks-mosaic resolution presets.
+const RESOLUTION_PRESETS = {
+  low: { label: "Low", cellSize: 18 },
+  medium: { label: "Medium", cellSize: 12 },
+  high: { label: "High", cellSize: 8 },
+} as const
+const RESOLUTION_PRESET_ORDER = ["low", "medium", "high"] as const
 const MAX_TILE_REUSE = 20
 const WEIGHTING = {
   recencyStrength: 1,
@@ -41,6 +46,7 @@ const BAKE_TIMEOUT_MS = 180_000
 
 type Status = "pending" | "baking" | "done" | "error"
 type Row = { file: string; name: string; status: Status; detail?: string }
+type ResolutionPreset = (typeof RESOLUTION_PRESET_ORDER)[number]
 
 function baseName(file: string): string {
   return file.replace(/\.[^.]+$/, "")
@@ -59,6 +65,10 @@ function slugify(file: string): string {
   )
 }
 
+function outputNameForPreset(name: string, preset: ResolutionPreset): string {
+  return `${name}-${preset}`
+}
+
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   return Promise.race([
     promise,
@@ -73,6 +83,8 @@ export default function BakePage() {
   const [tileCount, setTileCount] = React.useState<number | null>(null)
   const [running, setRunning] = React.useState(false)
   const [allDone, setAllDone] = React.useState(false)
+  const [resolutionPreset, setResolutionPreset] =
+    React.useState<ResolutionPreset>("high")
 
   const engineRef = React.useRef<MosaicEngine | null>(null)
   const idsRef = React.useRef<string[]>([])
@@ -112,7 +124,12 @@ export default function BakePage() {
   }, [])
 
   const bakeOne = React.useCallback(
-    async (file: string, name: string) => {
+    async (
+      file: string,
+      name: string,
+      cellSize: number,
+      resolutionLabel: string
+    ) => {
       const engine = engineRef.current
       const ids = idsRef.current
       const libraryById = libraryByIdRef.current
@@ -122,7 +139,7 @@ export default function BakePage() {
       const { frame, bgColor, base, assignment, centers, tileIds } =
         await withTimeout(
           generateBakedMosaic(engine, img, ids, {
-            cellSize: CELL_SIZE,
+            cellSize,
             maxTileReuse: MAX_TILE_REUSE,
             weighting: WEIGHTING,
           }),
@@ -201,7 +218,7 @@ export default function BakePage() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           name,
-          alt: `${prettyName(file)} rebuilt as a mosaic of Knicks footage frames`,
+          alt: `${prettyName(file)} rebuilt as a ${resolutionLabel.toLowerCase()} resolution mosaic of Knicks footage frames`,
           image,
           w: sw,
           h: sh,
@@ -224,11 +241,15 @@ export default function BakePage() {
     // Stable, collision-free names within this run (e.g. trophy.jpeg vs
     // trophy.webp would otherwise both slugify to "trophy").
     const used = new Set<string>()
+    const preset = resolutionPreset
+    const resolution = RESOLUTION_PRESETS[preset]
     const current = rows.map((row) => {
       let name = row.name
       let n = 2
-      while (used.has(name)) name = `${row.name}-${n++}`
-      used.add(name)
+      while (used.has(outputNameForPreset(name, preset))) {
+        name = `${row.name}-${n++}`
+      }
+      used.add(outputNameForPreset(name, preset))
       return { ...row, name }
     })
     setRows(current.map((row) => ({ ...row, status: "pending" as Status })))
@@ -236,10 +257,15 @@ export default function BakePage() {
     for (const row of current) {
       setRow(row.file, { status: "baking", detail: undefined })
       try {
-        const { tiles, cells } = await bakeOne(row.file, row.name)
+        const { tiles, cells } = await bakeOne(
+          row.file,
+          outputNameForPreset(row.name, preset),
+          resolution.cellSize,
+          resolution.label
+        )
         setRow(row.file, {
           status: "done",
-          detail: `${cells.toLocaleString()} cells · ${tiles} frames`,
+          detail: `${resolution.label}: ${cells.toLocaleString()} cells · ${tiles} frames`,
         })
       } catch (err) {
         setRow(row.file, {
@@ -250,10 +276,11 @@ export default function BakePage() {
     }
     setRunning(false)
     setAllDone(true)
-  }, [rows, running, bakeOne, setRow])
+  }, [rows, running, bakeOne, setRow, resolutionPreset])
 
   const doneCount = rows.filter((r) => r.status === "done").length
   const errorCount = rows.filter((r) => r.status === "error").length
+  const activeResolution = RESOLUTION_PRESETS[resolutionPreset]
 
   return (
     <main className="mx-auto flex min-h-svh max-w-2xl flex-col gap-6 p-8 font-sans">
@@ -273,14 +300,48 @@ export default function BakePage() {
         </p>
       </header>
 
-      <div>
+      <section className="flex flex-col gap-3 rounded-lg border p-3">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="space-y-1">
+            <h2 className="text-sm font-medium">Resolution</h2>
+            <p className="text-xs text-muted-foreground">
+              Smaller cells create more detail and take longer to bake. Current:{" "}
+              {activeResolution.cellSize}px cells. Outputs use a{" "}
+              <code>-{resolutionPreset}</code> suffix.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {RESOLUTION_PRESET_ORDER.map((preset) => {
+              const option = RESOLUTION_PRESETS[preset]
+              const selected = preset === resolutionPreset
+              return (
+                <Button
+                  key={preset}
+                  type="button"
+                  variant={selected ? "default" : "outline"}
+                  size="sm"
+                  aria-pressed={selected}
+                  disabled={running}
+                  onClick={() => setResolutionPreset(preset)}
+                >
+                  {option.label}
+                  <span className="text-xs opacity-70">
+                    {option.cellSize}px
+                  </span>
+                </Button>
+              )
+            })}
+          </div>
+        </div>
         <Button
           onClick={bakeAll}
           disabled={running || tileCount === null || rows.length === 0}
         >
-          {running ? "Baking…" : "Bake all"}
+          {running
+            ? `Baking ${activeResolution.label.toLowerCase()}…`
+            : `Bake all (${activeResolution.label.toLowerCase()})`}
         </Button>
-      </div>
+      </section>
 
       <ol className="flex flex-col gap-1.5 text-sm">
         {rows.map((row) => (
@@ -302,7 +363,9 @@ export default function BakePage() {
                 }
               />
               <span className="font-medium">{row.file}</span>
-              <span className="text-muted-foreground">→ {row.name}.jpg</span>
+              <span className="text-muted-foreground">
+                → {outputNameForPreset(row.name, resolutionPreset)}.jpg
+              </span>
             </span>
             <span className="text-right text-xs text-muted-foreground">
               {row.detail ?? row.status}

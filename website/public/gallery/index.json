@@ -1,38 +1,38 @@
 [
   {
-    "name": "arena",
-    "src": "/gallery/arena.jpg",
+    "name": "arena-medium",
+    "src": "/gallery/arena-medium.jpg",
     "w": 1000,
     "h": 668,
-    "alt": "arena rebuilt as a mosaic of Knicks footage frames"
+    "alt": "arena rebuilt as a medium resolution mosaic of Knicks footage frames"
   },
   {
-    "name": "arena2",
-    "src": "/gallery/arena2.jpg",
+    "name": "arena2-medium",
+    "src": "/gallery/arena2-medium.jpg",
     "w": 1000,
     "h": 668,
-    "alt": "arena2 rebuilt as a mosaic of Knicks footage frames"
+    "alt": "arena2 rebuilt as a medium resolution mosaic of Knicks footage frames"
   },
   {
-    "name": "brunson",
-    "src": "/gallery/brunson.jpg",
+    "name": "brunson-medium",
+    "src": "/gallery/brunson-medium.jpg",
     "w": 800,
     "h": 1000,
-    "alt": "brunson rebuilt as a mosaic of Knicks footage frames"
+    "alt": "brunson rebuilt as a medium resolution mosaic of Knicks footage frames"
   },
   {
-    "name": "brunson2",
-    "src": "/gallery/brunson2.jpg",
+    "name": "brunson2-medium",
+    "src": "/gallery/brunson2-medium.jpg",
     "w": 800,
     "h": 1000,
-    "alt": "brunson2 rebuilt as a mosaic of Knicks footage frames"
+    "alt": "brunson2 rebuilt as a medium resolution mosaic of Knicks footage frames"
   },
   {
-    "name": "cops",
-    "src": "/gallery/cops.jpg",
+    "name": "cops-medium",
+    "src": "/gallery/cops-medium.jpg",
     "w": 1000,
     "h": 666,
-    "alt": "cops rebuilt as a mosaic of Knicks footage frames"
+    "alt": "cops rebuilt as a medium resolution mosaic of Knicks footage frames"
   },
   {
     "name": "crowd",
@@ -49,39 +49,39 @@
     "alt": "fans rebuilt as a mosaic of Knicks footage frames"
   },
   {
-    "name": "hart",
-    "src": "/gallery/hart.jpg",
+    "name": "hart-medium",
+    "src": "/gallery/hart-medium.jpg",
     "w": 800,
     "h": 1000,
-    "alt": "hart rebuilt as a mosaic of Knicks footage frames"
+    "alt": "hart rebuilt as a medium resolution mosaic of Knicks footage frames"
   },
   {
-    "name": "kat",
-    "src": "/gallery/kat.jpg",
+    "name": "kat-medium",
+    "src": "/gallery/kat-medium.jpg",
     "w": 800,
     "h": 1000,
-    "alt": "kat rebuilt as a mosaic of Knicks footage frames"
+    "alt": "kat rebuilt as a medium resolution mosaic of Knicks footage frames"
   },
   {
-    "name": "knicks-in-4",
-    "src": "/gallery/knicks-in-4.jpg",
+    "name": "knicks-in-4-medium",
+    "src": "/gallery/knicks-in-4-medium.jpg",
     "w": 616,
     "h": 1000,
-    "alt": "knicks in 4 rebuilt as a mosaic of Knicks footage frames"
+    "alt": "knicks in 4 rebuilt as a medium resolution mosaic of Knicks footage frames"
   },
   {
-    "name": "og-dunk",
-    "src": "/gallery/og-dunk.jpg",
+    "name": "og-dunk-medium",
+    "src": "/gallery/og-dunk-medium.jpg",
     "w": 1000,
     "h": 1000,
-    "alt": "og dunk rebuilt as a mosaic of Knicks footage frames"
+    "alt": "og dunk rebuilt as a medium resolution mosaic of Knicks footage frames"
   },
   {
-    "name": "og",
-    "src": "/gallery/og.jpg",
+    "name": "og-medium",
+    "src": "/gallery/og-medium.jpg",
     "w": 800,
     "h": 1000,
-    "alt": "og rebuilt as a mosaic of Knicks footage frames"
+    "alt": "og rebuilt as a medium resolution mosaic of Knicks footage frames"
   },
   {
     "name": "skyline",
@@ -91,17 +91,17 @@
     "alt": "skyline rebuilt as a mosaic of Knicks footage frames"
   },
   {
-    "name": "trophy",
-    "src": "/gallery/trophy.jpg",
+    "name": "trophy-medium",
+    "src": "/gallery/trophy-medium.jpg",
     "w": 1000,
     "h": 563,
-    "alt": "trophy rebuilt as a mosaic of Knicks footage frames"
+    "alt": "trophy rebuilt as a medium resolution mosaic of Knicks footage frames"
   },
   {
-    "name": "trophy-2",
-    "src": "/gallery/trophy-2.jpg",
+    "name": "trophy-2-medium",
+    "src": "/gallery/trophy-2-medium.jpg",
     "w": 1000,
     "h": 563,
-    "alt": "trophy rebuilt as a mosaic of Knicks footage frames"
+    "alt": "trophy rebuilt as a medium resolution mosaic of Knicks footage frames"
   }
 ]

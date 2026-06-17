@@ -6,6 +6,7 @@ import type {
   GalleryTile,
   GalleryTileMap,
 } from "@/lib/gallery"
+import { isLocalhostHost } from "@/lib/localhost-only"
 
 // Dev-only sink for the /bake harness: writes one baked mosaic's image + hover
 // hit-map into public/gallery and merges it into the gallery index. Guarded so
@@ -30,7 +31,10 @@ type SaveBody = {
 const SAFE_NAME = /^[a-z0-9][a-z0-9._-]*$/i
 
 export async function POST(request: Request) {
-  if (process.env.NODE_ENV === "production") {
+  if (
+    process.env.NODE_ENV === "production" ||
+    !isLocalhostHost(request.headers.get("host"))
+  ) {
     return new Response("Not found", { status: 404 })
   }
 
