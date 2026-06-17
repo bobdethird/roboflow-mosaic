@@ -31,12 +31,25 @@ export default function Page() {
             of this theme. The melting pot of backgrounds, experiences, and
             perspectives creates a place on Earth like no other; one filled
             with culture, uniqueness, and impossible dreams. This project pays homage
-            to what makes New York so special. Each mosaic is composed of thousands
-            of tiles - each a moment of Knicks history leading us to this point,
+            to what makes New York so special.
+          </span>
+          <span className="mt-4 block md:mt-6">
+            Each mosaic is composed of thousands
+            of tiles; each a moment of Knicks history leading us to this point,
             whether it be the players, the fans, or the legacy.
           </span>
         </p>
       </header>
+
+      {/* Hint on how to peek at the photo behind a tile. */}
+      <p className="w-full max-w-7xl font-sans text-xs text-muted-foreground sm:text-sm">
+        <span className="hidden md:inline">
+          hover over a tile to see the smaller Knicks pictures
+        </span>
+        <span className="md:hidden">
+          tap a picture, then hover over a tile to see the smaller ones that comprise the whole
+        </span>
+      </p>
 
       {/* Gallery of mosaics — hover any one to see the footage frame behind a tile. */}
       <MosaicGallery className="w-full max-w-7xl" />
