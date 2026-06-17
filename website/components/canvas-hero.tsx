@@ -44,6 +44,7 @@ import {
   referenceWindowSignatures,
 } from "@/lib/mosaic"
 import { contourMosaic } from "@/lib/contour-mosaic"
+import { cn } from "@/lib/utils"
 
 // The mosaic renders into a flat frame matching the reference's aspect ratio so
 // tiles stay square instead of stretching. The long edge is fixed so tile
@@ -119,6 +120,142 @@ function ControlsSidebarTrigger({
       <PanelRight />
       <span className={isMobile ? "" : "sr-only"}>Controls</span>
     </Button>
+  )
+}
+
+// Resolution presets + the primary Generate/Save actions. Shared between the
+// desktop sidebar and the mobile bottom bar so both stay in sync.
+function MosaicActionControls({
+  resolutionMode,
+  onSelectMode,
+  onGenerate,
+  isGenerating,
+  hasMosaic,
+  progressPct,
+  generateDisabled,
+  onDownload,
+  showSave = true,
+  className,
+}: {
+  resolutionMode: ResolutionMode
+  onSelectMode: (mode: ResolutionMode) => void
+  onGenerate: () => void
+  isGenerating: boolean
+  hasMosaic: boolean
+  progressPct: number
+  generateDisabled: boolean
+  onDownload: () => void
+  showSave?: boolean
+  className?: string
+}) {
+  return (
+    <div className={cn("flex flex-col gap-3", className)}>
+      <div
+        className="grid grid-cols-3 gap-1"
+        role="group"
+        aria-label="Mosaic resolution"
+      >
+        {RESOLUTION_MODE_ORDER.map((mode) => (
+          <Button
+            key={mode}
+            type="button"
+            size="sm"
+            variant={resolutionMode === mode ? "default" : "outline"}
+            className="capitalize"
+            aria-pressed={resolutionMode === mode}
+            onClick={() => onSelectMode(mode)}
+          >
+            {mode}
+          </Button>
+        ))}
+      </div>
+
+      <Button onClick={() => void onGenerate()} disabled={generateDisabled}>
+        {isGenerating
+          ? `Generating ${progressPct.toFixed(1)}%`
+          : hasMosaic
+            ? "Regenerate"
+            : "Generate mosaic"}
+      </Button>
+      {showSave && hasMosaic && (
+        <Button
+          variant="outline"
+          onClick={() => void onDownload()}
+          disabled={isGenerating}
+        >
+          <Download />
+          Save image
+        </Button>
+      )}
+    </div>
+  )
+}
+
+// Mobile-only bottom bar. Before a reference is added it's just the Controls
+// trigger; once a photo is in place it surfaces the resolution presets and the
+// Generate button directly so the primary action isn't buried in the sheet.
+function MobileActionBar({
+  hasReference,
+  onToggleControls,
+  ...controls
+}: {
+  hasReference: boolean
+  onToggleControls: () => void
+} & React.ComponentProps<typeof MosaicActionControls>) {
+  const { isMobile, openMobile, toggleSidebar } = useSidebar()
+  if (!isMobile) return null
+
+  const openControls = () => {
+    onToggleControls()
+    toggleSidebar()
+  }
+
+  if (!hasReference) {
+    return (
+      <div className="fixed inset-x-3 bottom-[calc(env(safe-area-inset-bottom,0px)+1rem)] z-30 sm:inset-x-4">
+        <Button
+          type="button"
+          variant="outline"
+          aria-label="Show controls"
+          aria-expanded={openMobile}
+          className="h-10 w-full justify-center bg-background shadow-lg"
+          onClick={openControls}
+        >
+          <PanelRight />
+          Controls
+        </Button>
+      </div>
+    )
+  }
+
+  return (
+    <div className="fixed inset-x-3 bottom-[calc(env(safe-area-inset-bottom,0px)+0.75rem)] z-30 flex flex-col gap-2 rounded-2xl border bg-background/95 p-3 shadow-lg backdrop-blur sm:inset-x-4">
+      <MosaicActionControls {...controls} showSave={false} />
+      <div className="flex gap-2">
+        {controls.hasMosaic && (
+          <Button
+            variant="outline"
+            className="flex-1"
+            onClick={() => void controls.onDownload()}
+            disabled={controls.isGenerating}
+          >
+            <Download />
+            Save
+          </Button>
+        )}
+        <Button
+          type="button"
+          variant="ghost"
+          aria-label={openMobile ? "Hide controls" : "More controls"}
+          aria-expanded={openMobile}
+          className={controls.hasMosaic ? "flex-1" : "w-full"}
+          onClick={openControls}
+        >
+          <PanelRight />
+          More controls
+        </Button>
+      </div>
+    </div>
   )
 }
 
@@ -933,6 +1070,11 @@ export function CanvasHero({
   const resolutionValue = resolutionForDensity(density, densityMin)
   const resolutionMode = nearestResolutionMode(density, densityMin)
   const closeAdvanced = React.useCallback(() => setShowAdvanced(false), [])
+  const handleSelectResolution = React.useCallback(
+    (mode: ResolutionMode) =>
+      setDensity(densityForResolution(RESOLUTION_MODES[mode], densityMin)),
+    [densityMin]
+  )
 
   return (
     <SidebarProvider
@@ -942,13 +1084,36 @@ export function CanvasHero({
       <CloseAdvancedWhenSidebarCloses onClose={closeAdvanced} />
 
       <section className="relative min-h-svh min-w-0 flex-1 overflow-x-hidden bg-background select-none xl:h-svh xl:overflow-hidden">
+        {/* Desktop: a compact icon trigger in the corner. */}
         <ControlsSidebarTrigger
           onToggle={closeAdvanced}
-          className="fixed inset-x-4 bottom-[calc(env(safe-area-inset-bottom,0px)+1rem)] z-30 h-10 justify-center bg-background shadow-lg md:absolute md:inset-x-auto md:top-6 md:right-6 md:bottom-auto md:size-7 md:shadow-none xl:top-8 xl:right-8"
+          className="absolute top-6 right-6 z-30 hidden size-7 md:flex xl:top-8 xl:right-8"
+        />
+
+        {/* Mobile: a bottom bar that surfaces Generate directly once a photo
+            is added, instead of hiding it behind the Controls sheet. */}
+        <MobileActionBar
+          hasReference={Boolean(reference)}
+          onToggleControls={closeAdvanced}
+          resolutionMode={resolutionMode}
+          onSelectMode={handleSelectResolution}
+          onGenerate={handleGenerate}
+          isGenerating={isGenerating}
+          hasMosaic={hasMosaic}
+          progressPct={displayedProgressPct}
+          generateDisabled={tileCount === 0 || isGenerating}
+          onDownload={handleDownload}
         />
 
         <div
-          className="box-border grid min-h-svh w-full grid-cols-1 gap-8 px-3 py-4 sm:px-4 max-md:flex max-md:flex-col max-md:gap-0 max-md:pb-[calc(env(safe-area-inset-bottom,0px)+1rem+2.5rem+1rem)] max-md:pt-[calc(env(safe-area-inset-top,0px)+1rem+1.5rem+1rem)] md:p-6 xl:h-svh xl:items-stretch xl:gap-8 xl:p-8 xl:[grid-template-columns:minmax(0,1fr)_minmax(0,var(--mosaic-col-max))_minmax(0,1fr)]"
+          className={cn(
+            "box-border grid min-h-svh w-full grid-cols-1 gap-8 px-3 py-4 sm:px-4 max-md:flex max-md:flex-col max-md:gap-0 max-md:pt-[calc(env(safe-area-inset-top,0px)+1rem+1.5rem+1rem)] md:p-6 xl:h-svh xl:items-stretch xl:gap-8 xl:p-8 xl:[grid-template-columns:minmax(0,1fr)_minmax(0,var(--mosaic-col-max))_minmax(0,1fr)]",
+            // Reserve room for the fixed mobile bottom bar: a tall control bar
+            // once a reference exists, just the Controls button before that.
+            reference
+              ? "max-md:pb-[calc(env(safe-area-inset-bottom,0px)+11rem)]"
+              : "max-md:pb-[calc(env(safe-area-inset-bottom,0px)+4.5rem)]"
+          )}
           style={
             { "--mosaic-col-max": MOSAIC_CENTER_COLUMN_MAX } as React.CSSProperties
           }
@@ -1088,61 +1253,26 @@ export function CanvasHero({
             </SidebarGroupContent>
           </SidebarGroup>
 
-          {reference && <SidebarSeparator className="mx-0" />}
+          {reference && (
+            <SidebarSeparator className="mx-0 hidden md:block" />
+          )}
 
           {reference && (
-            <SidebarGroup className="gap-3 p-0">
+            <SidebarGroup className="hidden gap-3 p-0 md:flex">
               <SidebarGroupLabel className="h-auto px-0 text-sm text-muted-foreground">
                 Resolution
               </SidebarGroupLabel>
-              <SidebarGroupContent className="flex flex-col gap-3">
-                <div
-                  className="grid grid-cols-3 gap-1"
-                  role="group"
-                  aria-label="Mosaic resolution"
-                >
-                  {RESOLUTION_MODE_ORDER.map((mode) => (
-                    <Button
-                      key={mode}
-                      type="button"
-                      size="sm"
-                      variant={resolutionMode === mode ? "default" : "outline"}
-                      className="capitalize"
-                      aria-pressed={resolutionMode === mode}
-                      onClick={() =>
-                        setDensity(
-                          densityForResolution(
-                            RESOLUTION_MODES[mode],
-                            densityMin
-                          )
-                        )
-                      }
-                    >
-                      {mode}
-                    </Button>
-                  ))}
-                </div>
-
-                <Button
-                  onClick={() => void handleGenerate()}
-                  disabled={tileCount === 0 || isGenerating}
-                >
-                  {isGenerating
-                    ? `Generating ${displayedProgressPct.toFixed(1)}%`
-                    : hasMosaic
-                      ? "Regenerate"
-                      : "Generate mosaic"}
-                </Button>
-                {hasMosaic && (
-                  <Button
-                    variant="outline"
-                    onClick={() => void handleDownload()}
-                    disabled={isGenerating}
-                  >
-                    <Download />
-                    Save image
-                  </Button>
-                )}
+              <SidebarGroupContent>
+                <MosaicActionControls
+                  resolutionMode={resolutionMode}
+                  onSelectMode={handleSelectResolution}
+                  onGenerate={handleGenerate}
+                  isGenerating={isGenerating}
+                  hasMosaic={hasMosaic}
+                  progressPct={displayedProgressPct}
+                  generateDisabled={tileCount === 0 || isGenerating}
+                  onDownload={handleDownload}
+                />
               </SidebarGroupContent>
             </SidebarGroup>
           )}
