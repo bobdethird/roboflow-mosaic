@@ -2,6 +2,8 @@
 
 import * as React from "react"
 
+import { Button } from "@/components/ui/button"
+
 const COOKIE_NAME = "tile_hint_dismissed"
 // Keep the cookie around for a year so returning visitors don't see it again.
 const COOKIE_MAX_AGE = 60 * 60 * 24 * 365
@@ -16,28 +18,80 @@ function setDismissedCookie() {
   document.cookie = `${COOKIE_NAME}=1; path=/; max-age=${COOKIE_MAX_AGE}; samesite=lax`
 }
 
-const MOBILE_COOKIE_NAME = "tile_hint_mobile_seen"
-
 function hasCookie(name: string) {
   return document.cookie
     .split(";")
     .some((c) => c.trim().startsWith(`${name}=`))
 }
 
-// Mobile + tablet hint (the wide desktop gutter gets the curly arrow instead).
-// Shows on the first visit only — a cookie set on first render keeps it from
-// reappearing the next time the visitor comes back.
-export function MobileTileHint() {
+const INTRO_COOKIE_NAME = "mosaic_intro_seen"
+// Below this width counts as "mobile/tablet" — matches the xl breakpoint the
+// other hints use to split touch screens from the wide desktop gutter.
+const MOBILE_MEDIA_QUERY = "(max-width: 1279px)"
+
+// One-time mobile-only welcome modal. The first time someone opens the site on a
+// phone/tablet, it explains the core interaction (open an image, then drag to
+// reveal the smaller photos). Dismissing it sets a cookie so it never returns,
+// and it's gated on the actual viewport so a desktop visit won't silently burn
+// the cookie before the visitor ever sees it on mobile. Desktop is untouched.
+export function MobileIntroAnnouncement() {
   const [visible, setVisible] = React.useState(false)
 
   React.useEffect(() => {
-    if (hasCookie(MOBILE_COOKIE_NAME)) return
+    if (hasCookie(INTRO_COOKIE_NAME)) return
+    if (!window.matchMedia(MOBILE_MEDIA_QUERY).matches) return
+    // Client-only check (cookie + viewport) that must run post-mount to avoid a
+    // hydration mismatch — a deliberate, one-shot reveal, not a cascading update.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setVisible(true)
-    document.cookie = `${MOBILE_COOKIE_NAME}=1; path=/; max-age=${COOKIE_MAX_AGE}; samesite=lax`
   }, [])
+
+  const dismiss = React.useCallback(() => {
+    document.cookie = `${INTRO_COOKIE_NAME}=1; path=/; max-age=${COOKIE_MAX_AGE}; samesite=lax`
+    setVisible(false)
+  }, [])
+
+  React.useEffect(() => {
+    if (!visible) return
+    const prevOverflow = document.body.style.overflow
+    document.body.style.overflow = "hidden"
+    return () => {
+      document.body.style.overflow = prevOverflow
+    }
+  }, [visible])
 
   if (!visible) return null
 
+  return (
+    <div
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 p-6 font-sans backdrop-blur-sm xl:hidden"
+      onClick={dismiss}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="How it works"
+        className="w-full max-w-sm rounded-2xl border bg-background p-6 text-center shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h2 className="font-sans text-xl leading-tight font-semibold tracking-tight text-foreground">
+          how it works
+        </h2>
+        <p className="mt-3 text-sm leading-relaxed text-pretty text-muted-foreground">
+          Tap a picture to open it, then drag your finger across it to reveal the
+          smaller photos that make up the whole.
+        </p>
+        <Button className="mt-5 w-full" onClick={dismiss}>
+          got it
+        </Button>
+      </div>
+    </div>
+  )
+}
+
+// Mobile + tablet hint (the wide desktop gutter gets the curly arrow instead).
+// Always visible on small screens — it's a persistent nudge, never dismissed.
+export function MobileTileHint() {
   return (
     <p className="-mb-7 w-full max-w-7xl text-center font-sans text-[11px] leading-snug text-muted-foreground xl:hidden">
       tap a picture, then hover over a tile to see the smaller ones that
@@ -56,6 +110,8 @@ export function TileHint() {
   React.useEffect(() => {
     if (hasDismissedCookie()) return
 
+    // Client-only cookie check; runs post-mount to avoid a hydration mismatch.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setVisible(true)
     setDismissedCookie()
   }, [])

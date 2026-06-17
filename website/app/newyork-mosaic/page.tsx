@@ -35,9 +35,7 @@ export default function Page() {
         <p className="font-sans text-sm leading-relaxed text-pretty text-center text-foreground sm:text-base md:text-left">
           We want to build a beautiful mosaic of New York. And that can only be
           done with the help of the many who have lived and visited this city.
-          Use the form below to contribute to it. Every photo becomes a tile, and
-          together they transform an image into a mosaic no single image could
-          capture.
+          Use the form below to contribute to it. 
         </p>
 
         <NewYorkMosaic />

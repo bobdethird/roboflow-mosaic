@@ -586,6 +586,9 @@ export function CanvasHero({
   const engineRef = React.useRef<MosaicEngine | null>(null)
   const referenceBlobRef = React.useRef<Blob | null>(null)
   const hoverSerialRef = React.useRef(0)
+  // Remember the last pointer type so touch interactions reveal tiles by
+  // dragging (like the home gallery) instead of opening the source image.
+  const pointerTypeRef = React.useRef<string>("mouse")
   const [restoredMosaicUrl, setRestoredMosaicUrl] = React.useState<
     string | null
   >(null)
@@ -1044,6 +1047,7 @@ export function CanvasHero({
 
   const handleTilePointerMove = React.useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
+      pointerTypeRef.current = e.pointerType
       const next = tileFromPointer(e)
       setHoveredTile((prev) => {
         if (!next) return prev === null ? prev : null
@@ -1056,8 +1060,26 @@ export function CanvasHero({
     [tileFromPointer]
   )
 
+  // Touch has no hover, so dragging a finger across the mosaic reveals the tile
+  // under it (matching the home gallery). Reveal starts on the initial touch.
+  const handleTilePointerDown = React.useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      pointerTypeRef.current = e.pointerType
+      if (e.pointerType === "mouse") return
+      const next = tileFromPointer(e)
+      setHoveredTile((prev) => {
+        if (!next) return prev === null ? prev : null
+        return { ...next, hoverSerial: ++hoverSerialRef.current }
+      })
+    },
+    [tileFromPointer]
+  )
+
   const handleTileClick = React.useCallback(
     (e: React.MouseEvent<HTMLDivElement>) => {
+      // On touch, a tap reveals the tile (handled on pointer events) rather than
+      // opening the source image; only a real mouse click opens it.
+      if (pointerTypeRef.current !== "mouse") return
       const tile = hoveredTile ?? tileFromPointer(e)
       if (!tile) return
       window.open(tile.openUrl, "_blank", "noopener,noreferrer")
@@ -1160,11 +1182,12 @@ export function CanvasHero({
             {/* The flat mosaic, centered in the dominant middle column. */}
             {reference && frame ? (
               <div
-                className="relative w-full"
+                className={cn("relative w-full", hasMosaic && "touch-none")}
                 style={{
                   maxWidth: `calc(${MOSAIC_VIEWPORT_HEIGHT_PCT}svh * ${frame.w} / ${frame.h})`,
                   aspectRatio: `${frame.w} / ${frame.h}`,
                 }}
+                onPointerDown={handleTilePointerDown}
                 onPointerMove={handleTilePointerMove}
                 onPointerLeave={() => setHoveredTile(null)}
                 onClick={handleTileClick}

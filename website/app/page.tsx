@@ -4,7 +4,11 @@ import { ArrowRight } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { SiteCredit } from "@/components/site-credit"
 import { MosaicGallery } from "@/components/mosaic-gallery"
-import { TileHint, MobileTileHint } from "@/components/tile-hint"
+import {
+  TileHint,
+  MobileTileHint,
+  MobileIntroAnnouncement,
+} from "@/components/tile-hint"
 import { ThemeToggle } from "@/components/theme-toggle"
 
 export default function Page() {
@@ -14,6 +18,9 @@ export default function Page() {
       style={{ fontFamily: "var(--font-mean-hand)" }}
     >
       <ThemeToggle />
+
+      {/* First-visit mobile welcome explaining the drag-to-reveal interaction. */}
+      <MobileIntroAnnouncement />
 
       {/* Hero title + small intro. */}
       <header className="flex w-full max-w-7xl flex-col items-center gap-4 md:flex-row md:items-end md:justify-between md:gap-8">
@@ -40,8 +47,8 @@ export default function Page() {
         </p>
       </header>
 
-      {/* Hint for mobile + tablet; the wide desktop gutter gets the curly arrow
-          instead. Hidden after the first visit (cookie-gated). */}
+      {/* Persistent hint for mobile + tablet; the wide desktop gutter gets the
+          curly arrow instead. */}
       <MobileTileHint />
 
       {/* Gallery of mosaics — hover any one to see the footage frame behind a tile. */}
