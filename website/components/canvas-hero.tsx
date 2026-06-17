@@ -22,6 +22,7 @@ import {
   type ReferenceImage,
 } from "@/components/reference-image"
 import { Button } from "@/components/ui/button"
+import { SiteCredit } from "@/components/site-credit"
 import {
   Sidebar,
   SidebarContent,
@@ -296,7 +297,7 @@ function SidebarExpandableControls({
       <Button
         type="button"
         variant="outline"
-        className="w-full justify-start"
+        className="w-full justify-center"
         aria-expanded={open}
         aria-controls={id}
         onClick={() => onOpenChange(!open)}
@@ -1184,8 +1185,11 @@ export function CanvasHero({
                   </div>
                 )}
                 {!hasMosaic && !isGenerating && (
-                  <div className="pointer-events-none absolute inset-0 grid place-items-center text-sm text-muted-foreground">
-                    press generate
+                  <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-1.5 text-center text-sm text-muted-foreground leading-tight">
+                    <span className="font-medium text-foreground">
+                      image added!
+                    </span>
+                    <span>press generate</span>
                   </div>
                 )}
               </div>
@@ -1358,6 +1362,8 @@ export function CanvasHero({
               </>
             )}
           </SidebarExpandableControls>
+
+          <SiteCredit className="text-center" />
         </SidebarFooter>
       </Sidebar>
     </SidebarProvider>

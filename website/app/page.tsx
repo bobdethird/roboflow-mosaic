@@ -20,7 +20,13 @@ export default function Page() {
           NEW YORK OR NOWHERE
         </h1>
         <p className="max-w-lg self-end font-sans text-sm leading-relaxed text-right text-pretty text-muted-foreground sm:text-base">
-          the whole is greater than the sum of its parts <br /> <br />
+          <Link
+            href="/newyork-mosaic"
+            className="underline underline-offset-4 transition-colors hover:text-foreground"
+          >
+            the whole is greater than the sum of its parts
+          </Link>{" "}
+          <br /> <br />
           
           New York, and especially the Knicks, are a beautiful reflection 
           of this theme. The melting pot of backgrounds, experiences, and 
