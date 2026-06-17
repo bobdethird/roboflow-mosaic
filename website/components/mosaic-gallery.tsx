@@ -13,6 +13,7 @@ import { cn } from "@/lib/utils"
 
 type Hover = { tile: GalleryTile; fx: number; fy: number }
 type PointerCoords = { clientX: number; clientY: number }
+const GALLERY_COLUMN_BREAKPOINT = "(min-width: 640px)"
 
 function shuffled<T>(items: T[]): T[] {
   const next = [...items]
@@ -21,6 +22,41 @@ function shuffled<T>(items: T[]): T[] {
     ;[next[i], next[j]] = [next[j], next[i]]
   }
   return next
+}
+
+function useGalleryColumnCount() {
+  const [columnCount, setColumnCount] = React.useState(2)
+
+  React.useEffect(() => {
+    const query = window.matchMedia(GALLERY_COLUMN_BREAKPOINT)
+    const update = () => setColumnCount(query.matches ? 3 : 2)
+
+    update()
+    query.addEventListener("change", update)
+    return () => query.removeEventListener("change", update)
+  }, [])
+
+  return columnCount
+}
+
+function columnizeGalleryItems(
+  items: GalleryIndexEntry[],
+  columnCount: number
+): GalleryIndexEntry[][] {
+  const columns = Array.from({ length: columnCount }, () => [] as GalleryIndexEntry[])
+  const heights = new Array<number>(columnCount).fill(0)
+
+  for (const item of items) {
+    let shortestColumn = 0
+    for (let i = 1; i < heights.length; i++) {
+      if (heights[i] < heights[shortestColumn]) shortestColumn = i
+    }
+
+    columns[shortestColumn].push(item)
+    heights[shortestColumn] += item.h / Math.max(1, item.w)
+  }
+
+  return columns
 }
 
 // Look up the source frame a normalized (0..1) pointer position lands on, with a
@@ -187,7 +223,7 @@ function MosaicCell({ item }: { item: GalleryIndexEntry }) {
   return (
     <div
       ref={cellRef}
-      className="relative mb-3 block w-full cursor-pointer break-inside-avoid"
+      className="relative block w-full cursor-pointer"
       style={{ zIndex: hover ? 30 : undefined }}
       onPointerEnter={onEnter}
       onPointerMove={onMove}
@@ -243,6 +279,11 @@ function MosaicCell({ item }: { item: GalleryIndexEntry }) {
 // public/gallery; hovering reveals the source footage frame behind that region.
 export function MosaicGallery({ className }: { className?: string }) {
   const [items, setItems] = React.useState<GalleryIndexEntry[]>([])
+  const columnCount = useGalleryColumnCount()
+  const columns = React.useMemo(
+    () => columnizeGalleryItems(items, columnCount),
+    [items, columnCount]
+  )
 
   React.useEffect(() => {
     let cancelled = false
@@ -266,12 +307,16 @@ export function MosaicGallery({ className }: { className?: string }) {
   return (
     <div
       className={cn(
-        "columns-2 gap-3 sm:columns-3 [&_img]:select-none",
+        "grid grid-cols-2 items-start gap-3 sm:grid-cols-3 [&_img]:select-none",
         className
       )}
     >
-      {items.map((item) => (
-        <MosaicCell key={item.name} item={item} />
+      {columns.map((column, index) => (
+        <div key={index} className="flex min-w-0 flex-col gap-3">
+          {column.map((item) => (
+            <MosaicCell key={item.name} item={item} />
+          ))}
+        </div>
       ))}
     </div>
   )
