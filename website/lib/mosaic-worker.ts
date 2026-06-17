@@ -39,6 +39,10 @@ const FETCH_CONCURRENCY = 48
 // ~50 KB each; this bounds worst-case memory while comfortably covering a single
 // generate's working set (so in-use tiles are never evicted mid-render).
 const TILE_CACHE_CAP = 3000
+// Atlas bitmaps are much larger than per-tile crops. Keep only a modest LRU
+// across generates; the browser HTTP cache still prevents re-downloading evicted
+// atlases.
+const ATLAS_CACHE_CAP = 16
 // Duplicate spreading: a tile already placed within this many mean cell pitches
 // of the cell being matched is skipped, so repeats of the same photo scatter
 // across the mosaic instead of clustering in one patch. Matching still runs in
@@ -110,6 +114,13 @@ type Entry = {
   w: number
   h: number
   url: string
+  thumb?: {
+    atlasUrl: string
+    x: number
+    y: number
+    w: number
+    h: number
+  }
   // Epoch ms of the tile's photo (NaN when unknown), for the era match bias.
   takenAtMs: number
 }
@@ -346,6 +357,8 @@ let preparedLibrary: PreparedLibrary | null = null
 // order doubles as an LRU: hits are re-inserted to the end, and we prune from
 // the front (oldest) between generates so nothing in use is ever closed.
 const tileCache = new Map<string, ImageBitmap>()
+const atlasCache = new Map<string, ImageBitmap>()
+const atlasFetches = new Map<string, Promise<ImageBitmap | undefined>>()
 
 // Id of the generate currently rendering. A newer generate bumps this so the
 // older loop notices and abandons its work (rather than wasting cycles).
@@ -377,29 +390,102 @@ function pruneTileCache() {
   }
 }
 
+function atlasCacheGet(url: string): ImageBitmap | undefined {
+  const bmp = atlasCache.get(url)
+  if (bmp) {
+    atlasCache.delete(url)
+    atlasCache.set(url, bmp)
+  }
+  return bmp
+}
+
+function pruneAtlasCache() {
+  while (atlasCache.size > ATLAS_CACHE_CAP) {
+    const oldest = atlasCache.keys().next().value
+    if (oldest === undefined) break
+    atlasCache.get(oldest)?.close()
+    atlasCache.delete(oldest)
+  }
+}
+
+async function loadAtlas(url: string): Promise<ImageBitmap | undefined> {
+  const hit = atlasCacheGet(url)
+  if (hit) return hit
+
+  const pending = atlasFetches.get(url)
+  if (pending) return pending
+
+  const promise = (async () => {
+    try {
+      const res = await fetch(url, { cache: "force-cache" })
+      if (!res.ok) return undefined
+      const blob = await res.blob()
+      const bmp = await createImageBitmap(blob)
+      atlasCache.set(url, bmp)
+      return bmp
+    } catch {
+      return undefined
+    } finally {
+      atlasFetches.delete(url)
+    }
+  })()
+  atlasFetches.set(url, promise)
+  return promise
+}
+
+async function decodeStandaloneTile(
+  entry: Entry,
+  rw: number,
+  rh: number
+): Promise<ImageBitmap | undefined> {
+  const res = await fetch(entry.url, { cache: "force-cache" })
+  if (!res.ok) return undefined
+  const blob = await res.blob()
+  return await createImageBitmap(blob, {
+    resizeWidth: rw,
+    resizeHeight: rh,
+    resizeQuality: "medium",
+  })
+}
+
 // Fetch + decode one tile's thumbnail at cell resolution, returning a cached
-// bitmap when available. Thumbnails come through the app's mosaic proxy route,
-// which now marks them immutable, so `cache: "force-cache"` serves repeat fetches
-// straight from the browser HTTP cache with no network round-trip — no separate
-// Cache Storage layer (whose per-tile reads/writes serialized on a shared lock
-// and grew slower as the backlog built up) is needed.
+// bitmap when available. Newer libraries point many tiles at atlas images; older
+// libraries still fall back to one immutable thumbnail URL per tile.
 async function decodeTile(id: string): Promise<ImageBitmap | undefined> {
   const hit = cacheGet(id)
   if (hit) return hit
   const entry = store.get(id)
   if (!entry) return undefined
-  const scale = Math.min(1, BASE_TILE_MAX / Math.max(entry.w, entry.h))
-  const rw = Math.max(1, Math.round(entry.w * scale))
-  const rh = Math.max(1, Math.round(entry.h * scale))
+  const sourceW = entry.thumb?.w ?? entry.w
+  const sourceH = entry.thumb?.h ?? entry.h
+  const scale = Math.min(1, BASE_TILE_MAX / Math.max(sourceW, sourceH))
+  const rw = Math.max(1, Math.round(sourceW * scale))
+  const rh = Math.max(1, Math.round(sourceH * scale))
   try {
-    const res = await fetch(entry.url, { cache: "force-cache" })
-    if (!res.ok) return undefined
-    const blob = await res.blob()
-    const bmp = await createImageBitmap(blob, {
-      resizeWidth: rw,
-      resizeHeight: rh,
-      resizeQuality: "medium",
-    })
+    let bmp: ImageBitmap | undefined
+    if (entry.thumb) {
+      try {
+        const atlas = await loadAtlas(entry.thumb.atlasUrl)
+        if (atlas) {
+          bmp = await createImageBitmap(
+            atlas,
+            entry.thumb.x,
+            entry.thumb.y,
+            entry.thumb.w,
+            entry.thumb.h,
+            {
+              resizeWidth: rw,
+              resizeHeight: rh,
+              resizeQuality: "medium",
+            }
+          )
+        }
+      } catch {
+        bmp = undefined
+      }
+    }
+    bmp ??= await decodeStandaloneTile(entry, rw, rh)
+    if (!bmp) return undefined
     tileCache.set(id, bmp)
     return bmp
   } catch {
@@ -722,6 +808,7 @@ async function handleGenerate(
   const base = canvas.transferToImageBitmap()
   // Safe to prune now: no in-flight render references these bitmaps anymore.
   pruneTileCache()
+  pruneAtlasCache()
   if (activeGenerate !== reqId) {
     base.close()
     return
@@ -766,6 +853,7 @@ scope.onmessage = (e: MessageEvent<WorkerRequest>) => {
           w: it.w,
           h: it.h,
           url: it.url,
+          thumb: it.thumb,
           takenAtMs: preparedLibrary.takenAtMs[i],
         })
       }

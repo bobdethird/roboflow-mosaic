@@ -15,6 +15,7 @@ import { cn } from "@/lib/utils"
 type Hover = { tile: GalleryTile; fx: number; fy: number }
 type PointerCoords = { clientX: number; clientY: number }
 const GALLERY_COLUMN_BREAKPOINT = "(min-width: 640px)"
+const HOVER_FULL_IMAGE_DELAY_MS = 750
 
 function shuffled<T>(items: T[]): T[] {
   const next = [...items]
@@ -97,20 +98,63 @@ function previewUrlFor(tile: GalleryTile): string {
 function HoverPreviewImage({ tile }: { tile: GalleryTile }) {
   const primarySrc = previewUrlFor(tile)
   const [useFallback, setUseFallback] = React.useState(false)
-  const src = useFallback ? tile.url : primarySrc
+  const [loadedFullSrc, setLoadedFullSrc] = React.useState<string | null>(null)
+  const showFull = tile.url !== primarySrc && loadedFullSrc === tile.url
+
+  React.useEffect(() => {
+    if (tile.url === primarySrc) return
+    let cancelled = false
+    let img: HTMLImageElement | null = null
+    const timer = window.setTimeout(() => {
+      img = new Image()
+      img.decoding = "async"
+      img.onload = () => {
+        if (!cancelled) setLoadedFullSrc(tile.url)
+      }
+      img.src = tile.url
+    }, HOVER_FULL_IMAGE_DELAY_MS)
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+      if (img) img.onload = null
+    }
+  }, [primarySrc, tile.url])
+
+  if (useFallback || tile.url === primarySrc) {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element -- proxied library URL, shown only as a hover preview
+      <img
+        src={tile.url}
+        alt={tile.title}
+        decoding="async"
+        draggable={false}
+        className="size-full object-contain"
+      />
+    )
+  }
 
   return (
-    // eslint-disable-next-line @next/next/no-img-element -- proxied library URL, hover preview only
-    <img
-      src={src}
-      alt={tile.title}
-      decoding="async"
-      draggable={false}
-      onError={() => {
-        if (src !== tile.url) setUseFallback(true)
-      }}
-      className="size-full object-contain"
-    />
+    <>
+      {/* eslint-disable-next-line @next/next/no-img-element -- proxied library URL, shown only as a hover preview */}
+      <img
+        src={primarySrc}
+        alt={tile.title}
+        decoding="async"
+        draggable={false}
+        onError={() => setUseFallback(true)}
+        className="size-full object-contain"
+      />
+      {showFull && (
+        // eslint-disable-next-line @next/next/no-img-element -- delayed full-res hover preview
+        <img
+          src={tile.url}
+          alt=""
+          decoding="async"
+          draggable={false}
+          className="absolute inset-0 size-full object-contain"
+        />
+      )}
+    </>
   )
 }
 

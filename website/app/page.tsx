@@ -30,10 +30,11 @@ export default function Page() {
             New York, and especially the Knicks, are a beautiful reflection
             of this theme. The melting pot of backgrounds, experiences, and
             perspectives creates a place on Earth like no other; one filled
-            with culture, uniqueness, and impossible dreams. This project pays homage
-            to what makes New York so special. Each mosaic is composed of thousands
-            of tiles - each a moment of Knicks history leading us to this point,
-            whether it be the players, the fans, or the legacy.
+            with culture, uniqueness, and impossible dreams.
+            This project pays homage to what makes New York so special. Each 
+            mosaic is composed of thousands of tiles - each a moment of Knicks 
+            history leading us to this point, whether it be the players, the fans, 
+            or the legacy.
           </span>
         </p>
       </header>

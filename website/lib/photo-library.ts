@@ -147,10 +147,27 @@ export function originalUrl(bucket: MosaicBucket, id: string): string {
   return mosaicObjectUrl(bucket, originalPath(id))
 }
 
+export type ManifestThumb = {
+  atlasPath: string
+  x: number
+  y: number
+  w: number
+  h: number
+}
+
+export type LibraryThumb = {
+  atlasUrl: string
+  x: number
+  y: number
+  w: number
+  h: number
+}
+
 export type ManifestPhoto = {
   id: string
   w: number
   h: number
+  thumb?: ManifestThumb
   fullPath?: string
   takenAt?: string
   gallery?: string
@@ -180,6 +197,7 @@ export type LibraryItem = {
   // Source video id for frame-sampled tiles (see ManifestPhoto.video).
   video?: string
   fullUrl?: string
+  thumb?: LibraryThumb
   url: string
 }
 
@@ -352,6 +370,7 @@ export async function loadLibrary(
         sourceUrl,
         location,
         video,
+        thumb,
       } =
         manifest.photos[i]
       const base = i * bytesPerSig
@@ -367,6 +386,15 @@ export async function loadLibrary(
         location,
         video,
         fullUrl: fullPath ? mosaicObjectUrl(bucket, fullPath) : undefined,
+        thumb: thumb
+          ? {
+              atlasUrl: mosaicObjectUrl(bucket, thumb.atlasPath),
+              x: thumb.x,
+              y: thumb.y,
+              w: thumb.w,
+              h: thumb.h,
+            }
+          : undefined,
         url: thumbUrl(bucket, id),
       }
     }

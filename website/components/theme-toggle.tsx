@@ -21,7 +21,10 @@ export function ThemeToggle() {
   // Avoid a hydration mismatch: the resolved theme is only known on the client,
   // so render a stable icon until mounted.
   const [mounted, setMounted] = React.useState(false)
-  React.useEffect(() => setMounted(true), [])
+  React.useEffect(() => {
+    const frame = window.requestAnimationFrame(() => setMounted(true))
+    return () => window.cancelAnimationFrame(frame)
+  }, [])
 
   return (
     <Button

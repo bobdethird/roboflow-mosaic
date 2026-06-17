@@ -13,6 +13,13 @@ export type HydrateItem = {
   w: number
   h: number
   url: string
+  thumb?: {
+    atlasUrl: string
+    x: number
+    y: number
+    w: number
+    h: number
+  }
   // ISO date the tile's photo is from (gallery publish date for the knicks
   // collection). Drives the optional recency/playoff match bias below; tiles
   // without a date are treated as neutral (weight 1).

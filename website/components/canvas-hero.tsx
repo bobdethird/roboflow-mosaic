@@ -325,6 +325,7 @@ const PLAYOFF_YEARS = [2025, 2026]
 // landscape refs are usually limited by MOSAIC_CENTER_COLUMN_MAX instead.
 const MOSAIC_VIEWPORT_HEIGHT_PCT = 85
 const MOSAIC_CENTER_COLUMN_MAX = "65vw"
+const HOVER_FULL_IMAGE_DELAY_MS = 750
 
 type Dims = { w: number; h: number }
 
@@ -368,7 +369,9 @@ type CachedMosaic =
 type HoveredTile = {
   cell: number
   id: string
-  url: string
+  hoverSerial: number
+  previewUrl: string
+  openUrl: string
   title: string
   x: number
   y: number
@@ -574,11 +577,15 @@ export function CanvasHero({
   const [tileCount, setTileCount] = React.useState(0)
   const [tileMap, setTileMap] = React.useState<MosaicTileMap | null>(null)
   const [hoveredTile, setHoveredTile] = React.useState<HoveredTile | null>(null)
+  const [fullHoverTileKey, setFullHoverTileKey] = React.useState<string | null>(
+    null
+  )
 
   const mosaicCanvasRef = React.useRef<HTMLCanvasElement | null>(null)
   const bgColorRef = React.useRef<string>("#ffffff")
   const engineRef = React.useRef<MosaicEngine | null>(null)
   const referenceBlobRef = React.useRef<Blob | null>(null)
+  const hoverSerialRef = React.useRef(0)
   const [restoredMosaicUrl, setRestoredMosaicUrl] = React.useState<
     string | null
   >(null)
@@ -723,6 +730,22 @@ export function CanvasHero({
       if (referenceRef.current) URL.revokeObjectURL(referenceRef.current.url)
     }
   }, [])
+
+  const hoveredTileKey = hoveredTile
+    ? `${hoveredTile.hoverSerial}:${hoveredTile.cell}:${hoveredTile.id}:${hoveredTile.previewUrl}`
+    : null
+
+  React.useEffect(() => {
+    if (!hoveredTile || !hoveredTileKey) return
+    if (hoveredTile.openUrl === hoveredTile.previewUrl) return
+    const timer = window.setTimeout(() => {
+      setFullHoverTileKey(hoveredTileKey)
+    }, HOVER_FULL_IMAGE_DELAY_MS)
+    return () => window.clearTimeout(timer)
+  }, [hoveredTile, hoveredTileKey])
+
+  const showFullHoverImage =
+    hoveredTileKey !== null && fullHoverTileKey === hoveredTileKey
 
   const handleSetReference = React.useCallback(
     async (file: File) => {
@@ -1002,10 +1025,13 @@ export function CanvasHero({
       const id = tileMap.tileIds[tileMap.assignment[cell]]
       if (!id) return null
       const item = libraryById.get(id)
+      const previewUrl = item?.url ?? thumbUrl(bucket, id)
       return {
         cell,
         id,
-        url: item?.fullUrl ?? item?.url ?? thumbUrl(bucket, id),
+        hoverSerial: 0,
+        previewUrl,
+        openUrl: item?.fullUrl ?? previewUrl,
         title: item?.galleryTitle ?? item?.gallery ?? id,
         x,
         y,
@@ -1021,8 +1047,10 @@ export function CanvasHero({
       const next = tileFromPointer(e)
       setHoveredTile((prev) => {
         if (!next) return prev === null ? prev : null
-        if (prev?.cell === next.cell && prev.url === next.url) return prev
-        return next
+        if (prev?.cell === next.cell && prev.previewUrl === next.previewUrl) {
+          return prev
+        }
+        return { ...next, hoverSerial: ++hoverSerialRef.current }
       })
     },
     [tileFromPointer]
@@ -1032,7 +1060,7 @@ export function CanvasHero({
     (e: React.MouseEvent<HTMLDivElement>) => {
       const tile = hoveredTile ?? tileFromPointer(e)
       if (!tile) return
-      window.open(tile.url, "_blank", "noopener,noreferrer")
+      window.open(tile.openUrl, "_blank", "noopener,noreferrer")
     },
     [hoveredTile, tileFromPointer]
   )
@@ -1168,7 +1196,11 @@ export function CanvasHero({
                     <div className="relative aspect-square w-full overflow-hidden rounded-xl bg-card">
                       {/* eslint-disable-next-line @next/next/no-img-element -- public library URL, shown only as a hover preview */}
                       <img
-                        src={hoveredTile.url}
+                        src={
+                          showFullHoverImage
+                            ? hoveredTile.openUrl
+                            : hoveredTile.previewUrl
+                        }
                         alt={hoveredTile.title}
                         draggable={false}
                         className="size-full object-contain"
