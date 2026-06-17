@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import { X } from "lucide-react"
 
 import {
   GALLERY_INDEX_URL,
@@ -116,7 +117,13 @@ function HoverPreviewImage({ tile }: { tile: GalleryTile }) {
 // One baked mosaic: a static image whose hover reveals the Knicks source frame
 // behind the spot under the cursor, just like /knicks-mosaic. The per-mosaic hit
 // map is fetched lazily the first time the pointer enters the tile.
-function MosaicCell({ item }: { item: GalleryIndexEntry }) {
+function MosaicCell({
+  item,
+  onOpen,
+}: {
+  item: GalleryIndexEntry
+  onOpen: () => void
+}) {
   const [hover, setHover] = React.useState<Hover | null>(null)
   const cellRef = React.useRef<HTMLDivElement | null>(null)
   const mapRef = React.useRef<GalleryTileMap | null>(null)
@@ -124,6 +131,13 @@ function MosaicCell({ item }: { item: GalleryIndexEntry }) {
   const hoveringRef = React.useRef(false)
   const lastPointerRef = React.useRef<PointerCoords | null>(null)
   const frameRef = React.useRef<number | null>(null)
+  // Track touch double-taps (no hover on touch, so a double-tap opens the
+  // enlarged view) and the last pointer type so a single tap doesn't try to
+  // open a tile the way a desktop hover-click does.
+  const lastTapRef = React.useRef<{ time: number; x: number; y: number } | null>(
+    null
+  )
+  const pointerTypeRef = React.useRef<string>("mouse")
 
   const ensureMap = React.useCallback(() => {
     if (mapRef.current) return Promise.resolve(mapRef.current)
@@ -183,6 +197,10 @@ function MosaicCell({ item }: { item: GalleryIndexEntry }) {
 
   const onEnter = React.useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
+      pointerTypeRef.current = e.pointerType
+      // Touch has no real hover; the inline preview just flickers and confuses,
+      // so touch users get the double-tap → enlarged view instead.
+      if (e.pointerType !== "mouse") return
       hoveringRef.current = true
       scheduleHoverUpdate({ clientX: e.clientX, clientY: e.clientY })
       void ensureMap().then((map) => {
@@ -195,9 +213,31 @@ function MosaicCell({ item }: { item: GalleryIndexEntry }) {
 
   const onMove = React.useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
+      if (e.pointerType !== "mouse") return
       scheduleHoverUpdate({ clientX: e.clientX, clientY: e.clientY })
     },
     [scheduleHoverUpdate]
+  )
+
+  // Detect a double-tap on touch/pen and open the enlarged view.
+  const onPointerUp = React.useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      pointerTypeRef.current = e.pointerType
+      if (e.pointerType === "mouse") return
+      const now = Date.now()
+      const prev = lastTapRef.current
+      if (
+        prev &&
+        now - prev.time < 300 &&
+        Math.hypot(e.clientX - prev.x, e.clientY - prev.y) < 30
+      ) {
+        lastTapRef.current = null
+        onOpen()
+      } else {
+        lastTapRef.current = { time: now, x: e.clientX, y: e.clientY }
+      }
+    },
+    [onOpen]
   )
 
   const onLeave = React.useCallback(() => {
@@ -223,12 +263,14 @@ function MosaicCell({ item }: { item: GalleryIndexEntry }) {
   return (
     <div
       ref={cellRef}
-      className="relative block w-full cursor-pointer"
+      className="relative block w-full cursor-pointer touch-manipulation"
       style={{ zIndex: hover ? 30 : undefined }}
       onPointerEnter={onEnter}
       onPointerMove={onMove}
       onPointerLeave={onLeave}
+      onPointerUp={onPointerUp}
       onClick={() => {
+        if (pointerTypeRef.current !== "mouse") return
         if (hover) {
           window.open(hover.tile.url, "_blank", "noopener,noreferrer")
         }
@@ -275,10 +317,148 @@ function MosaicCell({ item }: { item: GalleryIndexEntry }) {
   )
 }
 
+// Mobile-friendly enlarged view. Double-tapping a gallery mosaic opens this
+// overlay; tapping or dragging across the enlarged image reveals the Knicks
+// source frame behind each region — the touch equivalent of the desktop hover.
+function MosaicLightbox({
+  item,
+  onClose,
+}: {
+  item: GalleryIndexEntry
+  onClose: () => void
+}) {
+  const [map, setMap] = React.useState<GalleryTileMap | null>(null)
+  const [hover, setHover] = React.useState<Hover | null>(null)
+  const wrapRef = React.useRef<HTMLDivElement | null>(null)
+
+  React.useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      try {
+        const res = await fetch(tileMapUrlFor(item.src))
+        if (!res.ok) return
+        const data = (await res.json()) as GalleryTileMap
+        if (!cancelled) setMap(data)
+      } catch {
+        // Reveal is best-effort; the enlarged image still shows without it.
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [item.src])
+
+  // Lock background scroll while open and close on Escape.
+  React.useEffect(() => {
+    const prevOverflow = document.body.style.overflow
+    document.body.style.overflow = "hidden"
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose()
+    }
+    window.addEventListener("keydown", onKey)
+    return () => {
+      document.body.style.overflow = prevOverflow
+      window.removeEventListener("keydown", onKey)
+    }
+  }, [onClose])
+
+  const reveal = React.useCallback(
+    (coords: PointerCoords) => {
+      const node = wrapRef.current
+      if (!node || !map) return
+      const rect = node.getBoundingClientRect()
+      const fx = (coords.clientX - rect.left) / rect.width
+      const fy = (coords.clientY - rect.top) / rect.height
+      if (fx < 0 || fx > 1 || fy < 0 || fy > 1) return
+      const tile = tileAt(map, fx, fy)
+      setHover(tile ? { tile, fx, fy } : null)
+    },
+    [map]
+  )
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4 font-sans backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <button
+        type="button"
+        aria-label="Close enlarged view"
+        onClick={onClose}
+        className="absolute top-4 right-4 z-10 flex size-10 items-center justify-center rounded-full bg-white/10 text-white transition-colors hover:bg-white/20"
+      >
+        <X className="size-5" />
+      </button>
+
+      <div
+        ref={wrapRef}
+        className="relative touch-none"
+        style={{
+          width: `min(92vw, calc(85svh * ${item.w} / ${item.h}))`,
+          aspectRatio: `${item.w} / ${item.h}`,
+        }}
+        onClick={(e) => e.stopPropagation()}
+        onPointerDown={(e) => reveal({ clientX: e.clientX, clientY: e.clientY })}
+        onPointerMove={(e) => reveal({ clientX: e.clientX, clientY: e.clientY })}
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element -- static baked asset */}
+        <img
+          src={item.src}
+          alt={item.alt}
+          draggable={false}
+          className="absolute inset-0 size-full rounded-lg object-cover select-none"
+        />
+
+        {hover && (
+          <div
+            className="absolute z-10 w-44 overflow-hidden rounded-2xl border bg-white p-2 shadow-lg sm:w-56"
+            style={{
+              left: `${hover.fx * 100}%`,
+              top: `${hover.fy * 100}%`,
+              transform: `translate(${
+                hover.fx > 0.5 ? "calc(-100% - 16px)" : "16px"
+              }, ${hover.fy > 0.5 ? "calc(-100% - 16px)" : "16px"})`,
+            }}
+          >
+            <a
+              href={hover.tile.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => e.stopPropagation()}
+              className="block"
+            >
+              <div className="relative aspect-square w-full overflow-hidden rounded-xl bg-white">
+                <HoverPreviewImage
+                  key={previewUrlFor(hover.tile)}
+                  tile={hover.tile}
+                />
+                <span className="absolute inset-x-0 bottom-0 line-clamp-2 bg-black/70 px-2 py-1.5 text-left text-xs font-medium text-white">
+                  {hover.tile.title}
+                </span>
+              </div>
+            </a>
+            <div className="mt-2 px-1 text-xs text-muted-foreground">
+              tap to open
+            </div>
+          </div>
+        )}
+      </div>
+
+      <p className="pointer-events-none absolute inset-x-0 bottom-[calc(env(safe-area-inset-bottom,0px)+1rem)] text-center text-sm text-white/70">
+        {map
+          ? "Tap or drag across the mosaic to reveal the footage frames"
+          : "Loading…"}
+      </p>
+    </div>
+  )
+}
+
 // Masonry of pre-baked mosaics. Each one is a real /knicks-mosaic render saved to
 // public/gallery; hovering reveals the source footage frame behind that region.
 export function MosaicGallery({ className }: { className?: string }) {
   const [items, setItems] = React.useState<GalleryIndexEntry[]>([])
+  const [lightboxItem, setLightboxItem] =
+    React.useState<GalleryIndexEntry | null>(null)
   const columnCount = useGalleryColumnCount()
   const columns = React.useMemo(
     () => columnizeGalleryItems(items, columnCount),
@@ -305,19 +485,32 @@ export function MosaicGallery({ className }: { className?: string }) {
   if (items.length === 0) return null
 
   return (
-    <div
-      className={cn(
-        "grid grid-cols-2 items-start gap-3 sm:grid-cols-3 [&_img]:select-none",
-        className
+    <>
+      <div
+        className={cn(
+          "grid grid-cols-2 items-start gap-3 sm:grid-cols-3 [&_img]:select-none",
+          className
+        )}
+      >
+        {columns.map((column, index) => (
+          <div key={index} className="flex min-w-0 flex-col gap-3">
+            {column.map((item) => (
+              <MosaicCell
+                key={item.name}
+                item={item}
+                onOpen={() => setLightboxItem(item)}
+              />
+            ))}
+          </div>
+        ))}
+      </div>
+
+      {lightboxItem && (
+        <MosaicLightbox
+          item={lightboxItem}
+          onClose={() => setLightboxItem(null)}
+        />
       )}
-    >
-      {columns.map((column, index) => (
-        <div key={index} className="flex min-w-0 flex-col gap-3">
-          {column.map((item) => (
-            <MosaicCell key={item.name} item={item} />
-          ))}
-        </div>
-      ))}
-    </div>
+    </>
   )
 }
