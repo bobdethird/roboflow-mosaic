@@ -68,6 +68,23 @@ The Step 5 finish distribution defaults are currently tuned for this timing:
 `normal`, center `33s`, spread `2.5s`, latest finish `38s`, then a final frozen
 mosaic from `38s` to `41s`.
 
+Optional: pack the published `knicks-mosaic` thumbnail objects into atlas images
+for the interactive website generator. This reads the existing Supabase
+`manifest.json` and `thumbs/<id>.jpg` objects, uploads versioned atlas JPEGs, and
+rewrites only `manifest.json` with atlas rect metadata. Standalone thumbnails are
+left in place as fallback.
+
+```bash
+python3 06-atlas-knicks-thumbs.py
+```
+
+Useful smoke-test and tuning options:
+
+```bash
+python3 06-atlas-knicks-thumbs.py --dry-run
+python3 06-atlas-knicks-thumbs.py --atlas-max 2048 --atlas-padding 2 --quality 82
+```
+
 ## Step 1: Sync Videos And Index Frames
 
 ```bash
