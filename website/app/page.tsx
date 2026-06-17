@@ -42,10 +42,10 @@ export default function Page() {
       <MosaicGallery className="w-full max-w-7xl" />
 
       {/* Docked call to action. */}
-      <div className="fixed inset-x-0 bottom-5 z-40 flex justify-center px-4 sm:bottom-6">
+      <div className="fixed inset-x-0 bottom-8 z-40 flex justify-center px-4 sm:bottom-10">
         <Button
           asChild
-          className="h-10 rounded-none border-0 px-5 text-sm shadow-lg ring-0"
+          className="h-10 rounded-none border-0 px-5 text-sm shadow-2xl shadow-black/30 ring-0"
         >
           <Link href="/knicks-mosaic">
             try it out
