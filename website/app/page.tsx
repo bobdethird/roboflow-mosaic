@@ -22,12 +22,13 @@ export default function Page() {
         <p className="max-w-lg self-end font-sans text-sm leading-relaxed text-right text-pretty text-muted-foreground sm:text-base">
           the whole is greater than the sum of its parts <br /> <br />
           
-          New York City, and especially the Knicks, are a beautiful reflection of 
-          this theme. The diversity of backgrounds, experiences, and perspectives
-          that make the melting pot of the city so special. This project pays homage
-          to what makes New York so special. Each mosaic is composed of thousands of 
-          tiles - each a different moment of Knicks history that led to this point. 
-          Whether it be the players, the fans, or the legacy the team has built.
+          New York, and especially the Knicks, are a beautiful reflection 
+          of this theme. The melting pot of backgrounds, experiences, and 
+          perspectives creates a place on Earth like no other; one filled 
+          with culture, uniqueness, and impossible dreams. NYON pays homage 
+          to what makes New York so special. Each mosaic is composed of thousands 
+          of tiles - each a moment of Knicks history leading us to this point, 
+          whether it be the players, the fans, or the legacy.
         </p>
       </header>
 
