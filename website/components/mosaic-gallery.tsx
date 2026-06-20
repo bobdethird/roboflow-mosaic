@@ -188,7 +188,7 @@ function MosaicCell({
 
     mapPromiseRef.current = (async () => {
       try {
-        const res = await fetch(tileMapUrlFor(item.src))
+        const res = await fetch(item.tileMapSrc ?? tileMapUrlFor(item.src))
         if (!res.ok) return null
         const map = (await res.json()) as GalleryTileMap
         mapRef.current = map
@@ -202,7 +202,7 @@ function MosaicCell({
     })()
 
     return mapPromiseRef.current
-  }, [item.src])
+  }, [item.src, item.tileMapSrc])
 
   const updateHover = React.useCallback((coords: PointerCoords) => {
     const map = mapRef.current
@@ -382,7 +382,7 @@ function MosaicLightbox({
     let cancelled = false
     void (async () => {
       try {
-        const res = await fetch(tileMapUrlFor(item.src))
+        const res = await fetch(item.tileMapSrc ?? tileMapUrlFor(item.src))
         if (!res.ok) return
         const data = (await res.json()) as GalleryTileMap
         if (!cancelled) setMap(data)
@@ -393,7 +393,7 @@ function MosaicLightbox({
     return () => {
       cancelled = true
     }
-  }, [item.src])
+  }, [item.src, item.tileMapSrc])
 
   // Lock background scroll while open and close on Escape.
   React.useEffect(() => {

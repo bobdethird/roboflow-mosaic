@@ -2,7 +2,16 @@
 
 import * as React from "react"
 import Link from "next/link"
-import { ArrowLeft, Download, Lock, PanelRight } from "lucide-react"
+import {
+  ArrowLeft,
+  Check,
+  Copy,
+  Download,
+  Lock,
+  PanelRight,
+  Share2,
+  X,
+} from "lucide-react"
 
 import {
   loadLibrary,
@@ -22,7 +31,9 @@ import {
   type ReferenceImage,
 } from "@/components/reference-image"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import { SiteCredit } from "@/components/site-credit"
+import { buildMosaicHitMap } from "@/lib/mosaic-hitmap"
 import {
   Sidebar,
   SidebarContent,
@@ -136,6 +147,9 @@ function MosaicActionControls({
   generateDisabled,
   onDownload,
   showSave = true,
+  showPublish = false,
+  onPublish,
+  isPublishing = false,
   className,
 }: {
   resolutionMode: ResolutionMode
@@ -147,6 +161,10 @@ function MosaicActionControls({
   generateDisabled: boolean
   onDownload: () => void
   showSave?: boolean
+  // Admin-only "Publish & share" action (Phase 1 gating).
+  showPublish?: boolean
+  onPublish?: () => void
+  isPublishing?: boolean
   className?: string
 }) {
   return (
@@ -186,6 +204,16 @@ function MosaicActionControls({
         >
           <Download />
           Save image
+        </Button>
+      )}
+      {showPublish && hasMosaic && (
+        <Button
+          variant="outline"
+          onClick={() => void onPublish?.()}
+          disabled={isGenerating || isPublishing}
+        >
+          <Share2 />
+          {isPublishing ? "Publishing…" : "Publish & share"}
         </Button>
       )}
     </div>
@@ -516,6 +544,139 @@ function canvasToBlob(canvas: HTMLCanvasElement): Promise<Blob | null> {
   return new Promise((resolve) => canvas.toBlob(resolve, "image/png"))
 }
 
+// Sharing: the published composite is a JPEG (no alpha — the canvas already has
+// the grout painted, so it's opaque), downscaled so links stay light. The hover
+// hit-map is resolution-independent, so the image scale and the map are decoupled.
+const SHARE_LONG_EDGE = 1200
+const SHARE_JPEG_QUALITY = 0.85
+const SHARE_HIT_CELL_PX = 22
+
+function canvasToShareImage(
+  canvas: HTMLCanvasElement
+): Promise<{ blob: Blob; w: number; h: number } | null> {
+  const scale = Math.min(
+    1,
+    SHARE_LONG_EDGE / Math.max(canvas.width, canvas.height)
+  )
+  const w = Math.max(1, Math.round(canvas.width * scale))
+  const h = Math.max(1, Math.round(canvas.height * scale))
+  let source: HTMLCanvasElement = canvas
+  if (scale < 1) {
+    const off = document.createElement("canvas")
+    off.width = w
+    off.height = h
+    const ctx = off.getContext("2d")
+    if (!ctx) return Promise.resolve(null)
+    ctx.drawImage(canvas, 0, 0, w, h)
+    source = off
+  }
+  return new Promise((resolve) =>
+    source.toBlob(
+      (b) => resolve(b ? { blob: b, w, h } : null),
+      "image/jpeg",
+      SHARE_JPEG_QUALITY
+    )
+  )
+}
+
+// Result dialog for the admin Publish action: the live share link with copy /
+// open / native-share, or the error if publishing failed.
+function ShareResultDialog({
+  url,
+  error,
+  onClose,
+}: {
+  url: string | null
+  error: string | null
+  onClose: () => void
+}) {
+  const [copied, setCopied] = React.useState(false)
+  const canNativeShare =
+    typeof navigator !== "undefined" && typeof navigator.share === "function"
+
+  const copy = React.useCallback(async () => {
+    if (!url) return
+    try {
+      await navigator.clipboard.writeText(url)
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 1500)
+    } catch {
+      // Clipboard can be blocked; the user can still select the field manually.
+    }
+  }, [url])
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Share mosaic"
+        className="w-full max-w-md rounded-2xl border bg-background p-5 shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="mb-3 flex items-start justify-between gap-3">
+          <h2 className="text-base font-semibold">
+            {error ? "Couldn’t publish" : "Mosaic published"}
+          </h2>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            aria-label="Close"
+            onClick={onClose}
+          >
+            <X />
+          </Button>
+        </div>
+
+        {error ? (
+          <p className="text-sm text-destructive">{error}</p>
+        ) : (
+          <div className="flex flex-col gap-3">
+            <p className="text-sm text-muted-foreground">
+              Anyone with this link can view your mosaic.
+            </p>
+            <div className="flex gap-2">
+              <Input
+                readOnly
+                value={url ?? ""}
+                onFocus={(e) => e.currentTarget.select()}
+                className="font-mono text-xs"
+                aria-label="Share link"
+              />
+              <Button type="button" onClick={() => void copy()}>
+                {copied ? <Check /> : <Copy />}
+                {copied ? "Copied" : "Copy"}
+              </Button>
+            </div>
+            <div className="flex gap-2">
+              <Button asChild variant="outline" className="flex-1">
+                <a href={url ?? "#"} target="_blank" rel="noopener noreferrer">
+                  Open
+                </a>
+              </Button>
+              {canNativeShare && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="flex-1"
+                  onClick={() => void navigator.share?.({ url: url ?? "" })}
+                >
+                  <Share2 />
+                  Share…
+                </Button>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 type CanvasHeroProps = {
   // Which collection's photos power the tiles. The parent remounts CanvasHero
   // (via `key={bucket}`) when this changes, so all state resets per collection.
@@ -539,6 +700,10 @@ type CanvasHeroProps = {
   hideIntroCopy?: boolean
   // Hide the small current-collection label above the controls.
   hideCollectionLabel?: boolean
+  // Reveal the admin-only "Publish & share" action (Phase 1: localhost or a
+  // valid admin cookie, decided server-side and passed down). The share route
+  // independently re-checks admin, so this only governs button visibility.
+  isAdmin?: boolean
 }
 
 export function CanvasHero({
@@ -550,6 +715,7 @@ export function CanvasHero({
   eraEmphasis = false,
   hideIntroCopy = false,
   hideCollectionLabel = false,
+  isAdmin = false,
 }: CanvasHeroProps) {
   const densityMin = clampDensity(minCellSize, 1, DENSITY_MAX)
   const [reference, setReference] = React.useState<ReferenceImage | null>(null)
@@ -580,6 +746,10 @@ export function CanvasHero({
   const [fullHoverTileKey, setFullHoverTileKey] = React.useState<string | null>(
     null
   )
+  // Admin "Publish & share" state.
+  const [isPublishing, setIsPublishing] = React.useState(false)
+  const [shareUrl, setShareUrl] = React.useState<string | null>(null)
+  const [shareError, setShareError] = React.useState<string | null>(null)
 
   const mosaicCanvasRef = React.useRef<HTMLCanvasElement | null>(null)
   const bgColorRef = React.useRef<string>("#ffffff")
@@ -955,6 +1125,71 @@ export function CanvasHero({
     }
   }, [hasMosaic, reference, bucket])
 
+  // Publish the current mosaic to a shareable /m/<id> link (admin only). Builds
+  // the same hover hit-map the gallery uses, captures the canvas as a JPEG, and
+  // posts both to the share route, which persists them and returns the link.
+  const handlePublish = React.useCallback(async () => {
+    const canvas = mosaicCanvasRef.current
+    const map = tileMap
+    const fr = frame
+    if (!canvas || !map || !fr || !hasMosaic || isPublishing) return
+    setIsPublishing(true)
+    setShareError(null)
+    setShareUrl(null)
+    try {
+      const hit = buildMosaicHitMap({
+        frameW: fr.w,
+        frameH: fr.h,
+        centers: map.centers,
+        assignment: map.assignment,
+        tileIds: map.tileIds,
+        hitCellPx: SHARE_HIT_CELL_PX,
+        resolveTile: (id) => {
+          const item = libraryById.get(id)
+          return {
+            url: item?.fullUrl ?? item?.url ?? thumbUrl(bucket, id),
+            previewUrl: item?.url ?? thumbUrl(bucket, id),
+            title: item?.galleryTitle ?? item?.gallery ?? id,
+          }
+        },
+      })
+      const shot = await canvasToShareImage(canvas)
+      if (!shot) throw new Error("Could not capture the mosaic image.")
+
+      const fd = new FormData()
+      fd.append("image", shot.blob, "mosaic.jpg")
+      fd.append(
+        "tilemap",
+        JSON.stringify({ w: shot.w, h: shot.h, ...hit })
+      )
+      fd.append("collection", bucket)
+      fd.append("w", String(shot.w))
+      fd.append("h", String(shot.h))
+
+      const res = await fetch("/api/mosaic/share", {
+        method: "POST",
+        body: fd,
+      })
+      if (!res.ok) {
+        throw new Error(
+          res.status === 403
+            ? "Not authorized to publish."
+            : res.status === 429
+              ? "Rate limit reached — try again later."
+              : `Publish failed (${res.status}).`
+        )
+      }
+      const { url } = (await res.json()) as { url: string }
+      setShareUrl(new URL(url, window.location.origin).toString())
+    } catch (err) {
+      setShareError(
+        err instanceof Error ? err.message : "Publish failed."
+      )
+    } finally {
+      setIsPublishing(false)
+    }
+  }, [tileMap, frame, hasMosaic, isPublishing, libraryById, bucket])
+
   React.useEffect(() => {
     if (!restoredMosaicUrl || !frame) return
     let cancelled = false
@@ -1133,6 +1368,17 @@ export function CanvasHero({
       style={{ "--sidebar-width": "18rem" } as React.CSSProperties}
     >
       <CloseAdvancedWhenSidebarCloses onClose={closeAdvanced} />
+
+      {(shareUrl || shareError) && (
+        <ShareResultDialog
+          url={shareUrl}
+          error={shareError}
+          onClose={() => {
+            setShareUrl(null)
+            setShareError(null)
+          }}
+        />
+      )}
 
       <section className="relative min-h-svh min-w-0 flex-1 overflow-x-hidden bg-background select-none xl:h-svh xl:overflow-hidden">
         {/* Desktop: a compact icon trigger in the corner. */}
@@ -1335,6 +1581,9 @@ export function CanvasHero({
                   progressPct={displayedProgressPct}
                   generateDisabled={tileCount === 0 || isGenerating}
                   onDownload={handleDownload}
+                  showPublish={isAdmin}
+                  onPublish={handlePublish}
+                  isPublishing={isPublishing}
                 />
               </SidebarGroupContent>
             </SidebarGroup>
