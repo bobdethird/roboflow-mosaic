@@ -4,13 +4,13 @@ import * as React from "react"
 
 import { MosaicEngine } from "@/lib/mosaic-client"
 import { generateBakedMosaic } from "@/lib/mosaic-bake"
+import { buildMosaicHitMap } from "@/lib/mosaic-hitmap"
 import {
   loadLibrary,
   thumbUrl,
   type LibraryItem,
 } from "@/lib/photo-library"
 import { loadImage } from "@/lib/mosaic"
-import type { GalleryTile } from "@/lib/gallery"
 import { Button } from "@/components/ui/button"
 
 // Dev-only harness that bakes every photo in public/gallery-original into a
@@ -161,57 +161,25 @@ export default function BakePage() {
       base.close()
       const image = canvas.toDataURL("image/jpeg", JPEG_QUALITY)
 
-      // Build the hover hit grid: per bucket, keep the cell whose center is
-      // nearest the bucket center, then compact to only the referenced frames.
-      const cols = Math.max(1, Math.round(frame.w / HIT_CELL_PX))
-      const rows_ = Math.max(1, Math.round(frame.h / HIT_CELL_PX))
-      const cellW = frame.w / cols
-      const cellH = frame.h / rows_
-      const bestDist = new Float64Array(cols * rows_).fill(Infinity)
-      const bucketTile = new Int32Array(cols * rows_).fill(-1)
+      // Build the hover hit grid (shared with the live Publish flow so baked
+      // and published maps are identical).
       const cellCount = centers.length / 2
-      for (let i = 0; i < cellCount; i++) {
-        const cx = centers[i * 2]
-        const cy = centers[i * 2 + 1]
-        let gx = Math.floor(cx / cellW)
-        let gy = Math.floor(cy / cellH)
-        if (gx < 0) gx = 0
-        else if (gx >= cols) gx = cols - 1
-        if (gy < 0) gy = 0
-        else if (gy >= rows_) gy = rows_ - 1
-        const b = gy * cols + gx
-        const dx = cx - (gx + 0.5) * cellW
-        const dy = cy - (gy + 0.5) * cellH
-        const d = dx * dx + dy * dy
-        if (d < bestDist[b]) {
-          bestDist[b] = d
-          bucketTile[b] = assignment[i]
-        }
-      }
-
-      const compact = new Map<number, number>()
-      const tiles: GalleryTile[] = []
-      const grid = new Array<number>(cols * rows_)
-      for (let b = 0; b < grid.length; b++) {
-        const li = bucketTile[b]
-        if (li < 0) {
-          grid[b] = -1
-          continue
-        }
-        let ci = compact.get(li)
-        if (ci === undefined) {
-          const id = tileIds[li]
+      const { cols, rows: rows_, grid, tiles } = buildMosaicHitMap({
+        frameW: frame.w,
+        frameH: frame.h,
+        centers,
+        assignment,
+        tileIds,
+        hitCellPx: HIT_CELL_PX,
+        resolveTile: (id) => {
           const item = libraryById.get(id)
-          tiles.push({
+          return {
             url: item?.fullUrl ?? item?.url ?? thumbUrl(BUCKET, id),
             previewUrl: item?.url ?? thumbUrl(BUCKET, id),
             title: item?.galleryTitle ?? item?.gallery ?? id,
-          })
-          ci = tiles.length - 1
-          compact.set(li, ci)
-        }
-        grid[b] = ci
-      }
+          }
+        },
+      })
 
       const res = await fetch("/api/bake/save", {
         method: "POST",

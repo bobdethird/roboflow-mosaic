@@ -11,6 +11,10 @@ export type GalleryIndexEntry = {
   w: number
   h: number
   alt: string
+  // Explicit hit-map URL. Defaults to `tileMapUrlFor(src)` (the baked gallery's
+  // foo.jpg → foo.json convention) when omitted; shared mosaics set it directly
+  // since their image/tilemap live behind dedicated /m/<id>/… routes.
+  tileMapSrc?: string
 }
 
 // A single source frame revealed in the hover popup. `url` is the click-through
