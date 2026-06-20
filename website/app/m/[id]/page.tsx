@@ -1,5 +1,4 @@
 import { cache } from "react"
-import Link from "next/link"
 import { notFound } from "next/navigation"
 import { headers } from "next/headers"
 import type { Metadata } from "next"
@@ -111,9 +110,12 @@ export default async function SharedMosaicPage({
       </div>
 
       <footer className="flex flex-col items-center gap-2 text-center text-sm text-muted-foreground">
-        <Link href="/" className="font-medium text-foreground underline">
+        <a
+          href="https://www.knicksmosaic.com/knicks-mosaic"
+          className="font-medium text-foreground underline"
+        >
           Make your own mosaic →
-        </Link>
+        </a>
       </footer>
     </main>
   )
