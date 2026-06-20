@@ -1,7 +1,5 @@
 import Link from "next/link"
-import { ArrowRight } from "lucide-react"
 
-import { Button } from "@/components/ui/button"
 import { SiteCredit } from "@/components/site-credit"
 import { MosaicGallery } from "@/components/mosaic-gallery"
 import {
@@ -10,6 +8,7 @@ import {
   MobileIntroAnnouncement,
 } from "@/components/tile-hint"
 import { ThemeToggle } from "@/components/theme-toggle"
+import { HomeCta } from "@/components/home-cta"
 
 export default function Page() {
   return (
@@ -47,6 +46,8 @@ export default function Page() {
         </p>
       </header>
 
+      <HomeCta />
+
       {/* Persistent hint for mobile + tablet; the wide desktop gutter gets the
           curly arrow instead. */}
       <MobileTileHint />
@@ -55,19 +56,6 @@ export default function Page() {
       <div className="relative w-full max-w-7xl">
         <TileHint />
         <MosaicGallery className="w-full" />
-      </div>
-
-      {/* Docked call to action. */}
-      <div className="fixed inset-x-0 bottom-8 z-40 flex justify-center px-4 sm:bottom-10">
-        <Button
-          asChild
-          className="h-10 rounded-none border-0 px-5 text-sm shadow-2xl shadow-black/30 ring-0"
-        >
-          <Link href="/knicks-mosaic">
-            try it out
-            <ArrowRight />
-          </Link>
-        </Button>
       </div>
 
       <SiteCredit />
