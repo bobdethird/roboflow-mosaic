@@ -33,9 +33,9 @@ export default function Page() {
         </h1>
 
         <p className="font-sans text-sm leading-relaxed text-pretty text-center text-foreground sm:text-base md:text-left">
-          The whole is greater than the sum of its parts. Exhibited not only in the Knicks, New York
-          is a beautiful reflection of this theme. Our next goal is to build a beautiful 
-          mosaic of New York, but this time, built from each of you - the many who have lived and
+          The whole is greater than the sum of its parts. This is beautifully exhibited not only by the 
+          Knicks, but also by the rest of New York. Our next goal is to build a beautiful 
+          mosaic of New York, but this time, built from each of you - the many who have lived in and
           made this city what it is. 
         </p>
 
