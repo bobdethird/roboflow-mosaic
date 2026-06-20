@@ -5,6 +5,7 @@ import type { Metadata } from "next"
 
 import { SingleMosaic } from "@/components/mosaic-gallery"
 import { MobileIntroAnnouncement } from "@/components/tile-hint"
+import { SiteCredit } from "@/components/site-credit"
 import { getMosaic } from "@/lib/mosaic-share-store"
 import type { GalleryIndexEntry } from "@/lib/gallery"
 
@@ -109,13 +110,14 @@ export default async function SharedMosaicPage({
         <SingleMosaic entry={entry} maxViewportHeight={72} />
       </div>
 
-      <footer className="flex flex-col items-center gap-2 text-center text-sm text-muted-foreground">
+      <footer className="flex flex-col items-center gap-5 text-center text-sm text-muted-foreground">
         <a
           href="https://www.knicksmosaic.com/knicks-mosaic"
           className="font-medium text-foreground underline"
         >
           Make your own mosaic →
         </a>
+        <SiteCredit />
       </footer>
     </main>
   )

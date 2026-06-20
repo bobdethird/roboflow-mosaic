@@ -4,6 +4,7 @@ import { ArrowLeft, ArrowRight } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { NewYorkMosaic } from "@/components/newyork-mosaic"
 import { ThemeToggle } from "@/components/theme-toggle"
+import { SiteCredit } from "@/components/site-credit"
 
 const FORM_URL =
   "https://docs.google.com/forms/d/e/1FAIpQLSfPRaVa9D3Ex0U6sF0G1VUckbJd41X1-8inZ_0oknivex9gRw/viewform"
@@ -51,6 +52,8 @@ export default function Page() {
           </a>
         </Button>
       </div>
+
+      <SiteCredit className="mt-2" />
     </main>
   )
 }
