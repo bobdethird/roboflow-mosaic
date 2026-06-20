@@ -5,6 +5,7 @@ import { headers } from "next/headers"
 import type { Metadata } from "next"
 
 import { SingleMosaic } from "@/components/mosaic-gallery"
+import { MobileIntroAnnouncement } from "@/components/tile-hint"
 import { getMosaic } from "@/lib/mosaic-share-store"
 import type { GalleryIndexEntry } from "@/lib/gallery"
 
@@ -88,6 +89,14 @@ export default async function SharedMosaicPage({
 
   return (
     <main className="mx-auto flex min-h-svh max-w-5xl flex-col gap-6 px-4 py-8 font-sans sm:py-12">
+      {/* First-visit, mobile-only hint for shared-link recipients. Its own cookie
+          (independent of the home intro) so someone arriving straight from a
+          shared link still learns the tap-then-drag interaction, shown once. */}
+      <MobileIntroAnnouncement
+        cookieName="mosaic_share_intro_seen"
+        description="Tap the image to open it, then drag your finger across it to reveal the photos that make it up."
+      />
+
       <header className="flex flex-col gap-1 text-center">
         <h1 className="text-2xl font-semibold tracking-tight text-balance">
           A mosaic, made of moments
