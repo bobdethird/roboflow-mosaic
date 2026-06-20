@@ -33,9 +33,10 @@ export default function Page() {
         </h1>
 
         <p className="font-sans text-sm leading-relaxed text-pretty text-center text-foreground sm:text-base md:text-left">
-          We want to build a beautiful mosaic of New York. And that can only be
-          done with the help of the many who have lived and visited this city.
-          Use the form below to contribute to it. 
+          The whole is greater than the sum of its parts. Exhibited not only in the Knicks, New York
+          is a beautiful reflection of this theme. Our next goal is to build a beautiful 
+          mosaic of New York, but this time, built from each of you - the many who have lived and
+          made this city what it is. 
         </p>
 
         <NewYorkMosaic />

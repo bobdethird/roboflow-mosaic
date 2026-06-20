@@ -10,11 +10,8 @@ import {
 import { SingleMosaic } from "@/components/mosaic-gallery"
 
 // The source photo, shown as-is until it's been baked into an interactive
-// mosaic via the /bake harness. Its aspect ratio caps the fallback height.
+// mosaic via the /bake harness.
 const FALLBACK_SRC = "/gallery-original/nyc-lunch.png"
-const FALLBACK_W = 2732
-const FALLBACK_H = 2147
-const MAX_VIEWPORT_HEIGHT = 58
 
 // Renders the New York hero as a live mosaic (hover on desktop, drag on touch)
 // once it exists in the baked gallery index; falls back to the plain photo so
@@ -43,22 +40,17 @@ export function NewYorkMosaic() {
   }, [])
 
   if (entry) {
-    return <SingleMosaic entry={entry} maxViewportHeight={MAX_VIEWPORT_HEIGHT} />
+    return <SingleMosaic entry={entry} />
   }
 
   return (
-    <div
-      className="mx-auto w-full"
-      style={{
-        maxWidth: `calc(${MAX_VIEWPORT_HEIGHT}svh * ${FALLBACK_W} / ${FALLBACK_H})`,
-      }}
-    >
+    <>
       {/* eslint-disable-next-line @next/next/no-img-element -- static public asset */}
       <img
         src={FALLBACK_SRC}
         alt="Lunch atop a Skyscraper — workers on a beam high above New York"
         className="block w-full rounded-lg border"
       />
-    </div>
+    </>
   )
 }

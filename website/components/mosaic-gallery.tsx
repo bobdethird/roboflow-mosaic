@@ -570,18 +570,23 @@ export function MosaicGallery({ className }: { className?: string }) {
 export function SingleMosaic({
   entry,
   className,
-  maxViewportHeight = 58,
+  maxViewportHeight,
 }: {
   entry: GalleryIndexEntry
   className?: string
+  /** Caps width from aspect ratio so height stays within this % of the viewport. */
   maxViewportHeight?: number
 }) {
   const [open, setOpen] = React.useState(false)
 
   return (
     <div
-      className={cn("mx-auto w-full", className)}
-      style={{ maxWidth: `calc(${maxViewportHeight}svh * ${entry.w} / ${entry.h})` }}
+      className={cn("w-full", maxViewportHeight != null && "mx-auto", className)}
+      style={
+        maxViewportHeight != null
+          ? { maxWidth: `calc(${maxViewportHeight}svh * ${entry.w} / ${entry.h})` }
+          : undefined
+      }
     >
       <MosaicCell item={entry} onOpen={() => setOpen(true)} />
       {open && <MosaicLightbox item={entry} onClose={() => setOpen(false)} />}
