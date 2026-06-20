@@ -257,19 +257,37 @@ function MobileActionBar({
     )
   }
 
+  // Admin "Publish & share" rides in the mobile bottom bar too. When it's shown,
+  // Save collapses to a compact icon button to make room beside it. The stacked
+  // controls above suppress their own publish button so it isn't duplicated.
+  const showPublish = Boolean(controls.showPublish) && Boolean(controls.hasMosaic)
+
   return (
     <div className="fixed inset-x-3 bottom-[calc(env(safe-area-inset-bottom,0px)+0.75rem)] z-30 flex flex-col gap-2 rounded-2xl border bg-background/95 p-3 shadow-lg backdrop-blur sm:inset-x-4">
-      <MosaicActionControls {...controls} showSave={false} />
+      <MosaicActionControls {...controls} showSave={false} showPublish={false} />
       <div className="flex gap-2">
         {controls.hasMosaic && (
           <Button
             variant="outline"
-            className="flex-1"
+            size={showPublish ? "icon" : "default"}
+            aria-label="Save image"
+            className={showPublish ? "shrink-0" : "flex-1"}
             onClick={() => void controls.onDownload()}
             disabled={controls.isGenerating}
           >
             <Download />
-            Save
+            {!showPublish && "Save"}
+          </Button>
+        )}
+        {showPublish && (
+          <Button
+            variant="outline"
+            className="flex-1"
+            onClick={() => void controls.onPublish?.()}
+            disabled={controls.isGenerating || controls.isPublishing}
+          >
+            <Share2 />
+            {controls.isPublishing ? "Publishing…" : "Publish"}
           </Button>
         )}
         <Button
@@ -1400,6 +1418,9 @@ export function CanvasHero({
           progressPct={displayedProgressPct}
           generateDisabled={tileCount === 0 || isGenerating}
           onDownload={handleDownload}
+          showPublish={isAdmin}
+          onPublish={handlePublish}
+          isPublishing={isPublishing}
         />
 
         <div
