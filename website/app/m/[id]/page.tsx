@@ -97,7 +97,7 @@ export default async function SharedMosaicPage({
           shared link still learns the tap-then-drag interaction, shown once. */}
       <MobileIntroAnnouncement
         cookieName="mosaic_share_intro_seen"
-        description="Tap the image to open it, then drag your finger across it to reveal the photos that make it up."
+        description="Tap the image once to open it, then drag your finger across it to reveal the photos that make it up."
       />
 
       <header className="flex flex-col gap-1 text-center">

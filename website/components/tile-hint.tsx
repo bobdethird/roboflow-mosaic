@@ -106,7 +106,7 @@ export function MobileIntroAnnouncement({
 export function MobileTileHint() {
   return (
     <p className="-mb-7 w-full max-w-7xl text-center font-sans text-[11px] leading-snug text-muted-foreground xl:hidden">
-      tap a picture, then hover over a tile to see the smaller ones that
+      tap a picture once, then hover over tiles to see the smaller ones that
       comprise the whole
     </p>
   )
