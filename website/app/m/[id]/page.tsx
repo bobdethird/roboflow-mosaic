@@ -3,9 +3,12 @@ import { notFound } from "next/navigation"
 import { headers } from "next/headers"
 import type { Metadata } from "next"
 
+import { Download } from "lucide-react"
+
 import { SingleMosaic } from "@/components/mosaic-gallery"
 import { MobileIntroAnnouncement } from "@/components/tile-hint"
 import { SiteCredit } from "@/components/site-credit"
+import { Button } from "@/components/ui/button"
 import { getMosaic } from "@/lib/mosaic-share-store"
 import type { GalleryIndexEntry } from "@/lib/gallery"
 
@@ -111,12 +114,19 @@ export default async function SharedMosaicPage({
       </div>
 
       <footer className="flex flex-col items-center gap-5 text-center text-sm text-muted-foreground">
-        <a
-          href="https://www.knicksmosaic.com/knicks-mosaic"
-          className="font-medium text-foreground underline"
-        >
-          Make your own mosaic →
-        </a>
+        <div className="flex flex-wrap items-center justify-center gap-3">
+          <Button asChild variant="outline">
+            <a href={`/m/${id}/image`} download={`mosaic-${id}.jpg`}>
+              <Download />
+              Save image
+            </a>
+          </Button>
+          <Button asChild>
+            <a href="https://www.knicksmosaic.com/knicks-mosaic">
+              Make your own mosaic →
+            </a>
+          </Button>
+        </div>
         <SiteCredit />
       </footer>
     </main>
