@@ -22,7 +22,17 @@ export const MAX_TILEMAP_BYTES = 4 * 1024 * 1024 // 4 MB
 // coarse hit-map since it carries every cell, but still small.
 export const MAX_GEOMETRY_BYTES = 8 * 1024 * 1024 // 8 MB
 export const MAX_DIMENSION = 4096
+// Per-IP hourly cap: a cheap first line so one network can't eat the whole
+// global budget. The global cap below is the real storage guardrail.
 export const RATE_LIMIT_PER_HOUR = 30
+// Global hourly cap on *new* published mosaics. Bounds how much storage can be
+// minted per hour (≈ this × the max object sizes), the ceiling that protects
+// the shared bucket now that publishing is open to everyone. Overridable via
+// MOSAIC_GLOBAL_RATE_LIMIT so it can be tuned without a redeploy.
+export const GLOBAL_RATE_LIMIT_PER_HOUR = (() => {
+  const raw = Number(process.env.MOSAIC_GLOBAL_RATE_LIMIT)
+  return Number.isInteger(raw) && raw > 0 ? raw : 500
+})()
 
 export type MosaicRow = {
   id: string
@@ -51,6 +61,10 @@ export type StoredTileMap = {
 }
 
 export class ShareStoreNotConfiguredError extends Error {}
+
+// Thrown when the global hourly publish cap is reached. The route maps this to
+// a 503 so the client shows the "high demand, try again shortly" notice.
+export class ShareCapExceededError extends Error {}
 
 function adminKey(): string {
   const key =
@@ -227,6 +241,30 @@ export async function countRecentByIp(
   return Number.isFinite(n) ? n : 0
 }
 
+// Count of all rows created within the window — the global capacity scan
+// (served by mosaics_created_at_idx). Fails CLOSED: if the count can't be read
+// we report "full" so a Supabase hiccup can't be used to bypass the storage
+// budget. The user just sees the temporary high-demand notice.
+export async function countRecentTotal(sinceIso: string): Promise<number> {
+  const key = adminKey()
+  const res = await fetch(
+    `${REST_BASE}/mosaics?created_at=gte.${encodeURIComponent(sinceIso)}` +
+      `&select=id`,
+    {
+      headers: {
+        ...authHeaders(key),
+        prefer: "count=exact",
+        range: "0-0",
+      },
+    }
+  )
+  if (!res.ok) return GLOBAL_RATE_LIMIT_PER_HOUR
+  const range = res.headers.get("content-range")
+  const total = range?.split("/")[1]
+  const n = total ? Number(total) : NaN
+  return Number.isFinite(n) ? n : GLOBAL_RATE_LIMIT_PER_HOUR
+}
+
 export type InsertResult =
   | { ok: true }
   | { ok: false; conflict: boolean; status: number; detail: string }
@@ -281,6 +319,15 @@ export async function publishMosaic(
 
   const existing = await findLiveByContentHash(contentHash)
   if (existing) return { id: existing.id, reused: true }
+
+  // Global capacity guard — only for genuinely new mosaics (the dedup above
+  // means a re-share adds no storage and is never blocked). Checked before any
+  // upload so a flood can't grow the bucket past the hourly budget. A small
+  // overshoot under concurrency is acceptable for this soft storage cap.
+  const sinceIso = new Date(Date.now() - 60 * 60 * 1000).toISOString()
+  if ((await countRecentTotal(sinceIso)) >= GLOBAL_RATE_LIMIT_PER_HOUR) {
+    throw new ShareCapExceededError("Global publish capacity reached.")
+  }
 
   const tilemapJson = JSON.stringify(input.tilemap)
 

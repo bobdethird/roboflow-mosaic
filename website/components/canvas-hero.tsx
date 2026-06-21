@@ -173,7 +173,8 @@ function MosaicActionControls({
   generateDisabled: boolean
   onDownload: () => void
   showSave?: boolean
-  // Admin-only "Publish & share" action (Phase 1 gating).
+  // Whether to surface the "Publish & share" action (shown once a mosaic
+  // exists). Open to everyone; the share route enforces the rate limits.
   showPublish?: boolean
   onPublish?: () => void
   isPublishing?: boolean
@@ -269,7 +270,7 @@ function MobileActionBar({
     )
   }
 
-  // Admin "Publish & share" rides in the mobile bottom bar too. When it's shown,
+  // "Publish & share" rides in the mobile bottom bar too. When it's shown,
   // Save collapses to a compact icon button to make room beside it. The stacked
   // controls above suppress their own publish button so it isn't duplicated.
   const showPublish =
@@ -720,6 +721,43 @@ function ShareResultDialog({
   )
 }
 
+// Shown when publishing is temporarily unavailable — the per-IP or global
+// hourly cap tripped, or sharing isn't configured on this deployment. A soft
+// "try again shortly" notice rather than a hard error.
+function ShareCapacityDialog({ onClose }: { onClose: () => void }) {
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Sharing temporarily unavailable"
+        className="w-full max-w-md rounded-2xl border bg-background p-5 shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="mb-3 flex items-start justify-between gap-3">
+          <h2 className="text-base font-semibold">High demand</h2>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            aria-label="Close"
+            onClick={onClose}
+          >
+            <X />
+          </Button>
+        </div>
+        <p className="text-sm text-muted-foreground">
+          sorry we are experiencing high demand at this moment, this feature is
+          currently disabled. please try again shortly!
+        </p>
+      </div>
+    </div>
+  )
+}
+
 type CanvasHeroProps = {
   // Which collection's photos power the tiles. The parent remounts CanvasHero
   // (via `key={bucket}`) when this changes, so all state resets per collection.
@@ -743,10 +781,6 @@ type CanvasHeroProps = {
   hideIntroCopy?: boolean
   // Hide the small current-collection label above the controls.
   hideCollectionLabel?: boolean
-  // Reveal the admin-only "Publish & share" action (Phase 1: localhost or a
-  // valid admin cookie, decided server-side and passed down). The share route
-  // independently re-checks admin, so this only governs button visibility.
-  isAdmin?: boolean
 }
 
 export function CanvasHero({
@@ -758,7 +792,6 @@ export function CanvasHero({
   eraEmphasis = false,
   hideIntroCopy = false,
   hideCollectionLabel = false,
-  isAdmin = false,
 }: CanvasHeroProps) {
   const densityMin = clampDensity(minCellSize, 1, DENSITY_MAX)
   const [reference, setReference] = React.useState<ReferenceImage | null>(null)
@@ -794,10 +827,13 @@ export function CanvasHero({
   const [fullHoverTileKey, setFullHoverTileKey] = React.useState<string | null>(
     null
   )
-  // Admin "Publish & share" state.
+  // "Publish & share" state.
   const [isPublishing, setIsPublishing] = React.useState(false)
   const [shareUrl, setShareUrl] = React.useState<string | null>(null)
   const [shareError, setShareError] = React.useState<string | null>(null)
+  // Shown when publishing is temporarily unavailable (per-IP / global hourly
+  // cap tripped, or sharing not configured) — a soft "try again" notice.
+  const [shareCapacityNotice, setShareCapacityNotice] = React.useState(false)
 
   const mosaicCanvasRef = React.useRef<HTMLCanvasElement | null>(null)
   const bgColorRef = React.useRef<string>("#ffffff")
@@ -1224,9 +1260,9 @@ export function CanvasHero({
     }
   }, [hasMosaic, reference, bucket])
 
-  // Publish the current mosaic to a shareable /m/<id> link (admin only). Builds
-  // the same hover hit-map the gallery uses, captures the canvas as a JPEG, and
-  // posts both to the share route, which persists them and returns the link.
+  // Publish the current mosaic to a shareable /m/<id> link. Builds the same
+  // hover hit-map the gallery uses, captures the canvas as a JPEG, and posts
+  // both to the share route, which persists them and returns the link.
   const handlePublish = React.useCallback(async () => {
     const canvas = mosaicCanvasRef.current
     const map = tileMap
@@ -1235,6 +1271,7 @@ export function CanvasHero({
     setIsPublishing(true)
     setShareError(null)
     setShareUrl(null)
+    setShareCapacityNotice(false)
     try {
       const hit = buildMosaicHitMap({
         frameW: fr.w,
@@ -1275,14 +1312,14 @@ export function CanvasHero({
         method: "POST",
         body: fd,
       })
+      // 429 (per-IP or global hourly cap) and 503 (capacity / not configured)
+      // are temporary: show the soft "high demand" notice, not a hard error.
+      if (res.status === 429 || res.status === 503) {
+        setShareCapacityNotice(true)
+        return
+      }
       if (!res.ok) {
-        throw new Error(
-          res.status === 403
-            ? "Not authorized to publish."
-            : res.status === 429
-              ? "Rate limit reached — try again later."
-              : `Publish failed (${res.status}).`
-        )
+        throw new Error(`Publish failed (${res.status}).`)
       }
       const { url } = (await res.json()) as { url: string }
       setShareUrl(new URL(url, window.location.origin).toString())
@@ -1493,6 +1530,12 @@ export function CanvasHero({
         />
       )}
 
+      {shareCapacityNotice && (
+        <ShareCapacityDialog
+          onClose={() => setShareCapacityNotice(false)}
+        />
+      )}
+
       {zoomState && frame && (
         <MosaicZoomViewer
           baseSrc={zoomState.baseSrc}
@@ -1524,7 +1567,7 @@ export function CanvasHero({
           progressPct={displayedProgressPct}
           generateDisabled={tileCount === 0 || isGenerating}
           onDownload={handleDownload}
-          showPublish={isAdmin}
+          showPublish
           onPublish={handlePublish}
           isPublishing={isPublishing}
         />
@@ -1744,7 +1787,7 @@ export function CanvasHero({
                   progressPct={displayedProgressPct}
                   generateDisabled={tileCount === 0 || isGenerating}
                   onDownload={handleDownload}
-                  showPublish={isAdmin}
+                  showPublish
                   onPublish={handlePublish}
                   isPublishing={isPublishing}
                 />

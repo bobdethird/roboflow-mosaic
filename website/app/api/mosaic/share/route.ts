@@ -1,8 +1,8 @@
-import { isAdminRequest } from "@/lib/mosaic-admin"
 import {
   countRecentByIp,
   hashIp,
   publishMosaic,
+  ShareCapExceededError,
   ShareStoreNotConfiguredError,
   MAX_DIMENSION,
   MAX_GEOMETRY_BYTES,
@@ -30,11 +30,11 @@ function parseGeometry(raw: unknown): string | undefined | null {
   return JSON.stringify(geo)
 }
 
-// Create a shared mosaic. Admin-gated for now (localhost or admin cookie);
-// viewing the resulting /m/<id> link is public. Writes the composite image +
-// hover hit-map to private Storage and inserts the index row, all with the
-// service key — so this is the only new write surface and is validated/limited
-// accordingly.
+// Create a shared mosaic. Open to everyone (viewing the resulting /m/<id> link
+// was already public). Writes the composite image + hover hit-map to private
+// Storage and inserts the index row, all with the service key — so this is the
+// only public write surface and is validated + rate-limited accordingly: a
+// per-IP hourly cap and a global hourly cap that bounds total new storage.
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 
@@ -110,10 +110,6 @@ function parseTileMap(raw: string, w: number, h: number): StoredTileMap | null {
 }
 
 export async function POST(request: Request) {
-  if (!(await isAdminRequest(request))) {
-    return new Response("Forbidden", { status: 403 })
-  }
-
   let form: FormData
   try {
     form = await request.formData()
@@ -188,6 +184,12 @@ export async function POST(request: Request) {
 
     return Response.json({ id, url: `/m/${id}`, reused })
   } catch (err) {
+    // Global cap reached or sharing not configured: both surface to the client
+    // as a 503 "high demand / temporarily unavailable" so it shows the soft
+    // try-again notice rather than a hard error.
+    if (err instanceof ShareCapExceededError) {
+      return Response.json({ reason: "high_demand" }, { status: 503 })
+    }
     if (err instanceof ShareStoreNotConfiguredError) {
       return new Response(
         "Shared mosaics are not configured on this deployment.",
