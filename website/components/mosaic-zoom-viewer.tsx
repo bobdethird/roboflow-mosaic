@@ -76,7 +76,6 @@ export function MosaicZoomViewer({
   alt = "Mosaic",
   loadGeometry,
   geometry: initialGeometry,
-  onOpenTile,
   onClose,
 }: {
   baseSrc: string
@@ -87,7 +86,6 @@ export function MosaicZoomViewer({
   // is supplied directly (the live generator already has it in memory).
   loadGeometry?: () => Promise<MosaicGeometry | null>
   geometry?: MosaicGeometry | null
-  onOpenTile?: (tile: GalleryTile) => void
   onClose: () => void
 }) {
   const containerRef = React.useRef<HTMLDivElement | null>(null)
@@ -117,6 +115,19 @@ export function MosaicZoomViewer({
   )
 
   const [zoomed, setZoomed] = React.useState(false)
+  // Touch reveal at default zoom: dragging a finger across the un-zoomed mosaic
+  // shows the source photo under it (a tooltip, like the flat-view hover) instead
+  // of panning or opening a link. Cleared once the user zooms in (where the
+  // canvas overlay resolves the photos itself and drag means pan).
+  const [reveal, setReveal] = React.useState<{
+    tile: GalleryTile
+    x: number
+    y: number
+    // Whether to flip the tooltip to the other side of the finger so it stays on
+    // screen. Computed when the reveal is set (ref reads aren't allowed in render).
+    flipX: boolean
+    flipY: boolean
+  } | null>(null)
   // Default to "zoom in": cursor is a zoom-in glass and a click zooms into the
   // spot under it. The − button switches to "out", reset switches to "pointer".
   // Mirrored into a ref so the imperative pointer handler reads it synchronously
@@ -239,7 +250,11 @@ export function MosaicZoomViewer({
   }, [maxScale])
 
   const setZoomedFlag = React.useCallback(() => {
-    setZoomed(viewRef.current.scale > 1.001)
+    const z = viewRef.current.scale > 1.001
+    setZoomed(z)
+    // Once zoomed, the overlay resolves the photos directly — drop the default-
+    // zoom reveal tooltip so it doesn't linger.
+    if (z) setReveal(null)
   }, [])
 
   // Zoom to `nextScale` while keeping the content point under (fx,fy) fixed.
@@ -374,14 +389,18 @@ export function MosaicZoomViewer({
     []
   )
 
-  const openTileAt = React.useCallback(
+  // Reveal the source photo under a container-space point (touch, default zoom).
+  const revealAt = React.useCallback(
     (px: number, py: number) => {
       const tile = tileAtPoint(px, py)
-      if (!tile) return
-      if (onOpenTile) onOpenTile(tile)
-      else window.open(tile.url, "_blank", "noopener,noreferrer")
+      if (!tile) {
+        setReveal(null)
+        return
+      }
+      const { cw, ch } = sizeRef.current
+      setReveal({ tile, x: px, y: py, flipX: px > cw / 2, flipY: py > ch / 2 })
     },
-    [onOpenTile, tileAtPoint]
+    [tileAtPoint]
   )
 
   const localPoint = (e: { clientX: number; clientY: number }) => {
@@ -421,6 +440,7 @@ export function MosaicZoomViewer({
     pointersRef.current.set(e.pointerId, { x, y })
     downRef.current = { x, y, moved: 0 }
     if (pointersRef.current.size === 2) {
+      setReveal(null)
       const pts = [...pointersRef.current.values()]
       const dx = pts[0].x - pts[1].x
       const dy = pts[0].y - pts[1].y
@@ -433,6 +453,11 @@ export function MosaicZoomViewer({
         tx: v.tx,
         ty: v.ty,
       }
+      return
+    }
+    // Touch at default zoom: reveal the photo under the finger (tap or drag).
+    if (e.pointerType !== "mouse" && viewRef.current.scale <= 1.001) {
+      revealAt(x, y)
     }
   }
 
@@ -468,11 +493,19 @@ export function MosaicZoomViewer({
     }
 
     if (pointersRef.current.size === 1 && viewRef.current.scale > 1.001) {
+      // Zoomed in: single-finger drag pans.
       const v = viewRef.current
       v.tx += dx
       v.ty += dy
       clampView()
       applyView()
+    } else if (
+      pointersRef.current.size === 1 &&
+      e.pointerType !== "mouse" &&
+      viewRef.current.scale <= 1.001
+    ) {
+      // Default zoom: single-finger drag reveals the photos under the finger.
+      revealAt(x, y)
     }
   }
 
@@ -496,8 +529,9 @@ export function MosaicZoomViewer({
       return
     }
 
-    // Touch: a tap never zooms (pinch does) — it opens the photo under the finger.
-    openTileAt(x, y)
+    // Touch: a tap never zooms (pinch does) and never opens a link — at default
+    // zoom it just reveals the photo under the finger (set on pointer down), which
+    // stays visible so it can be read until the next drag, tap, or zoom.
   }
 
   const zoomButton = (dir: 1 | -1) => {
@@ -572,6 +606,33 @@ export function MosaicZoomViewer({
           ref={canvasRef}
           className="pointer-events-none absolute inset-0 size-full"
         />
+
+        {reveal && (
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute z-10 w-40 overflow-hidden rounded-2xl border bg-popover p-2 shadow-lg sm:w-52"
+            style={{
+              left: `${reveal.x}px`,
+              top: `${reveal.y}px`,
+              transform: `translate(${
+                reveal.flipX ? "calc(-100% - 16px)" : "16px"
+              }, ${reveal.flipY ? "calc(-100% - 16px)" : "16px"})`,
+            }}
+          >
+            <div className="relative aspect-square w-full overflow-hidden rounded-xl bg-card">
+              {/* eslint-disable-next-line @next/next/no-img-element -- public library URL, shown only as a reveal preview */}
+              <img
+                src={reveal.tile.previewUrl ?? reveal.tile.url}
+                alt={reveal.tile.title}
+                draggable={false}
+                className="size-full object-cover"
+              />
+              <span className="absolute inset-x-0 bottom-0 line-clamp-2 bg-black/70 px-2 py-1.5 text-left text-xs font-medium text-white">
+                {reveal.tile.title}
+              </span>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="absolute bottom-[calc(env(safe-area-inset-bottom,0px)+1rem)] left-1/2 z-20 flex -translate-x-1/2 items-center gap-2">
@@ -606,7 +667,7 @@ export function MosaicZoomViewer({
       <p className="pointer-events-none absolute inset-x-0 top-[calc(env(safe-area-inset-top,0px)+1rem)] text-center text-sm text-white/70">
         {zoomed
           ? "Drag to look around — use the − button to zoom back out"
-          : "Click or pinch to zoom into the photos that make up the mosaic"}
+          : "Drag across to reveal the photos that make it up — pinch or click to zoom in"}
       </p>
     </div>
   )

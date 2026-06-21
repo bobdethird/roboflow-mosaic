@@ -1740,6 +1740,21 @@ export function CanvasHero({
               </SidebarGroupContent>
             </SidebarGroup>
           )}
+
+          <SidebarSeparator className="mx-0 hidden md:block" />
+
+          {/* Invite visitors from this personal-mosaic experiment over to the
+              collaborative New York mosaic. */}
+          <SidebarGroup className="hidden p-0 md:flex">
+            <SidebarGroupContent>
+              <Link
+                href="/newyork-mosaic"
+                className="text-sm text-muted-foreground underline underline-offset-4 transition-colors hover:text-foreground"
+              >
+                contribute to the world&apos;s largest new york city mosaic
+              </Link>
+            </SidebarGroupContent>
+          </SidebarGroup>
         </SidebarContent>
 
         <SidebarFooter className="mt-auto flex flex-col gap-3 border-t p-4">
