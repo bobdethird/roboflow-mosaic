@@ -27,10 +27,14 @@ const MIN_SCALE = 1
 const MAX_SCALE_CAP = 200
 const MIN_MAX_SCALE = 4
 const TAP_MOVE_PX = 8
-const DOUBLE_TAP_MS = 300
+// How much a single click zooms in/out toward the cursor.
+const CLICK_ZOOM_FACTOR = 2
 
 type View = { scale: number; tx: number; ty: number }
 type Size = { cw: number; ch: number; dpr: number }
+// Desktop click behaviour + cursor, toggled by the +/−/reset controls. Trackpad
+// zoom never changes it. On touch it's irrelevant — taps never zoom there.
+type CursorMode = "in" | "out" | "pointer"
 
 const clamp = (v: number, lo: number, hi: number) =>
   v < lo ? lo : v > hi ? hi : v
@@ -111,10 +115,18 @@ export function MosaicZoomViewer({
   const downRef = React.useRef<{ x: number; y: number; moved: number } | null>(
     null
   )
-  const lastTapRef = React.useRef(0)
-  const tapTimerRef = React.useRef<number | null>(null)
 
   const [zoomed, setZoomed] = React.useState(false)
+  // Default to "zoom in": cursor is a zoom-in glass and a click zooms into the
+  // spot under it. The − button switches to "out", reset switches to "pointer".
+  // Mirrored into a ref so the imperative pointer handler reads it synchronously
+  // (state alone lags a render); the state still drives the cursor className.
+  const [cursorMode, setCursorMode] = React.useState<CursorMode>("in")
+  const cursorModeRef = React.useRef<CursorMode>("in")
+  const setMode = React.useCallback((mode: CursorMode) => {
+    cursorModeRef.current = mode
+    setCursorMode(mode)
+  }, [])
 
   const maxScale = React.useCallback(() => {
     const { cw, ch } = sizeRef.current
@@ -327,10 +339,6 @@ export function MosaicZoomViewer({
         // would never paint.
         rafRef.current = null
       }
-      if (tapTimerRef.current !== null) {
-        window.clearTimeout(tapTimerRef.current)
-        tapTimerRef.current = null
-      }
     }
   }, [])
 
@@ -404,7 +412,12 @@ export function MosaicZoomViewer({
 
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     const { x, y } = localPoint(e)
-    containerRef.current?.setPointerCapture(e.pointerId)
+    try {
+      containerRef.current?.setPointerCapture(e.pointerId)
+    } catch {
+      // setPointerCapture throws for a non-active pointer in some browsers; the
+      // gesture still works without capture.
+    }
     pointersRef.current.set(e.pointerId, { x, y })
     downRef.current = { x, y, moved: 0 }
     if (pointersRef.current.size === 2) {
@@ -473,36 +486,24 @@ export function MosaicZoomViewer({
     if (!wasTap || pointersRef.current.size > 0) return
 
     if (e.pointerType === "mouse") {
-      // Desktop: wheel zooms; a plain click opens the photo under the cursor.
-      openTileAt(x, y)
+      // Desktop: a click zooms toward the cursor in the direction of the current
+      // mode (set by the +/−/reset controls). Pointer mode is a no-op. Trackpad
+      // zoom leaves the mode — and so the cursor — untouched.
+      const v = viewRef.current
+      const mode = cursorModeRef.current
+      if (mode === "in") zoomTo(v.scale * CLICK_ZOOM_FACTOR, x, y)
+      else if (mode === "out") zoomTo(v.scale / CLICK_ZOOM_FACTOR, x, y)
       return
     }
 
-    // Touch: double-tap zooms (toggle), single-tap opens — disambiguated by a
-    // short delay so a double-tap doesn't also open a tile.
-    const now = performance.now()
-    if (now - lastTapRef.current < DOUBLE_TAP_MS) {
-      lastTapRef.current = 0
-      if (tapTimerRef.current !== null) {
-        window.clearTimeout(tapTimerRef.current)
-        tapTimerRef.current = null
-      }
-      const v = viewRef.current
-      const atMax = v.scale >= maxScale() - 0.01
-      zoomTo(atMax ? MIN_SCALE : v.scale * 2.5, x, y)
-      return
-    }
-    lastTapRef.current = now
-    tapTimerRef.current = window.setTimeout(() => {
-      tapTimerRef.current = null
-      if (viewRef.current.scale > 1.001) openTileAt(x, y)
-      else zoomTo(2.5, x, y)
-    }, DOUBLE_TAP_MS)
+    // Touch: a tap never zooms (pinch does) — it opens the photo under the finger.
+    openTileAt(x, y)
   }
 
   const zoomButton = (dir: 1 | -1) => {
     const { cw, ch } = sizeRef.current
     const v = viewRef.current
+    setMode(dir > 0 ? "in" : "out")
     zoomTo(v.scale * (dir > 0 ? 1.6 : 1 / 1.6), cw / 2, ch / 2)
   }
 
@@ -514,6 +515,7 @@ export function MosaicZoomViewer({
     clampView()
     applyView()
     setZoomedFlag()
+    setMode("pointer")
   }
 
   return (
@@ -537,7 +539,9 @@ export function MosaicZoomViewer({
         ref={containerRef}
         className={cn(
           "relative touch-none overflow-hidden rounded-lg select-none",
-          zoomed ? "cursor-grab active:cursor-grabbing" : "cursor-zoom-in"
+          cursorMode === "in" && "cursor-zoom-in",
+          cursorMode === "out" && "cursor-zoom-out",
+          cursorMode === "pointer" && "cursor-default"
         )}
         style={{
           width: `min(92vw, calc(85svh * ${frameW} / ${frameH}))`,
@@ -601,8 +605,8 @@ export function MosaicZoomViewer({
 
       <p className="pointer-events-none absolute inset-x-0 top-[calc(env(safe-area-inset-top,0px)+1rem)] text-center text-sm text-white/70">
         {zoomed
-          ? "Zoom in to reveal the photos — tap a tile to open it"
-          : "Scroll or pinch to zoom into the photos that make up the mosaic"}
+          ? "Drag to look around — use the − button to zoom back out"
+          : "Click or pinch to zoom into the photos that make up the mosaic"}
       </p>
     </div>
   )
