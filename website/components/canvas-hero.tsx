@@ -4,6 +4,7 @@ import * as React from "react"
 import Link from "next/link"
 import {
   ArrowLeft,
+  ArrowRight,
   Check,
   Copy,
   Download,
@@ -1551,11 +1552,24 @@ export function CanvasHero({
             } as React.CSSProperties
           }
         >
-          <div className="z-20 flex min-w-0 flex-col items-start max-md:absolute max-md:inset-x-3 max-md:top-[calc(env(safe-area-inset-top,0px)+1rem)] sm:max-md:inset-x-4">
+          <div className="z-20 flex min-w-0 items-start justify-between gap-3 max-md:absolute max-md:inset-x-3 max-md:top-[calc(env(safe-area-inset-top,0px)+1rem)] sm:max-md:inset-x-4 md:flex-col md:justify-start">
             <Button variant="link" asChild className="h-auto p-0 underline">
               <Link href="/">
                 <ArrowLeft />
                 back to home
+              </Link>
+            </Button>
+
+            {/* Mobile-only shortcut to the collaborative NYC mosaic; on desktop
+                this link lives in the right sidebar instead. */}
+            <Button
+              variant="link"
+              asChild
+              className="h-auto p-0 underline md:hidden"
+            >
+              <Link href="/newyork-mosaic">
+                new york city mosaic
+                <ArrowRight />
               </Link>
             </Button>
           </div>
@@ -1749,9 +1763,10 @@ export function CanvasHero({
             <SidebarGroupContent>
               <Link
                 href="/newyork-mosaic"
-                className="text-sm text-muted-foreground underline underline-offset-4 transition-colors hover:text-foreground"
+                className="group/contribute inline-flex items-center gap-1.5 text-sm text-muted-foreground underline underline-offset-4 transition-colors hover:text-foreground"
               >
                 contribute to the world&apos;s largest new york city mosaic
+                <ArrowRight className="size-4 shrink-0 transition-transform duration-200 group-hover/contribute:translate-x-0.5" />
               </Link>
             </SidebarGroupContent>
           </SidebarGroup>
