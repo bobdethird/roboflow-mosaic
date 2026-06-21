@@ -2,7 +2,6 @@ import Link from "next/link"
 import { headers } from "next/headers"
 
 import { AdminLoginForm } from "@/components/admin-login-form"
-import { SiteCredit } from "@/components/site-credit"
 import { isAdminContext } from "@/lib/mosaic-admin"
 
 // Admin unlock page. Enter the admin password to set the admin cookie, which
@@ -41,8 +40,6 @@ export default async function AdminPage() {
       ) : (
         <AdminLoginForm />
       )}
-
-      <SiteCredit className="absolute inset-x-0 bottom-6 text-center" />
     </main>
   )
 }

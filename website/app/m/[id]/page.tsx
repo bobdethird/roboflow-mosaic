@@ -7,7 +7,6 @@ import { Download } from "lucide-react"
 
 import { SingleMosaic } from "@/components/mosaic-gallery"
 import { MobileIntroAnnouncement } from "@/components/tile-hint"
-import { SiteCredit } from "@/components/site-credit"
 import { Button } from "@/components/ui/button"
 import { getMosaic } from "@/lib/mosaic-share-store"
 import type { GalleryIndexEntry } from "@/lib/gallery"
@@ -129,7 +128,6 @@ export default async function SharedMosaicPage({
             </a>
           </Button>
         </div>
-        <SiteCredit />
       </footer>
     </main>
   )

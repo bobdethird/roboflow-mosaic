@@ -33,7 +33,6 @@ import {
 } from "@/components/reference-image"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { SiteCredit } from "@/components/site-credit"
 import { buildMosaicHitMap } from "@/lib/mosaic-hitmap"
 import {
   buildMosaicGeometry,
@@ -1626,9 +1625,6 @@ export function CanvasHero({
           </div>
         </div>
 
-        {/* Credit anchored to the bottom of the main page (not the sidebar).
-            Hidden on mobile, where the fixed action bar owns the bottom edge. */}
-        <SiteCredit className="absolute inset-x-0 bottom-5 z-10 text-center max-md:hidden" />
       </section>
 
       <Sidebar side="right" mobileSide="bottom" collapsible="offcanvas">
