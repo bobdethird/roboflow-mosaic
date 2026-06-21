@@ -4,111 +4,127 @@
     "src": "/gallery/arena-medium.jpg",
     "w": 1000,
     "h": 668,
-    "alt": "arena rebuilt as a medium resolution mosaic of Knicks footage frames"
+    "alt": "arena rebuilt as a medium resolution mosaic of Knicks footage frames",
+    "geometrySrc": "/gallery/arena-medium.geometry.json"
   },
   {
     "name": "arena2-medium",
     "src": "/gallery/arena2-medium.jpg",
     "w": 1000,
     "h": 668,
-    "alt": "arena2 rebuilt as a medium resolution mosaic of Knicks footage frames"
+    "alt": "arena2 rebuilt as a medium resolution mosaic of Knicks footage frames",
+    "geometrySrc": "/gallery/arena2-medium.geometry.json"
   },
   {
     "name": "brunson-medium",
     "src": "/gallery/brunson-medium.jpg",
     "w": 800,
     "h": 1000,
-    "alt": "brunson rebuilt as a medium resolution mosaic of Knicks footage frames"
+    "alt": "brunson rebuilt as a medium resolution mosaic of Knicks footage frames",
+    "geometrySrc": "/gallery/brunson-medium.geometry.json"
   },
   {
     "name": "brunson2-medium",
     "src": "/gallery/brunson2-medium.jpg",
     "w": 800,
     "h": 1000,
-    "alt": "brunson2 rebuilt as a medium resolution mosaic of Knicks footage frames"
+    "alt": "brunson2 rebuilt as a medium resolution mosaic of Knicks footage frames",
+    "geometrySrc": "/gallery/brunson2-medium.geometry.json"
   },
   {
     "name": "cops-medium",
     "src": "/gallery/cops-medium.jpg",
     "w": 1000,
     "h": 666,
-    "alt": "cops rebuilt as a medium resolution mosaic of Knicks footage frames"
-  },
-  {
-    "name": "crowd",
-    "src": "/gallery/crowd.jpg",
-    "w": 1000,
-    "h": 666,
-    "alt": "crowd rebuilt as a mosaic of Knicks footage frames"
-  },
-  {
-    "name": "fans",
-    "src": "/gallery/fans.jpg",
-    "w": 1000,
-    "h": 563,
-    "alt": "fans rebuilt as a mosaic of Knicks footage frames"
+    "alt": "cops rebuilt as a medium resolution mosaic of Knicks footage frames",
+    "geometrySrc": "/gallery/cops-medium.geometry.json"
   },
   {
     "name": "hart-medium",
     "src": "/gallery/hart-medium.jpg",
     "w": 800,
     "h": 1000,
-    "alt": "hart rebuilt as a medium resolution mosaic of Knicks footage frames"
+    "alt": "hart rebuilt as a medium resolution mosaic of Knicks footage frames",
+    "geometrySrc": "/gallery/hart-medium.geometry.json"
   },
   {
     "name": "kat-medium",
     "src": "/gallery/kat-medium.jpg",
     "w": 800,
     "h": 1000,
-    "alt": "kat rebuilt as a medium resolution mosaic of Knicks footage frames"
+    "alt": "kat rebuilt as a medium resolution mosaic of Knicks footage frames",
+    "geometrySrc": "/gallery/kat-medium.geometry.json"
   },
   {
     "name": "knicks-in-4-medium",
     "src": "/gallery/knicks-in-4-medium.jpg",
     "w": 616,
     "h": 1000,
-    "alt": "knicks in 4 rebuilt as a medium resolution mosaic of Knicks footage frames"
+    "alt": "knicks in 4 rebuilt as a medium resolution mosaic of Knicks footage frames",
+    "geometrySrc": "/gallery/knicks-in-4-medium.geometry.json"
   },
   {
     "name": "og-dunk-medium",
     "src": "/gallery/og-dunk-medium.jpg",
     "w": 1000,
     "h": 1000,
-    "alt": "og dunk rebuilt as a medium resolution mosaic of Knicks footage frames"
+    "alt": "og dunk rebuilt as a medium resolution mosaic of Knicks footage frames",
+    "geometrySrc": "/gallery/og-dunk-medium.geometry.json"
   },
   {
     "name": "og-medium",
     "src": "/gallery/og-medium.jpg",
     "w": 800,
     "h": 1000,
-    "alt": "og rebuilt as a medium resolution mosaic of Knicks footage frames"
-  },
-  {
-    "name": "skyline",
-    "src": "/gallery/skyline.jpg",
-    "w": 1000,
-    "h": 666,
-    "alt": "skyline rebuilt as a mosaic of Knicks footage frames"
+    "alt": "og rebuilt as a medium resolution mosaic of Knicks footage frames",
+    "geometrySrc": "/gallery/og-medium.geometry.json"
   },
   {
     "name": "trophy-medium",
     "src": "/gallery/trophy-medium.jpg",
     "w": 1000,
     "h": 563,
-    "alt": "trophy rebuilt as a medium resolution mosaic of Knicks footage frames"
+    "alt": "trophy rebuilt as a medium resolution mosaic of Knicks footage frames",
+    "geometrySrc": "/gallery/trophy-medium.geometry.json"
   },
   {
     "name": "trophy-2-medium",
     "src": "/gallery/trophy-2-medium.jpg",
     "w": 1000,
     "h": 563,
-    "alt": "trophy rebuilt as a medium resolution mosaic of Knicks footage frames"
+    "alt": "trophy rebuilt as a medium resolution mosaic of Knicks footage frames",
+    "geometrySrc": "/gallery/trophy-2-medium.geometry.json"
   },
   {
-    "name": "nyc-lunch-high",
-    "src": "/gallery/nyc-lunch-high.jpg",
+    "name": "crowd-medium",
+    "src": "/gallery/crowd-medium.jpg",
+    "w": 1000,
+    "h": 666,
+    "alt": "crowd rebuilt as a medium resolution mosaic of Knicks footage frames",
+    "geometrySrc": "/gallery/crowd-medium.geometry.json"
+  },
+  {
+    "name": "fans-medium",
+    "src": "/gallery/fans-medium.jpg",
+    "w": 1000,
+    "h": 563,
+    "alt": "fans rebuilt as a medium resolution mosaic of Knicks footage frames",
+    "geometrySrc": "/gallery/fans-medium.geometry.json"
+  },
+  {
+    "name": "nyc-lunch-medium",
+    "src": "/gallery/nyc-lunch-medium.jpg",
     "w": 1000,
     "h": 786,
-    "alt": "nyc lunch rebuilt as a high resolution mosaic of Knicks footage frames"
+    "alt": "nyc lunch rebuilt as a medium resolution mosaic of Knicks footage frames",
+    "geometrySrc": "/gallery/nyc-lunch-medium.geometry.json"
+  },
+  {
+    "name": "skyline-medium",
+    "src": "/gallery/skyline-medium.jpg",
+    "w": 1000,
+    "h": 666,
+    "alt": "skyline rebuilt as a medium resolution mosaic of Knicks footage frames",
+    "geometrySrc": "/gallery/skyline-medium.geometry.json"
   }
 ]

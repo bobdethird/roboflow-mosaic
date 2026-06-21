@@ -9,7 +9,8 @@ import { SUPABASE_URL } from "./photo-library"
 import type { GalleryTile } from "./gallery"
 
 // Private bucket holding the published composites + hit-maps (see migration).
-const SHARED_BUCKET = process.env.MOSAIC_SHARED_BUCKET?.trim() || "mosaics-shared"
+const SHARED_BUCKET =
+  process.env.MOSAIC_SHARED_BUCKET?.trim() || "mosaics-shared"
 const REST_BASE = `${SUPABASE_URL}/rest/v1`
 const STORAGE_BASE = `${SUPABASE_URL}/storage/v1`
 
@@ -17,6 +18,9 @@ const STORAGE_BASE = `${SUPABASE_URL}/storage/v1`
 // only new abuse surface).
 export const MAX_IMAGE_BYTES = 6 * 1024 * 1024 // 6 MB
 export const MAX_TILEMAP_BYTES = 4 * 1024 * 1024 // 4 MB
+// Per-tile zoom geometry (base64 typed buffers + tile urls); larger than the
+// coarse hit-map since it carries every cell, but still small.
+export const MAX_GEOMETRY_BYTES = 8 * 1024 * 1024 // 8 MB
 export const MAX_DIMENSION = 4096
 export const RATE_LIMIT_PER_HOUR = 30
 
@@ -28,6 +32,9 @@ export type MosaicRow = {
   h: number
   image_path: string
   tilemap_path: string
+  // Per-tile zoom geometry object path; null for mosaics published before the
+  // zoom feature (they still view + hover, just without the zoom overlay).
+  geometry_path: string | null
   content_hash: string
   ip_hash: string | null
   deleted: boolean
@@ -79,7 +86,8 @@ const ID_ALPHABET =
 export function generateId(length = 8): string {
   const bytes = randomBytes(length)
   let out = ""
-  for (let i = 0; i < length; i++) out += ID_ALPHABET[bytes[i] % ID_ALPHABET.length]
+  for (let i = 0; i < length; i++)
+    out += ID_ALPHABET[bytes[i] % ID_ALPHABET.length]
   return out
 }
 
@@ -115,7 +123,9 @@ async function uploadObject(
     }
   )
   if (!res.ok) {
-    throw new Error(`storage upload failed (${res.status}): ${await res.text()}`)
+    throw new Error(
+      `storage upload failed (${res.status}): ${await res.text()}`
+    )
   }
 }
 
@@ -141,6 +151,9 @@ export function imagePathFor(id: string): string {
 }
 export function tilemapPathFor(id: string): string {
   return `shared/${id}/tilemap.json`
+}
+export function geometryPathFor(id: string): string {
+  return `shared/${id}/geometry.json`
 }
 
 // ─── table (PostgREST) ───────────────────────────────────────────────────────
@@ -225,6 +238,7 @@ export async function insertMosaic(row: {
   h: number
   image_path: string
   tilemap_path: string
+  geometry_path: string | null
   content_hash: string
   ip_hash: string | null
 }): Promise<InsertResult> {
@@ -251,6 +265,9 @@ export type PublishInput = {
   h: number
   imageBytes: Uint8Array
   tilemap: StoredTileMap
+  // Validated, canonical encoded geometry JSON string (or null when the client
+  // didn't send it — older clients, or a build without the zoom feature).
+  geometryJson: string | null
   ipHash: string | null
 }
 
@@ -273,9 +290,13 @@ export async function publishMosaic(
     const id = generateId()
     const imagePath = imagePathFor(id)
     const tilemapPath = tilemapPathFor(id)
+    const geometryPath = input.geometryJson ? geometryPathFor(id) : null
 
     await uploadObject(imagePath, input.imageBytes, "image/jpeg")
     await uploadObject(tilemapPath, tilemapJson, "application/json")
+    if (geometryPath) {
+      await uploadObject(geometryPath, input.geometryJson!, "application/json")
+    }
 
     const result = await insertMosaic({
       id,
@@ -284,6 +305,7 @@ export async function publishMosaic(
       h: input.h,
       image_path: imagePath,
       tilemap_path: tilemapPath,
+      geometry_path: geometryPath,
       content_hash: contentHash,
       ip_hash: input.ipHash,
     })

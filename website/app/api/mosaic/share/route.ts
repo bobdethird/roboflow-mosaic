@@ -5,12 +5,30 @@ import {
   publishMosaic,
   ShareStoreNotConfiguredError,
   MAX_DIMENSION,
+  MAX_GEOMETRY_BYTES,
   MAX_IMAGE_BYTES,
   MAX_TILEMAP_BYTES,
   RATE_LIMIT_PER_HOUR,
   type StoredTileMap,
 } from "@/lib/mosaic-share-store"
+import { validateEncodedGeometry } from "@/lib/mosaic-geometry"
 import type { GalleryTile } from "@/lib/gallery"
+
+// Validate + canonicalize the optional zoom geometry. Returns the JSON string to
+// store, undefined when absent, or null when present-but-invalid (a hard reject).
+function parseGeometry(raw: unknown): string | undefined | null {
+  if (typeof raw !== "string") return undefined
+  if (raw.length > MAX_GEOMETRY_BYTES) return null
+  let data: unknown
+  try {
+    data = JSON.parse(raw)
+  } catch {
+    return null
+  }
+  const geo = validateEncodedGeometry(data)
+  if (!geo) return null
+  return JSON.stringify(geo)
+}
 
 // Create a shared mosaic. Admin-gated for now (localhost or admin cookie);
 // viewing the resulting /m/<id> link is public. Writes the composite image +
@@ -27,7 +45,12 @@ function clientIp(request: Request): string {
 }
 
 function isJpeg(bytes: Uint8Array): boolean {
-  return bytes.length > 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff
+  return (
+    bytes.length > 3 &&
+    bytes[0] === 0xff &&
+    bytes[1] === 0xd8 &&
+    bytes[2] === 0xff
+  )
 }
 
 // Validate the posted hit-map enough to trust it: right shape, sane sizes, and
@@ -62,7 +85,11 @@ function parseTileMap(raw: string, w: number, h: number): StoredTileMap | null {
     return null
   }
   for (const g of grid) {
-    if (!Number.isInteger(g) || (g as number) < -1 || (g as number) >= tiles.length) {
+    if (
+      !Number.isInteger(g) ||
+      (g as number) < -1 ||
+      (g as number) >= tiles.length
+    ) {
       return null
     }
   }
@@ -70,7 +97,8 @@ function parseTileMap(raw: string, w: number, h: number): StoredTileMap | null {
   for (const t of tiles) {
     if (!t || typeof t !== "object") return null
     const tile = t as Record<string, unknown>
-    if (typeof tile.url !== "string" || typeof tile.title !== "string") return null
+    if (typeof tile.url !== "string" || typeof tile.title !== "string")
+      return null
     cleanTiles.push({
       url: tile.url,
       title: tile.title,
@@ -95,6 +123,7 @@ export async function POST(request: Request) {
 
   const image = form.get("image")
   const tilemapRaw = form.get("tilemap")
+  const geometryRaw = form.get("geometry")
   const collection = form.get("collection")
   const w = Number(form.get("w"))
   const h = Number(form.get("h"))
@@ -132,6 +161,11 @@ export async function POST(request: Request) {
     return new Response("Invalid tile map", { status: 400 })
   }
 
+  const geometryJson = parseGeometry(geometryRaw)
+  if (geometryJson === null) {
+    return new Response("Invalid geometry", { status: 400 })
+  }
+
   const ipHash = hashIp(clientIp(request))
 
   try {
@@ -148,6 +182,7 @@ export async function POST(request: Request) {
       h,
       imageBytes,
       tilemap,
+      geometryJson: geometryJson ?? null,
       ipHash,
     })
 

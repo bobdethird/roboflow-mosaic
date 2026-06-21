@@ -15,6 +15,10 @@ export type GalleryIndexEntry = {
   // foo.jpg → foo.json convention) when omitted; shared mosaics set it directly
   // since their image/tilemap live behind dedicated /m/<id>/… routes.
   tileMapSrc?: string
+  // Explicit per-tile geometry URL for the zoom viewer. Defaults to
+  // `geometryUrlFor(src)` (foo.jpg → foo.geometry.json) when omitted; shared
+  // mosaics set it to their dedicated /m/<id>/geometry route.
+  geometrySrc?: string
 }
 
 // A single source frame revealed in the hover popup. `url` is the click-through
@@ -44,4 +48,9 @@ export const NY_MOSAIC_NAME_PREFIX = "nyc-lunch"
 // The hover hit-map sits beside each baked image (foo.jpg → foo.json).
 export function tileMapUrlFor(src: string): string {
   return src.replace(/\.jpg$/i, ".json")
+}
+
+// The zoom geometry sits beside each baked image (foo.jpg → foo.geometry.json).
+export function geometryUrlFor(src: string): string {
+  return src.replace(/\.jpg$/i, ".geometry.json")
 }

@@ -5,11 +5,9 @@ import * as React from "react"
 import { MosaicEngine } from "@/lib/mosaic-client"
 import { generateBakedMosaic } from "@/lib/mosaic-bake"
 import { buildMosaicHitMap } from "@/lib/mosaic-hitmap"
-import {
-  loadLibrary,
-  thumbUrl,
-  type LibraryItem,
-} from "@/lib/photo-library"
+import { buildMosaicGeometry, encodeGeometry } from "@/lib/mosaic-geometry"
+import { loadLibrary, thumbUrl, type LibraryItem } from "@/lib/photo-library"
+import type { GalleryTile } from "@/lib/gallery"
 import { loadImage } from "@/lib/mosaic"
 import { Button } from "@/components/ui/button"
 
@@ -136,15 +134,23 @@ export default function BakePage() {
       if (!engine || ids.length === 0) throw new Error("library not ready")
 
       const img = await loadImage(`/gallery-original/${encodeURI(file)}`)
-      const { frame, bgColor, base, assignment, centers, tileIds } =
-        await withTimeout(
-          generateBakedMosaic(engine, img, ids, {
-            cellSize,
-            maxTileReuse: MAX_TILE_REUSE,
-            weighting: WEIGHTING,
-          }),
-          BAKE_TIMEOUT_MS
-        )
+      const {
+        frame,
+        bgColor,
+        base,
+        assignment,
+        centers,
+        angles,
+        tileSize,
+        tileIds,
+      } = await withTimeout(
+        generateBakedMosaic(engine, img, ids, {
+          cellSize,
+          maxTileReuse: MAX_TILE_REUSE,
+          weighting: WEIGHTING,
+        }),
+        BAKE_TIMEOUT_MS
+      )
 
       // Paint grout + the worker frame, scaled down to a web-friendly size.
       const scale = Math.min(1, SAVE_LONG_EDGE / Math.max(frame.w, frame.h))
@@ -161,25 +167,49 @@ export default function BakePage() {
       base.close()
       const image = canvas.toDataURL("image/jpeg", JPEG_QUALITY)
 
+      // Resolve a library id into its GalleryTile — shared by the hover hit grid
+      // and the zoom geometry so both point at identical urls.
+      const resolveTile = (id: string): GalleryTile => {
+        const item = libraryById.get(id)
+        return {
+          url: item?.fullUrl ?? item?.url ?? thumbUrl(BUCKET, id),
+          previewUrl: item?.url ?? thumbUrl(BUCKET, id),
+          title: item?.galleryTitle ?? item?.gallery ?? id,
+        }
+      }
+
       // Build the hover hit grid (shared with the live Publish flow so baked
       // and published maps are identical).
       const cellCount = centers.length / 2
-      const { cols, rows: rows_, grid, tiles } = buildMosaicHitMap({
+      const {
+        cols,
+        rows: rows_,
+        grid,
+        tiles,
+      } = buildMosaicHitMap({
         frameW: frame.w,
         frameH: frame.h,
         centers,
         assignment,
         tileIds,
         hitCellPx: HIT_CELL_PX,
-        resolveTile: (id) => {
-          const item = libraryById.get(id)
-          return {
-            url: item?.fullUrl ?? item?.url ?? thumbUrl(BUCKET, id),
-            previewUrl: item?.url ?? thumbUrl(BUCKET, id),
-            title: item?.galleryTitle ?? item?.gallery ?? id,
-          }
-        },
+        resolveTile,
       })
+
+      // Per-tile zoom geometry (foo.geometry.json), in frame coordinates so it's
+      // independent of the downscaled saved image.
+      const geometry = encodeGeometry(
+        buildMosaicGeometry({
+          frameW: frame.w,
+          frameH: frame.h,
+          tileSize,
+          centers,
+          angles,
+          assignment,
+          tileIds,
+          resolveTile,
+        })
+      )
 
       const res = await fetch("/api/bake/save", {
         method: "POST",
@@ -194,6 +224,7 @@ export default function BakePage() {
           rows: rows_,
           grid,
           tiles,
+          geometry,
         }),
       })
       if (!res.ok) throw new Error(`save failed (${res.status})`)

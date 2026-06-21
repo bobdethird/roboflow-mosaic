@@ -38,8 +38,14 @@ export function frameDimsFor(w: number, h: number): { w: number; h: number } {
 function fieldDimsFor(w: number, h: number): { fw: number; fh: number } {
   const aspect = w / h
   return aspect >= 1
-    ? { fw: FIELD_LONG_EDGE, fh: Math.max(1, Math.round(FIELD_LONG_EDGE / aspect)) }
-    : { fw: Math.max(1, Math.round(FIELD_LONG_EDGE * aspect)), fh: FIELD_LONG_EDGE }
+    ? {
+        fw: FIELD_LONG_EDGE,
+        fh: Math.max(1, Math.round(FIELD_LONG_EDGE / aspect)),
+      }
+    : {
+        fw: Math.max(1, Math.round(FIELD_LONG_EDGE * aspect)),
+        fh: FIELD_LONG_EDGE,
+      }
 }
 
 export type BakedMosaic = {
@@ -54,6 +60,10 @@ export type BakedMosaic = {
   assignment: Int32Array
   // Per-cell center (x,y pairs) in frame coordinates.
   centers: Float32Array
+  // Per-cell rotation, index-aligned with `centers` (for the zoom geometry).
+  angles: Float32Array
+  // Mosaic cell size in frame px (for the zoom geometry).
+  tileSize: number
   // Library photo ids, indexed by `assignment`.
   tileIds: string[]
 }
@@ -111,6 +121,8 @@ export async function generateBakedMosaic(
     base,
     assignment,
     centers: cm.centers,
+    angles: cm.angles,
+    tileSize: cm.tileSize,
     tileIds: [...ids],
   }
 }

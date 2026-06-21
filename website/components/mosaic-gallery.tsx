@@ -1,17 +1,39 @@
 "use client"
 
 import * as React from "react"
-import { X } from "lucide-react"
+import { Maximize2 } from "lucide-react"
 
 import {
   GALLERY_INDEX_URL,
   NY_MOSAIC_NAME_PREFIX,
+  geometryUrlFor,
   tileMapUrlFor,
   type GalleryIndexEntry,
   type GalleryTile,
   type GalleryTileMap,
 } from "@/lib/gallery"
+import { decodeGeometry, type MosaicGeometry } from "@/lib/mosaic-geometry"
+import { MosaicZoomViewer } from "@/components/mosaic-zoom-viewer"
 import { cn } from "@/lib/utils"
+
+// Lazily fetch + decode a mosaic's zoom geometry. Shared mosaics carry an
+// explicit `geometrySrc` route; baked gallery items default to the foo.jpg →
+// foo.geometry.json sibling. Returns null when none exists (older mosaics still
+// zoom against the base image, just without the real-photo overlay).
+function makeGeometryLoader(
+  entry: GalleryIndexEntry
+): () => Promise<MosaicGeometry | null> {
+  const url = entry.geometrySrc ?? geometryUrlFor(entry.src)
+  return async () => {
+    try {
+      const res = await fetch(url)
+      if (!res.ok) return null
+      return decodeGeometry(await res.json())
+    } catch {
+      return null
+    }
+  }
+}
 
 type Hover = { tile: GalleryTile; fx: number; fy: number }
 type PointerCoords = { clientX: number; clientY: number }
@@ -46,7 +68,10 @@ function columnizeGalleryItems(
   items: GalleryIndexEntry[],
   columnCount: number
 ): GalleryIndexEntry[][] {
-  const columns = Array.from({ length: columnCount }, () => [] as GalleryIndexEntry[])
+  const columns = Array.from(
+    { length: columnCount },
+    () => [] as GalleryIndexEntry[]
+  )
   const heights = new Array<number>(columnCount).fill(0)
 
   for (const item of items) {
@@ -172,7 +197,9 @@ function MosaicCell({
   const [hover, setHover] = React.useState<Hover | null>(null)
   const cellRef = React.useRef<HTMLDivElement | null>(null)
   const mapRef = React.useRef<GalleryTileMap | null>(null)
-  const mapPromiseRef = React.useRef<Promise<GalleryTileMap | null> | null>(null)
+  const mapPromiseRef = React.useRef<Promise<GalleryTileMap | null> | null>(
+    null
+  )
   const hoveringRef = React.useRef(false)
   const lastPointerRef = React.useRef<PointerCoords | null>(null)
   const frameRef = React.useRef<number | null>(null)
@@ -317,10 +344,10 @@ function MosaicCell({
       onPointerDown={onPointerDown}
       onPointerUp={onPointerUp}
       onClick={() => {
+        // Desktop click opens the zoom explorer (where clicking a tile then
+        // opens its source); touch opens it via the tap handler above.
         if (pointerTypeRef.current !== "mouse") return
-        if (hover) {
-          window.open(hover.tile.url, "_blank", "noopener,noreferrer")
-        }
+        onOpen()
       }}
     >
       {/* eslint-disable-next-line @next/next/no-img-element -- static baked asset, intrinsic-sized */}
@@ -356,7 +383,7 @@ function MosaicCell({
             </span>
           </div>
           <div className="mt-2 px-1 text-xs text-muted-foreground">
-            click to open
+            click to zoom in
           </div>
         </div>
       )}
@@ -364,136 +391,27 @@ function MosaicCell({
   )
 }
 
-// Mobile-friendly enlarged view. Double-tapping a gallery mosaic opens this
-// overlay; tapping or dragging across the enlarged image reveals the Knicks
-// source frame behind each region — the touch equivalent of the desktop hover.
-function MosaicLightbox({
+// Open one mosaic in the zoom explorer: pan/pinch to zoom and the composite
+// resolves into the real source photos that make it up. Replaces the old
+// tap-to-reveal lightbox — zooming in *is* the reveal, and clicking a tile opens
+// its source. The geometry is fetched lazily on open.
+function MosaicZoomLightbox({
   item,
   onClose,
 }: {
   item: GalleryIndexEntry
   onClose: () => void
 }) {
-  const [map, setMap] = React.useState<GalleryTileMap | null>(null)
-  const [hover, setHover] = React.useState<Hover | null>(null)
-  const wrapRef = React.useRef<HTMLDivElement | null>(null)
-
-  React.useEffect(() => {
-    let cancelled = false
-    void (async () => {
-      try {
-        const res = await fetch(item.tileMapSrc ?? tileMapUrlFor(item.src))
-        if (!res.ok) return
-        const data = (await res.json()) as GalleryTileMap
-        if (!cancelled) setMap(data)
-      } catch {
-        // Reveal is best-effort; the enlarged image still shows without it.
-      }
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [item.src, item.tileMapSrc])
-
-  // Lock background scroll while open and close on Escape.
-  React.useEffect(() => {
-    const prevOverflow = document.body.style.overflow
-    document.body.style.overflow = "hidden"
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose()
-    }
-    window.addEventListener("keydown", onKey)
-    return () => {
-      document.body.style.overflow = prevOverflow
-      window.removeEventListener("keydown", onKey)
-    }
-  }, [onClose])
-
-  const reveal = React.useCallback(
-    (coords: PointerCoords) => {
-      const node = wrapRef.current
-      if (!node || !map) return
-      const rect = node.getBoundingClientRect()
-      const fx = (coords.clientX - rect.left) / rect.width
-      const fy = (coords.clientY - rect.top) / rect.height
-      if (fx < 0 || fx > 1 || fy < 0 || fy > 1) return
-      const tile = tileAt(map, fx, fy)
-      setHover(tile ? { tile, fx, fy } : null)
-    },
-    [map]
-  )
-
+  const loadGeometry = React.useMemo(() => makeGeometryLoader(item), [item])
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4 font-sans backdrop-blur-sm"
-      onClick={onClose}
-    >
-      <button
-        type="button"
-        aria-label="Close enlarged view"
-        onClick={onClose}
-        className="absolute top-4 right-4 z-10 flex size-10 items-center justify-center rounded-full bg-white/10 text-white transition-colors hover:bg-white/20"
-      >
-        <X className="size-5" />
-      </button>
-
-      <div
-        ref={wrapRef}
-        className="relative touch-none"
-        style={{
-          width: `min(92vw, calc(85svh * ${item.w} / ${item.h}))`,
-          aspectRatio: `${item.w} / ${item.h}`,
-        }}
-        onClick={(e) => e.stopPropagation()}
-        onPointerDown={(e) => reveal({ clientX: e.clientX, clientY: e.clientY })}
-        onPointerMove={(e) => reveal({ clientX: e.clientX, clientY: e.clientY })}
-      >
-        {/* eslint-disable-next-line @next/next/no-img-element -- static baked asset */}
-        <img
-          src={item.src}
-          alt={item.alt}
-          draggable={false}
-          className="absolute inset-0 size-full rounded-lg object-cover select-none"
-        />
-
-        {hover && (
-          <div
-            className="absolute z-10 w-44 overflow-hidden rounded-2xl border bg-white p-2 shadow-lg sm:w-56"
-            style={{
-              left: `${hover.fx * 100}%`,
-              top: `${hover.fy * 100}%`,
-              transform: `translate(${
-                hover.fx > 0.5 ? "calc(-100% - 16px)" : "16px"
-              }, ${hover.fy > 0.5 ? "calc(-100% - 16px)" : "16px"})`,
-            }}
-          >
-            <a
-              href={hover.tile.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              onClick={(e) => e.stopPropagation()}
-              className="block"
-            >
-              <div className="relative aspect-square w-full overflow-hidden rounded-xl bg-white">
-                <HoverPreviewImage
-                  key={previewUrlFor(hover.tile)}
-                  tile={hover.tile}
-                />
-                <span className="absolute inset-x-0 bottom-0 line-clamp-2 bg-black/70 px-2 py-1.5 text-left text-xs font-medium text-white">
-                  {hover.tile.title}
-                </span>
-              </div>
-            </a>
-          </div>
-        )}
-      </div>
-
-      <p className="pointer-events-none absolute inset-x-0 bottom-[calc(env(safe-area-inset-bottom,0px)+1rem)] text-center text-sm text-white/70">
-        {map
-          ? "Tap or drag across the mosaic to reveal the footage frames"
-          : "Loading…"}
-      </p>
-    </div>
+    <MosaicZoomViewer
+      baseSrc={item.src}
+      frameW={item.w}
+      frameH={item.h}
+      alt={item.alt}
+      loadGeometry={loadGeometry}
+      onClose={onClose}
+    />
   )
 }
 
@@ -554,7 +472,7 @@ export function MosaicGallery({ className }: { className?: string }) {
       </div>
 
       {lightboxItem && (
-        <MosaicLightbox
+        <MosaicZoomLightbox
           item={lightboxItem}
           onClose={() => setLightboxItem(null)}
         />
@@ -563,10 +481,10 @@ export function MosaicGallery({ className }: { className?: string }) {
   )
 }
 
-// A single baked mosaic (e.g. the New York page hero) with the same interaction
-// as the gallery: hover to reveal source frames on desktop, tap to open the
-// drag-to-reveal lightbox on touch. Width is capped so the rendered height fits
-// the viewport, leaving room for surrounding content.
+// A single baked mosaic (e.g. the New York page hero or a shared /m view). Hover
+// reveals source frames on desktop; clicking (or tapping on touch) opens the zoom
+// explorer where the mosaic resolves into its real source photos. Width is capped
+// so the rendered height fits the viewport, leaving room for surrounding content.
 export function SingleMosaic({
   entry,
   className,
@@ -581,15 +499,28 @@ export function SingleMosaic({
 
   return (
     <div
-      className={cn("w-full", maxViewportHeight != null && "mx-auto", className)}
+      className={cn(
+        "group relative w-full",
+        maxViewportHeight != null && "mx-auto",
+        className
+      )}
       style={
         maxViewportHeight != null
-          ? { maxWidth: `calc(${maxViewportHeight}svh * ${entry.w} / ${entry.h})` }
+          ? {
+              maxWidth: `calc(${maxViewportHeight}svh * ${entry.w} / ${entry.h})`,
+            }
           : undefined
       }
     >
       <MosaicCell item={entry} onOpen={() => setOpen(true)} />
-      {open && <MosaicLightbox item={entry} onClose={() => setOpen(false)} />}
+      {/* Decorative zoom affordance — the cell itself owns the click/tap. */}
+      <div className="pointer-events-none absolute right-3 bottom-3 z-20 flex items-center gap-1.5 rounded-full bg-black/55 px-3 py-1.5 text-xs font-medium text-white opacity-90 backdrop-blur-sm transition-opacity group-hover:opacity-100">
+        <Maximize2 className="size-3.5" />
+        Zoom in
+      </div>
+      {open && (
+        <MosaicZoomLightbox item={entry} onClose={() => setOpen(false)} />
+      )}
     </div>
   )
 }

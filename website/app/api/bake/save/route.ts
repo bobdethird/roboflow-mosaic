@@ -6,6 +6,7 @@ import type {
   GalleryTile,
   GalleryTileMap,
 } from "@/lib/gallery"
+import { validateEncodedGeometry } from "@/lib/mosaic-geometry"
 import { isLocalhostHost } from "@/lib/localhost-only"
 
 // Dev-only sink for the /bake harness: writes one baked mosaic's image + hover
@@ -25,6 +26,8 @@ type SaveBody = {
   rows: number
   grid: number[]
   tiles: GalleryTile[]
+  // Encoded per-tile zoom geometry (optional, written as foo.geometry.json).
+  geometry?: unknown
 }
 
 // Conservative filename allowlist so a name can't escape public/gallery.
@@ -74,6 +77,18 @@ export async function POST(request: Request) {
     JSON.stringify(tileMap)
   )
 
+  // Validate + write the zoom geometry beside the image, if provided.
+  let hasGeometry = false
+  if (body.geometry !== undefined) {
+    const geo = validateEncodedGeometry(body.geometry)
+    if (!geo) return new Response("Invalid geometry", { status: 400 })
+    await fs.writeFile(
+      path.join(dir, `${body.name}.geometry.json`),
+      JSON.stringify(geo)
+    )
+    hasGeometry = true
+  }
+
   const indexPath = path.join(dir, "index.json")
   let index: GalleryIndexEntry[] = []
   try {
@@ -87,6 +102,9 @@ export async function POST(request: Request) {
     w: body.w,
     h: body.h,
     alt: body.alt || body.name,
+    ...(hasGeometry
+      ? { geometrySrc: `/gallery/${body.name}.geometry.json` }
+      : {}),
   }
   const existing = index.findIndex((it) => it.name === body.name)
   if (existing >= 0) index[existing] = entry

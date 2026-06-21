@@ -85,6 +85,7 @@ export default async function SharedMosaicPage({
     name: id,
     src: `/m/${id}/image`,
     tileMapSrc: `/m/${id}/tilemap`,
+    geometrySrc: `/m/${id}/geometry`,
     w: row.w,
     h: row.h,
     alt: "A photo mosaic",
@@ -97,7 +98,7 @@ export default async function SharedMosaicPage({
           shared link still learns the tap-then-drag interaction, shown once. */}
       <MobileIntroAnnouncement
         cookieName="mosaic_share_intro_seen"
-        description="Tap the image once to open it, then drag your finger across it to reveal the photos that make it up."
+        description="Tap the image to open it, then pinch to zoom in — the mosaic resolves into the real photos that make it up."
       />
 
       <header className="flex flex-col gap-1 text-center">
@@ -105,7 +106,8 @@ export default async function SharedMosaicPage({
           A mosaic, made of moments
         </h1>
         <p className="text-sm text-muted-foreground">
-          Hover or drag across the image to reveal the photo behind each tile.
+          Hover to reveal a tile — or zoom in to watch it resolve into the real
+          photos behind it.
         </p>
       </header>
 

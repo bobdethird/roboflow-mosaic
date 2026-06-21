@@ -8,6 +8,7 @@ import {
   Copy,
   Download,
   Lock,
+  Maximize2,
   PanelRight,
   Share2,
   X,
@@ -34,6 +35,13 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { SiteCredit } from "@/components/site-credit"
 import { buildMosaicHitMap } from "@/lib/mosaic-hitmap"
+import {
+  buildMosaicGeometry,
+  encodeGeometry,
+  type MosaicGeometry,
+} from "@/lib/mosaic-geometry"
+import { MosaicZoomViewer } from "@/components/mosaic-zoom-viewer"
+import type { GalleryTile } from "@/lib/gallery"
 import {
   Sidebar,
   SidebarContent,
@@ -82,7 +90,11 @@ type ResolutionMode = keyof typeof RESOLUTION_MODES
 const RESOLUTION_MODE_ORDER: ResolutionMode[] = ["low", "medium", "high"]
 
 function densityForResolution(resolution: number, densityMin: number) {
-  return clampDensity(densityMin + DENSITY_MAX - resolution, densityMin, DENSITY_MAX)
+  return clampDensity(
+    densityMin + DENSITY_MAX - resolution,
+    densityMin,
+    DENSITY_MAX
+  )
 }
 
 function resolutionForDensity(density: number, densityMin: number) {
@@ -260,11 +272,16 @@ function MobileActionBar({
   // Admin "Publish & share" rides in the mobile bottom bar too. When it's shown,
   // Save collapses to a compact icon button to make room beside it. The stacked
   // controls above suppress their own publish button so it isn't duplicated.
-  const showPublish = Boolean(controls.showPublish) && Boolean(controls.hasMosaic)
+  const showPublish =
+    Boolean(controls.showPublish) && Boolean(controls.hasMosaic)
 
   return (
     <div className="fixed inset-x-3 bottom-[calc(env(safe-area-inset-bottom,0px)+0.75rem)] z-30 flex flex-col gap-2 rounded-2xl border bg-background/95 p-3 shadow-lg backdrop-blur sm:inset-x-4">
-      <MosaicActionControls {...controls} showSave={false} showPublish={false} />
+      <MosaicActionControls
+        {...controls}
+        showSave={false}
+        showPublish={false}
+      />
       <div className="flex gap-2">
         {controls.hasMosaic && (
           <Button
@@ -385,6 +402,11 @@ type MosaicTileMap = {
   offsets: Int32Array
   tileIds: string[]
   extent: number
+  // Per-cell rotation + frame-space cell size, needed to build the zoom geometry.
+  // Optional so a mosaic restored from an older (v2) cache still hovers; it just
+  // can't zoom until regenerated.
+  angles?: Float32Array
+  tileSize?: number
 }
 
 type CachedMosaicBase = {
@@ -411,6 +433,9 @@ type CachedMosaicBase = {
 type CachedMosaic =
   | (CachedMosaicBase & { version: 1 })
   | (CachedMosaicBase & { version: 2; tileMap: MosaicTileMap })
+  // v3 adds the zoom geometry (angles + tileSize) inside tileMap. v2 entries
+  // still restore + hover; they just lack the zoom overlay until regenerated.
+  | (CachedMosaicBase & { version: 3; tileMap: MosaicTileMap })
 
 type HoveredTile = {
   cell: number
@@ -869,7 +894,8 @@ export function CanvasHero({
         const currentVersion = await fetchLibraryVersion(bucket)
         if (cancelled) return
         const stale =
-          (currentVersion !== null && cached.libraryVersion !== currentVersion) ||
+          (currentVersion !== null &&
+            cached.libraryVersion !== currentVersion) ||
           cached.maxTileReuse !== maxTileReuse
 
         const referenceUrl = URL.createObjectURL(cached.referenceBlob)
@@ -901,7 +927,9 @@ export function CanvasHero({
         }
 
         setHasMosaic(true)
-        setTileMap(cached.version === 2 ? cached.tileMap : null)
+        setTileMap(
+          cached.version === 2 || cached.version === 3 ? cached.tileMap : null
+        )
         setRestoredMosaicUrl(URL.createObjectURL(cached.mosaicBlob))
       } catch {
         // Cache access is best-effort; the app still works without persistence.
@@ -937,6 +965,50 @@ export function CanvasHero({
 
   const showFullHoverImage =
     hoveredTileKey !== null && fullHoverTileKey === hoveredTileKey
+
+  // Resolve a library id into the GalleryTile shown in hover/zoom. Shared by the
+  // publish hit-map, the published zoom geometry, and the live zoom overlay so
+  // all three point at identical urls.
+  const resolveTile = React.useCallback(
+    (id: string): GalleryTile => {
+      const item = libraryById.get(id)
+      return {
+        url: item?.fullUrl ?? item?.url ?? thumbUrl(bucket, id),
+        previewUrl: item?.url ?? thumbUrl(bucket, id),
+        title: item?.galleryTitle ?? item?.gallery ?? id,
+      }
+    },
+    [libraryById, bucket]
+  )
+
+  // Zoom explorer state. Opening snapshots the current canvas as the base image
+  // and builds the in-memory geometry so the overlay can repaint the real photos.
+  const [zoomState, setZoomState] = React.useState<{
+    baseSrc: string
+    geometry: MosaicGeometry | null
+  } | null>(null)
+
+  const openZoom = React.useCallback(() => {
+    const canvas = mosaicCanvasRef.current
+    const map = tileMap
+    const fr = frame
+    if (!canvas || !fr || !hasMosaic) return
+    const baseSrc = canvas.toDataURL("image/jpeg", 0.9)
+    const geometry =
+      map && map.angles && map.tileSize
+        ? buildMosaicGeometry({
+            frameW: fr.w,
+            frameH: fr.h,
+            tileSize: map.tileSize,
+            centers: map.centers,
+            angles: map.angles,
+            assignment: map.assignment,
+            tileIds: map.tileIds,
+            resolveTile,
+          })
+        : null
+    setZoomState({ baseSrc, geometry })
+  }, [tileMap, frame, hasMosaic, resolveTile])
 
   const handleSetReference = React.useCallback(
     async (file: File) => {
@@ -1067,6 +1139,8 @@ export function CanvasHero({
         offsets: cm.offsets,
         tileIds: [...ids],
         extent: cm.extent,
+        angles: cm.angles,
+        tileSize: cm.tileSize,
       }
       setTileMap(nextTileMap)
       setHasMosaic(true)
@@ -1084,7 +1158,7 @@ export function CanvasHero({
               return
             }
             await writeCachedMosaic(bucket, {
-              version: 2,
+              version: 3,
               reference: {
                 name: ref.name,
                 width: ref.width,
@@ -1129,8 +1203,7 @@ export function CanvasHero({
       const blob = await canvasToBlob(canvas)
       if (!blob) return
       const url = URL.createObjectURL(blob)
-      const base =
-        reference?.name.replace(/\.[^./\\]+$/, "").trim() || bucket
+      const base = reference?.name.replace(/\.[^./\\]+$/, "").trim() || bucket
       const a = document.createElement("a")
       a.href = url
       a.download = `${base}-mosaic.png`
@@ -1162,24 +1235,30 @@ export function CanvasHero({
         assignment: map.assignment,
         tileIds: map.tileIds,
         hitCellPx: SHARE_HIT_CELL_PX,
-        resolveTile: (id) => {
-          const item = libraryById.get(id)
-          return {
-            url: item?.fullUrl ?? item?.url ?? thumbUrl(bucket, id),
-            previewUrl: item?.url ?? thumbUrl(bucket, id),
-            title: item?.galleryTitle ?? item?.gallery ?? id,
-          }
-        },
+        resolveTile,
       })
       const shot = await canvasToShareImage(canvas)
       if (!shot) throw new Error("Could not capture the mosaic image.")
 
       const fd = new FormData()
       fd.append("image", shot.blob, "mosaic.jpg")
-      fd.append(
-        "tilemap",
-        JSON.stringify({ w: shot.w, h: shot.h, ...hit })
-      )
+      fd.append("tilemap", JSON.stringify({ w: shot.w, h: shot.h, ...hit }))
+      // Per-tile zoom geometry. Resolution-independent (frame coords), so the
+      // downscaled share image and the geometry stay decoupled. Omitted when an
+      // older cached mosaic lacks angles — it still publishes + hovers.
+      if (map.angles && map.tileSize) {
+        const geometry = buildMosaicGeometry({
+          frameW: fr.w,
+          frameH: fr.h,
+          tileSize: map.tileSize,
+          centers: map.centers,
+          angles: map.angles,
+          assignment: map.assignment,
+          tileIds: map.tileIds,
+          resolveTile,
+        })
+        fd.append("geometry", JSON.stringify(encodeGeometry(geometry)))
+      }
       fd.append("collection", bucket)
       fd.append("w", String(shot.w))
       fd.append("h", String(shot.h))
@@ -1200,13 +1279,11 @@ export function CanvasHero({
       const { url } = (await res.json()) as { url: string }
       setShareUrl(new URL(url, window.location.origin).toString())
     } catch (err) {
-      setShareError(
-        err instanceof Error ? err.message : "Publish failed."
-      )
+      setShareError(err instanceof Error ? err.message : "Publish failed.")
     } finally {
       setIsPublishing(false)
     }
-  }, [tileMap, frame, hasMosaic, isPublishing, libraryById, bucket])
+  }, [tileMap, frame, hasMosaic, isPublishing, resolveTile, bucket])
 
   React.useEffect(() => {
     if (!restoredMosaicUrl || !frame) return
@@ -1398,6 +1475,17 @@ export function CanvasHero({
         />
       )}
 
+      {zoomState && frame && (
+        <MosaicZoomViewer
+          baseSrc={zoomState.baseSrc}
+          frameW={frame.w}
+          frameH={frame.h}
+          alt="Your mosaic"
+          geometry={zoomState.geometry}
+          onClose={() => setZoomState(null)}
+        />
+      )}
+
       <section className="relative min-h-svh min-w-0 flex-1 overflow-x-hidden bg-background select-none xl:h-svh xl:overflow-hidden">
         {/* Desktop: a compact icon trigger in the corner. */}
         <ControlsSidebarTrigger
@@ -1425,7 +1513,7 @@ export function CanvasHero({
 
         <div
           className={cn(
-            "box-border grid min-h-svh w-full grid-cols-1 gap-8 px-3 py-4 sm:px-4 max-md:flex max-md:flex-col max-md:gap-0 max-md:pt-[calc(env(safe-area-inset-top,0px)+1rem+1.5rem+1rem)] md:p-6 xl:h-svh xl:items-stretch xl:gap-8 xl:p-8 xl:[grid-template-columns:minmax(0,1fr)_minmax(0,var(--mosaic-col-max))_minmax(0,1fr)]",
+            "box-border grid min-h-svh w-full grid-cols-1 gap-8 px-3 py-4 max-md:flex max-md:flex-col max-md:gap-0 max-md:pt-[calc(env(safe-area-inset-top,0px)+1rem+1.5rem+1rem)] sm:px-4 md:p-6 xl:h-svh xl:[grid-template-columns:minmax(0,1fr)_minmax(0,var(--mosaic-col-max))_minmax(0,1fr)] xl:items-stretch xl:gap-8 xl:p-8",
             // Reserve room for the fixed mobile bottom bar: a tall control bar
             // once a reference exists, just the Controls button before that.
             reference
@@ -1433,7 +1521,9 @@ export function CanvasHero({
               : "max-md:pb-[calc(env(safe-area-inset-bottom,0px)+4.5rem)]"
           )}
           style={
-            { "--mosaic-col-max": MOSAIC_CENTER_COLUMN_MAX } as React.CSSProperties
+            {
+              "--mosaic-col-max": MOSAIC_CENTER_COLUMN_MAX,
+            } as React.CSSProperties
           }
         >
           <div className="z-20 flex min-w-0 flex-col items-start max-md:absolute max-md:inset-x-3 max-md:top-[calc(env(safe-area-inset-top,0px)+1rem)] sm:max-md:inset-x-4">
@@ -1506,8 +1596,23 @@ export function CanvasHero({
                     </div>
                   </div>
                 )}
+                {hasMosaic && (
+                  <button
+                    type="button"
+                    aria-label="Zoom into the mosaic"
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      openZoom()
+                    }}
+                    className="absolute right-3 bottom-3 z-20 flex items-center gap-1.5 rounded-full bg-black/55 px-3 py-1.5 text-xs font-medium text-white opacity-90 backdrop-blur-sm transition-opacity hover:opacity-100"
+                  >
+                    <Maximize2 className="size-3.5" />
+                    Zoom in
+                  </button>
+                )}
                 {!hasMosaic && !isGenerating && (
-                  <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-1.5 text-center text-sm text-muted-foreground leading-tight">
+                  <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-1.5 text-center text-sm leading-tight text-muted-foreground">
                     <span className="font-medium text-foreground">
                       image added!
                     </span>
@@ -1562,7 +1667,7 @@ export function CanvasHero({
             </SidebarGroup>
           )}
 
-          {((!hideCollectionLabel || onSwitchBucket) || !hideIntroCopy) && (
+          {(!hideCollectionLabel || onSwitchBucket || !hideIntroCopy) && (
             <SidebarSeparator className="mx-0" />
           )}
 
@@ -1583,9 +1688,7 @@ export function CanvasHero({
             </SidebarGroupContent>
           </SidebarGroup>
 
-          {reference && (
-            <SidebarSeparator className="mx-0 hidden md:block" />
-          )}
+          {reference && <SidebarSeparator className="mx-0 hidden md:block" />}
 
           {reference && (
             <SidebarGroup className="hidden gap-3 p-0 md:flex">
