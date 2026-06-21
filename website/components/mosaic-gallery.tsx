@@ -383,7 +383,7 @@ function MosaicCell({
             </span>
           </div>
           <div className="mt-2 px-1 text-xs text-muted-foreground">
-            click to zoom in
+            click to zoom into mosaic
           </div>
         </div>
       )}

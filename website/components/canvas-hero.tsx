@@ -806,6 +806,9 @@ export function CanvasHero({
   // Remember the last pointer type so touch interactions reveal tiles by
   // dragging (like the home gallery) instead of opening the source image.
   const pointerTypeRef = React.useRef<string>("mouse")
+  // Active touch points on the flat mosaic. One finger drags to reveal tiles;
+  // a second finger is a pinch, which opens the zoom explorer instead.
+  const activePointersRef = React.useRef<Set<number>>(new Set())
   const [restoredMosaicUrl, setRestoredMosaicUrl] = React.useState<
     string | null
   >(null)
@@ -1382,6 +1385,9 @@ export function CanvasHero({
   const handleTilePointerMove = React.useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
       pointerTypeRef.current = e.pointerType
+      // Mid-pinch (two fingers): the zoom explorer is opening, so don't also
+      // reveal a tile underneath.
+      if (activePointersRef.current.size >= 2) return
       const next = tileFromPointer(e)
       setHoveredTile((prev) => {
         if (!next) return prev === null ? prev : null
@@ -1395,25 +1401,43 @@ export function CanvasHero({
   )
 
   // Touch has no hover, so dragging a finger across the mosaic reveals the tile
-  // under it (matching the home gallery). Reveal starts on the initial touch.
+  // under it (matching the home gallery). A second finger is a pinch, which
+  // opens the zoom explorer (where pinch/pan actually zoom) — taps never zoom.
   const handleTilePointerDown = React.useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
       pointerTypeRef.current = e.pointerType
       if (e.pointerType === "mouse") return
+      activePointersRef.current.add(e.pointerId)
+      if (activePointersRef.current.size >= 2) {
+        // Pinch: hand off to the zoom explorer. Clear the tracked pointers since
+        // the overlay swallows their pointerup/cancel events from here on.
+        activePointersRef.current.clear()
+        setHoveredTile(null)
+        openZoom()
+        return
+      }
       const next = tileFromPointer(e)
       setHoveredTile((prev) => {
         if (!next) return prev === null ? prev : null
         return { ...next, hoverSerial: ++hoverSerialRef.current }
       })
     },
-    [tileFromPointer]
+    [tileFromPointer, openZoom]
+  )
+
+  // Drop a finger from the pinch tracker when it lifts or is cancelled.
+  const handleTilePointerEnd = React.useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      activePointersRef.current.delete(e.pointerId)
+    },
+    []
   )
 
   const handleTileClick = React.useCallback(() => {
-    // Desktop: clicking anywhere on the mosaic opens the zoom explorer (matching
-    // the published mosaics), where clicking a tile then opens its source. On
-    // touch a tap reveals the tile under the finger (handled on pointer events)
-    // and zooming is reached via the badge button + pinch, so taps never zoom.
+    // Desktop only: clicking anywhere on the mosaic opens the zoom explorer
+    // (matching the published mosaics), where clicking a tile then opens its
+    // source. On touch a tap just reveals the tile under the finger (handled on
+    // pointer events) and zooming is reached by pinching, so taps never zoom.
     if (pointerTypeRef.current !== "mouse") return
     openZoom()
   }, [openZoom])
@@ -1550,7 +1574,10 @@ export function CanvasHero({
                 }}
                 onPointerDown={handleTilePointerDown}
                 onPointerMove={handleTilePointerMove}
-                onPointerLeave={() => {
+                onPointerUp={handleTilePointerEnd}
+                onPointerCancel={handleTilePointerEnd}
+                onPointerLeave={(e) => {
+                  handleTilePointerEnd(e)
                   setHoveredTile(null)
                   setPointerOverImage(false)
                 }}
@@ -1603,20 +1630,17 @@ export function CanvasHero({
                     </div>
                   </div>
                 )}
+                {/* Decorative hint only — the image itself owns the gesture
+                    (click to zoom on desktop, pinch to zoom on touch), so this
+                    must never intercept taps/drags meant for tile reveal. */}
                 {hasMosaic && !pointerOverImage && (
-                  <button
-                    type="button"
-                    aria-label="Zoom into the mosaic"
-                    onPointerDown={(e) => e.stopPropagation()}
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      openZoom()
-                    }}
-                    className="absolute right-3 bottom-3 z-20 flex items-center gap-1.5 rounded-full bg-black/55 px-3 py-1.5 text-xs font-medium text-white opacity-90 backdrop-blur-sm transition-opacity hover:opacity-100"
+                  <div
+                    aria-hidden="true"
+                    className="pointer-events-none absolute right-3 bottom-3 z-20 flex items-center gap-1.5 rounded-full bg-black/55 px-3 py-1.5 text-xs font-medium text-white opacity-90 backdrop-blur-sm"
                   >
                     <Maximize2 className="size-3.5" />
                     click image to zoom in
-                  </button>
+                  </div>
                 )}
                 {!hasMosaic && !isGenerating && (
                   <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-1.5 text-center text-sm leading-tight text-muted-foreground">
