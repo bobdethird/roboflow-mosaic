@@ -39,8 +39,6 @@ export default function Page() {
           made this city what it is. 
         </p>
 
-        <NewYorkMosaic />
-
         <Button
           asChild
           className="mt-1 h-10 self-center rounded-none border-0 px-5 text-sm"
@@ -50,6 +48,8 @@ export default function Page() {
             <ArrowRight />
           </a>
         </Button>
+
+        <NewYorkMosaic />
       </div>
     </main>
   )
