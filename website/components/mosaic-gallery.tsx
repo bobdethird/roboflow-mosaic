@@ -513,8 +513,10 @@ export function SingleMosaic({
       }
     >
       <MosaicCell item={entry} onOpen={() => setOpen(true)} />
-      {/* Decorative zoom affordance — the cell itself owns the click/tap. */}
-      <div className="pointer-events-none absolute right-3 bottom-3 z-20 flex items-center gap-1.5 rounded-full bg-black/55 px-3 py-1.5 text-xs font-medium text-white opacity-90 backdrop-blur-sm transition-opacity group-hover:opacity-100">
+      {/* Decorative zoom affordance — the cell itself owns the click/tap.
+          font-sans keeps it in the UI font even when an ancestor sets a
+          decorative typeface (e.g. the New York page's handwriting font). */}
+      <div className="pointer-events-none absolute right-3 bottom-3 z-20 flex items-center gap-1.5 rounded-full bg-black/55 px-3 py-1.5 font-sans text-xs font-medium text-white opacity-90 backdrop-blur-sm transition-opacity group-hover:opacity-100">
         <Maximize2 className="size-3.5" />
         click image to zoom in
       </div>
