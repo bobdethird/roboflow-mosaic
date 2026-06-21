@@ -123,7 +123,7 @@ export default async function SharedMosaicPage({
             </a>
           </Button>
           <Button asChild>
-            <a href="https://www.knicksmosaic.com/knicks-mosaic">
+            <a href="https://www.knicksmosaic.com/">
               Make your own mosaic →
             </a>
           </Button>
