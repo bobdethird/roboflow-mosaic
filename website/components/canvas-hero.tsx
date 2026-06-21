@@ -785,6 +785,11 @@ export function CanvasHero({
   const [tileCount, setTileCount] = React.useState(0)
   const [tileMap, setTileMap] = React.useState<MosaicTileMap | null>(null)
   const [hoveredTile, setHoveredTile] = React.useState<HoveredTile | null>(null)
+  // Whether a mouse is currently over the mosaic. Drives the "click image to zoom
+  // in" badge: it shows only when the cursor is off the image (and always on
+  // touch, where there's no hover), so it never flickers as the cursor moves
+  // between cells the way `hoveredTile` does.
+  const [pointerOverImage, setPointerOverImage] = React.useState(false)
   const [fullHoverTileKey, setFullHoverTileKey] = React.useState<string | null>(
     null
   )
@@ -1404,17 +1409,14 @@ export function CanvasHero({
     [tileFromPointer]
   )
 
-  const handleTileClick = React.useCallback(
-    (e: React.MouseEvent<HTMLDivElement>) => {
-      // On touch, a tap reveals the tile (handled on pointer events) rather than
-      // opening the source image; only a real mouse click opens it.
-      if (pointerTypeRef.current !== "mouse") return
-      const tile = hoveredTile ?? tileFromPointer(e)
-      if (!tile) return
-      window.open(tile.openUrl, "_blank", "noopener,noreferrer")
-    },
-    [hoveredTile, tileFromPointer]
-  )
+  const handleTileClick = React.useCallback(() => {
+    // Desktop: clicking anywhere on the mosaic opens the zoom explorer (matching
+    // the published mosaics), where clicking a tile then opens its source. On
+    // touch a tap reveals the tile under the finger (handled on pointer events)
+    // and zooming is reached via the badge button + pinch, so taps never zoom.
+    if (pointerTypeRef.current !== "mouse") return
+    openZoom()
+  }, [openZoom])
 
   // Usage stats for the current mosaic: how many distinct library photos ended
   // up placed, and — for frame-sampled collections (knicks) — how many distinct
@@ -1543,9 +1545,15 @@ export function CanvasHero({
                   maxWidth: `calc(${MOSAIC_VIEWPORT_HEIGHT_PCT}svh * ${frame.w} / ${frame.h})`,
                   aspectRatio: `${frame.w} / ${frame.h}`,
                 }}
+                onPointerEnter={(e) => {
+                  if (e.pointerType === "mouse") setPointerOverImage(true)
+                }}
                 onPointerDown={handleTilePointerDown}
                 onPointerMove={handleTilePointerMove}
-                onPointerLeave={() => setHoveredTile(null)}
+                onPointerLeave={() => {
+                  setHoveredTile(null)
+                  setPointerOverImage(false)
+                }}
                 onClick={handleTileClick}
               >
                 <canvas
@@ -1590,12 +1598,12 @@ export function CanvasHero({
                     </div>
                     <div className="mt-2 px-1 text-xs text-muted-foreground">
                       <span className="text-muted-foreground">
-                        click to open
+                        click to zoom in
                       </span>
                     </div>
                   </div>
                 )}
-                {hasMosaic && (
+                {hasMosaic && !pointerOverImage && (
                   <button
                     type="button"
                     aria-label="Zoom into the mosaic"
@@ -1607,7 +1615,7 @@ export function CanvasHero({
                     className="absolute right-3 bottom-3 z-20 flex items-center gap-1.5 rounded-full bg-black/55 px-3 py-1.5 text-xs font-medium text-white opacity-90 backdrop-blur-sm transition-opacity hover:opacity-100"
                   >
                     <Maximize2 className="size-3.5" />
-                    Zoom in
+                    click image to zoom in
                   </button>
                 )}
                 {!hasMosaic && !isGenerating && (
