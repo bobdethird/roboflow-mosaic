@@ -32,6 +32,7 @@ import {
   makeReferenceFromFile,
   type ReferenceImage,
 } from "@/components/reference-image"
+import { NewYorkMosaicFormLink } from "@/components/new-york-mosaic-form-link"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { buildMosaicHitMap } from "@/lib/mosaic-hitmap"
@@ -1602,10 +1603,10 @@ export function CanvasHero({
               asChild
               className="h-auto p-0 underline md:hidden"
             >
-              <Link href="/newyork-mosaic">
+              <NewYorkMosaicFormLink source="canvas-mobile">
                 new york city mosaic
                 <ArrowRight />
-              </Link>
+              </NewYorkMosaicFormLink>
             </Button>
           </div>
 
@@ -1801,13 +1802,13 @@ export function CanvasHero({
               collaborative New York mosaic. */}
           <SidebarGroup className="hidden p-0 md:flex">
             <SidebarGroupContent>
-              <Link
-                href="/newyork-mosaic"
+              <NewYorkMosaicFormLink
+                source="canvas-sidebar"
                 className="group/contribute inline-flex items-center gap-1.5 text-sm text-muted-foreground underline underline-offset-4 transition-colors hover:text-foreground"
               >
                 contribute to the world&apos;s largest new york city mosaic
                 <ArrowRight className="size-4 shrink-0 transition-transform duration-200 group-hover/contribute:translate-x-0.5" />
-              </Link>
+              </NewYorkMosaicFormLink>
             </SidebarGroupContent>
           </SidebarGroup>
         </SidebarContent>

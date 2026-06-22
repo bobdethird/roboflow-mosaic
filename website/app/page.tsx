@@ -1,5 +1,3 @@
-import Link from "next/link"
-
 import { SiteCredit } from "@/components/site-credit"
 import { MosaicGallery } from "@/components/mosaic-gallery"
 import {
@@ -9,6 +7,7 @@ import {
 } from "@/components/tile-hint"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { HomeCta } from "@/components/home-cta"
+import { NewYorkMosaicFormLink } from "@/components/new-york-mosaic-form-link"
 
 export default function Page() {
   return (
@@ -27,12 +26,12 @@ export default function Page() {
           NEW YORK OR NOWHERE
         </h1>
         <p className="max-w-lg self-center text-center font-sans text-sm leading-[1.80] text-pretty text-foreground sm:text-base md:self-end md:text-right">
-          <Link
-            href="/newyork-mosaic"
+          <NewYorkMosaicFormLink
+            source="home-intro"
             className="underline underline-offset-4 transition-colors hover:text-foreground"
           >
             the whole is greater than the sum of its parts
-          </Link>
+          </NewYorkMosaicFormLink>
           <span className="mt-6 block md:mt-8 lg:mt-10">
             New York, and especially the Knicks, are a beautiful reflection
             of this theme. The melting pot of backgrounds, experiences, and

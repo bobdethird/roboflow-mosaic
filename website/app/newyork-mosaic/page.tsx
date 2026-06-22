@@ -3,10 +3,8 @@ import { ArrowLeft, ArrowRight } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { NewYorkMosaic } from "@/components/newyork-mosaic"
+import { NewYorkMosaicFormLink } from "@/components/new-york-mosaic-form-link"
 import { ThemeToggle } from "@/components/theme-toggle"
-
-const FORM_URL =
-  "https://docs.google.com/forms/d/e/1FAIpQLSfPRaVa9D3Ex0U6sF0G1VUckbJd41X1-8inZ_0oknivex9gRw/viewform"
 
 export default function Page() {
   return (
@@ -43,10 +41,10 @@ export default function Page() {
           asChild
           className="mt-1 h-10 self-center rounded-none border-0 px-5 text-sm"
         >
-          <a href={FORM_URL} target="_blank" rel="noopener noreferrer">
+          <NewYorkMosaicFormLink source="mosaic-page">
             upload your photos
             <ArrowRight />
-          </a>
+          </NewYorkMosaicFormLink>
         </Button>
 
         <NewYorkMosaic />
