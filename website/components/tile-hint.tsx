@@ -25,22 +25,15 @@ function hasCookie(name: string) {
 }
 
 const INTRO_COOKIE_NAME = "mosaic_intro_seen"
-// Below this width counts as "mobile/tablet" — matches the xl breakpoint the
+// Below this width counts as "mobile/tablet" - matches the xl breakpoint the
 // other hints use to split touch screens from the wide desktop gutter.
 const MOBILE_MEDIA_QUERY = "(max-width: 1279px)"
 
 const INTRO_DEFAULT_DESCRIPTION =
   "Tap a picture to open it, then drag your finger across it to reveal the smaller photos that make up the whole."
 
-// One-time mobile-only welcome modal. The first time someone opens the site on a
-// phone/tablet, it explains the core interaction (open an image, then drag to
-// reveal the smaller photos). Dismissing it sets a cookie so it never returns,
-// and it's gated on the actual viewport so a desktop visit won't silently burn
-// the cookie before the visitor ever sees it on mobile. Desktop is untouched.
-//
-// `cookieName` lets a different surface gate its own first-visit (e.g. a shared
-// /m/<id> page, so a link recipient who never saw the home intro still gets it);
-// `description` tailors the copy. Both default to the home-page behavior.
+// One-time mobile-only welcome modal for surfaces that still need an intro.
+// The homepage intentionally no longer mounts this component.
 export function MobileIntroAnnouncement({
   cookieName = INTRO_COOKIE_NAME,
   description = INTRO_DEFAULT_DESCRIPTION,
@@ -54,7 +47,7 @@ export function MobileIntroAnnouncement({
     if (hasCookie(cookieName)) return
     if (!window.matchMedia(MOBILE_MEDIA_QUERY).matches) return
     // Client-only check (cookie + viewport) that must run post-mount to avoid a
-    // hydration mismatch — a deliberate, one-shot reveal, not a cascading update.
+    // hydration mismatch - a deliberate, one-shot reveal, not a cascading update.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setVisible(true)
   }, [cookieName])

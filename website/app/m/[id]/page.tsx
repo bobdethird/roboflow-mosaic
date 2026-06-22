@@ -93,8 +93,8 @@ export default async function SharedMosaicPage({
   return (
     <main className="mx-auto flex min-h-svh max-w-5xl flex-col gap-6 px-4 py-8 font-sans sm:py-12">
       {/* First-visit, mobile-only hint for shared-link recipients. Its own cookie
-          (independent of the home intro) so someone arriving straight from a
-          shared link still learns the tap-then-drag interaction, shown once. */}
+          (independent of the removed home intro) so someone arriving straight
+          from a shared link still learns the tap-then-drag interaction, shown once. */}
       <MobileIntroAnnouncement
         cookieName="mosaic_share_intro_seen"
         description="Tap the image to open it, then pinch to zoom in — the mosaic resolves into the real photos that make it up."

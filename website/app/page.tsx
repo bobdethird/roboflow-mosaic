@@ -1,10 +1,6 @@
 import { SiteCredit } from "@/components/site-credit"
 import { MosaicGallery } from "@/components/mosaic-gallery"
-import {
-  TileHint,
-  MobileTileHint,
-  MobileIntroAnnouncement,
-} from "@/components/tile-hint"
+import { TileHint, MobileTileHint } from "@/components/tile-hint"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { HomeCta } from "@/components/home-cta"
 import { NewYorkMosaicFormLink } from "@/components/new-york-mosaic-form-link"
@@ -16,9 +12,6 @@ export default function Page() {
       style={{ fontFamily: "var(--font-mean-hand)" }}
     >
       <ThemeToggle />
-
-      {/* First-visit mobile welcome explaining the drag-to-reveal interaction. */}
-      <MobileIntroAnnouncement />
 
       {/* Hero title + small intro. */}
       <header className="flex w-full max-w-7xl flex-col items-center gap-4 md:flex-row md:items-end md:justify-between md:gap-8">
