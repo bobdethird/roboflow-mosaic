@@ -2,6 +2,7 @@
 
 import * as React from "react"
 import Link from "next/link"
+import { track } from "@vercel/analytics"
 import {
   ArrowLeft,
   ArrowRight,
@@ -89,6 +90,10 @@ const RESOLUTION_MODES = {
 type ResolutionMode = keyof typeof RESOLUTION_MODES
 
 const RESOLUTION_MODE_ORDER: ResolutionMode[] = ["low", "medium", "high"]
+const MOSAIC_GENERATE_BUTTON_EVENT = "Mosaic Generate Button Clicked"
+const MOSAIC_SHARE_BUTTON_EVENT = "Mosaic Share Button Clicked"
+
+type MosaicActionSource = "desktop-sidebar" | "mobile-bottom-bar"
 
 function densityForResolution(resolution: number, densityMin: number) {
   return clampDensity(
@@ -151,6 +156,8 @@ function ControlsSidebarTrigger({
 // Resolution presets + the primary Generate/Save actions. Shared between the
 // desktop sidebar and the mobile bottom bar so both stay in sync.
 function MosaicActionControls({
+  collection,
+  source,
   resolutionMode,
   onSelectMode,
   onGenerate,
@@ -165,9 +172,11 @@ function MosaicActionControls({
   isPublishing = false,
   className,
 }: {
+  collection: MosaicBucket
+  source: MosaicActionSource
   resolutionMode: ResolutionMode
   onSelectMode: (mode: ResolutionMode) => void
-  onGenerate: () => void
+  onGenerate: (source: MosaicActionSource) => void
   isGenerating: boolean
   hasMosaic: boolean
   progressPct: number
@@ -177,7 +186,7 @@ function MosaicActionControls({
   // Whether to surface the "Publish & share" action (shown once a mosaic
   // exists). Open to everyone; the share route enforces the rate limits.
   showPublish?: boolean
-  onPublish?: () => void
+  onPublish?: (source: MosaicActionSource) => void
   isPublishing?: boolean
   className?: string
 }) {
@@ -203,7 +212,18 @@ function MosaicActionControls({
         ))}
       </div>
 
-      <Button onClick={() => void onGenerate()} disabled={generateDisabled}>
+      <Button
+        onClick={() => {
+          track(MOSAIC_GENERATE_BUTTON_EVENT, {
+            action: hasMosaic ? "regenerate" : "generate",
+            collection,
+            resolution: resolutionMode,
+            source,
+          })
+          void onGenerate(source)
+        }}
+        disabled={generateDisabled}
+      >
         {isGenerating
           ? `Generating ${progressPct.toFixed(1)}%`
           : hasMosaic
@@ -223,7 +243,7 @@ function MosaicActionControls({
       {showPublish && hasMosaic && (
         <Button
           variant="outline"
-          onClick={() => void onPublish?.()}
+          onClick={() => void onPublish?.(source)}
           disabled={isGenerating || isPublishing}
         >
           <Share2 />
@@ -302,7 +322,7 @@ function MobileActionBar({
           <Button
             variant="outline"
             className="flex-1"
-            onClick={() => void controls.onPublish?.()}
+            onClick={() => void controls.onPublish?.("mobile-bottom-bar")}
             disabled={controls.isGenerating || controls.isPublishing}
           >
             <Share2 />
@@ -708,7 +728,12 @@ function ShareResultDialog({
                   type="button"
                   variant="ghost"
                   className="flex-1"
-                  onClick={() => void navigator.share?.({ url: url ?? "" })}
+                  onClick={() => {
+                    track(MOSAIC_SHARE_BUTTON_EVENT, {
+                      button: "native-share",
+                    })
+                    void navigator.share?.({ url: url ?? "" })
+                  }}
                 >
                   <Share2 />
                   Share…
@@ -1264,11 +1289,16 @@ export function CanvasHero({
   // Publish the current mosaic to a shareable /m/<id> link. Builds the same
   // hover hit-map the gallery uses, captures the canvas as a JPEG, and posts
   // both to the share route, which persists them and returns the link.
-  const handlePublish = React.useCallback(async () => {
+  const handlePublish = React.useCallback(async (source: MosaicActionSource) => {
     const canvas = mosaicCanvasRef.current
     const map = tileMap
     const fr = frame
     if (!canvas || !map || !fr || !hasMosaic || isPublishing) return
+    track(MOSAIC_SHARE_BUTTON_EVENT, {
+      button: "publish",
+      collection: bucket,
+      source,
+    })
     setIsPublishing(true)
     setShareError(null)
     setShareUrl(null)
@@ -1329,7 +1359,7 @@ export function CanvasHero({
     } finally {
       setIsPublishing(false)
     }
-  }, [tileMap, frame, hasMosaic, isPublishing, resolveTile, bucket])
+  }, [tileMap, frame, hasMosaic, isPublishing, bucket, resolveTile])
 
   React.useEffect(() => {
     if (!restoredMosaicUrl || !frame) return
@@ -1560,6 +1590,8 @@ export function CanvasHero({
         <MobileActionBar
           hasReference={Boolean(reference)}
           onToggleControls={closeAdvanced}
+          collection={bucket}
+          source="mobile-bottom-bar"
           resolutionMode={resolutionMode}
           onSelectMode={handleSelectResolution}
           onGenerate={handleGenerate}
@@ -1780,6 +1812,8 @@ export function CanvasHero({
               </SidebarGroupLabel>
               <SidebarGroupContent>
                 <MosaicActionControls
+                  collection={bucket}
+                  source="desktop-sidebar"
                   resolutionMode={resolutionMode}
                   onSelectMode={handleSelectResolution}
                   onGenerate={handleGenerate}
