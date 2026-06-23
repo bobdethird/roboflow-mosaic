@@ -16,7 +16,7 @@ export default function Page() {
       {/* Hero title + small intro. */}
       <header className="flex w-full max-w-7xl flex-col items-center gap-4 md:flex-row md:items-end md:justify-between md:gap-8">
         <h1 className="max-w-[11ch] text-center text-5xl leading-none font-light tracking-tight text-balance sm:text-6xl md:text-left md:text-7xl lg:text-8xl">
-          NEW <br /> YORK KNICKS
+          NEW <br /> YORK FOREVER
         </h1>
         <p className="max-w-lg self-center text-center font-sans text-sm leading-[1.80] text-pretty text-foreground sm:text-base md:self-end md:text-right">
           <NewYorkMosaicFormLink
