@@ -3,7 +3,11 @@ import { ArrowLeft, ArrowRight } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { NewYorkMosaic } from "@/components/newyork-mosaic"
-import { NewYorkMosaicFormLink } from "@/components/new-york-mosaic-form-link"
+// The "upload your photos" button now opens an in-page upload flow instead of
+// linking out to the Google Form. The form link component is still used by the
+// other entry points (home intro, canvas) — see new-york-mosaic-form-link.tsx.
+// import { NewYorkMosaicFormLink } from "@/components/new-york-mosaic-form-link"
+import { NewYorkMosaicUpload } from "@/components/new-york-mosaic-upload"
 import { ThemeToggle } from "@/components/theme-toggle"
 
 export default function Page() {
@@ -37,15 +41,12 @@ export default function Page() {
           made this city what it is. 
         </p>
 
-        <Button
-          asChild
-          className="mt-1 h-10 self-center rounded-none border-0 px-5 text-sm"
-        >
-          <NewYorkMosaicFormLink source="mosaic-page">
+        <NewYorkMosaicUpload source="mosaic-page">
+          <Button className="mt-1 h-10 self-center rounded-none border-0 px-5 text-sm">
             upload your photos
             <ArrowRight />
-          </NewYorkMosaicFormLink>
-        </Button>
+          </Button>
+        </NewYorkMosaicUpload>
 
         <NewYorkMosaic />
       </div>
