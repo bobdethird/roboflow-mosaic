@@ -109,29 +109,31 @@ export function storagePathFor(batchId: string, contentType: string): string {
 
 // ─── storage ─────────────────────────────────────────────────────────────────
 
-async function uploadObject(
-  path: string,
-  body: Uint8Array,
-  contentType: string
-): Promise<void> {
+// Mints a one-time signed upload URL for `path`. The browser PUTs the file bytes
+// straight to this URL, so the photo never passes through our serverless function
+// (Vercel caps function request bodies at 4.5 MB; phone photos blow past that).
+// The token in the URL authorizes the write; the bucket's own size/type limits
+// still apply. Returns the absolute URL the client uploads to.
+async function createSignedUploadUrl(path: string): Promise<string> {
   const key = adminKey()
   const res = await fetch(
-    `${STORAGE_BASE}/object/${SUBMISSIONS_BUCKET}/${encodeStoragePath(path)}`,
+    `${STORAGE_BASE}/object/upload/sign/${SUBMISSIONS_BUCKET}/${encodeStoragePath(
+      path
+    )}`,
     {
       method: "POST",
-      headers: {
-        ...authHeaders(key),
-        "content-type": contentType,
-        "x-upsert": "true",
-      },
-      body: new Uint8Array(body),
+      headers: { ...authHeaders(key), "content-type": "application/json" },
+      body: "{}",
     }
   )
   if (!res.ok) {
-    throw new Error(
-      `storage upload failed (${res.status}): ${await res.text()}`
-    )
+    throw new Error(`sign upload failed (${res.status}): ${await res.text()}`)
   }
+  const data = (await res.json()) as { url?: string }
+  if (!data.url) throw new Error("sign upload returned no url")
+  // data.url is storage-relative (e.g. "/object/upload/sign/<bucket>/<path>?token=…").
+  const suffix = data.url.startsWith("/") ? data.url : `/${data.url}`
+  return `${STORAGE_BASE}${suffix}`
 }
 
 // ─── table (PostgREST) ───────────────────────────────────────────────────────
@@ -211,42 +213,54 @@ async function insertSubmissions(rows: SubmissionRow[]): Promise<boolean> {
 
 // ─── orchestration ───────────────────────────────────────────────────────────
 
-export type SubmissionPhoto = {
-  bytes: Uint8Array
+// One photo's metadata (the bytes go direct to Storage, not through here).
+export type SubmissionFileMeta = {
   contentType: string
+  size: number
   originalFilename: string | null
 }
 
-export type SubmitInput = {
-  photos: SubmissionPhoto[]
+export type AuthorizeInput = {
+  files: SubmissionFileMeta[]
   creditName: string | null
   ipHash: string | null
 }
 
-// Uploads each photo to the private bucket and inserts the matching rows. All
-// photos in one call share a batch_id. Enforces the global hourly cap before any
-// upload so a flood can't grow the bucket past budget (per-IP cap is checked in
-// the route, before this, against the incoming count).
-export async function submitPhotos(
-  input: SubmitInput
-): Promise<{ batchId: string; count: number }> {
+// What the client needs to upload one file: where to PUT it.
+export type AuthorizedUpload = {
+  path: string
+  uploadUrl: string
+  contentType: string
+}
+
+// Reserves a submission: enforces the global hourly cap, mints a signed upload
+// URL per photo, and inserts the matching `pending` rows (all sharing a
+// batch_id). The browser then PUTs each file straight to its uploadUrl. Rows are
+// written up front so the rate-limit budget is consumed immediately; if a client
+// abandons the upload, the row simply points at a never-written object (the
+// review queue can skip it). The per-IP cap is checked in the route, before this.
+export async function authorizeSubmission(
+  input: AuthorizeInput
+): Promise<{ batchId: string; uploads: AuthorizedUpload[] }> {
   const sinceIso = new Date(Date.now() - 60 * 60 * 1000).toISOString()
   const recentTotal = await countRecentTotal(sinceIso)
-  if (recentTotal + input.photos.length > GLOBAL_RATE_LIMIT_PER_HOUR) {
+  if (recentTotal + input.files.length > GLOBAL_RATE_LIMIT_PER_HOUR) {
     throw new SubmissionsCapExceededError("Global submission capacity reached.")
   }
 
   const batchId = newBatchId()
+  const uploads: AuthorizedUpload[] = []
   const rows: SubmissionRow[] = []
 
-  for (const photo of input.photos) {
-    const storagePath = storagePathFor(batchId, photo.contentType)
-    await uploadObject(storagePath, photo.bytes, photo.contentType)
+  for (const file of input.files) {
+    const storagePath = storagePathFor(batchId, file.contentType)
+    const uploadUrl = await createSignedUploadUrl(storagePath)
+    uploads.push({ path: storagePath, uploadUrl, contentType: file.contentType })
     rows.push({
       storage_path: storagePath,
-      original_filename: photo.originalFilename,
-      file_size: photo.bytes.length,
-      content_type: photo.contentType,
+      original_filename: file.originalFilename,
+      file_size: file.size,
+      content_type: file.contentType,
       credit_name: input.creditName,
       batch_id: batchId,
       ip_hash: input.ipHash,
@@ -256,5 +270,5 @@ export async function submitPhotos(
   const ok = await insertSubmissions(rows)
   if (!ok) throw new Error("failed to insert submission rows")
 
-  return { batchId, count: rows.length }
+  return { batchId, uploads }
 }

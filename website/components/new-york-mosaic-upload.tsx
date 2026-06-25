@@ -181,16 +181,20 @@ export function NewYorkMosaicUpload({
     setStatus("submitting")
     setError(null)
 
-    const form = new FormData()
-    selected.forEach((s) => form.append("photos", s.file, s.file.name))
-    if (wantCredit && name.trim()) {
-      form.append("creditName", name.trim())
-    }
-
     try {
+      // Step 1: authorize with lightweight metadata only. The server rate-limits,
+      // inserts the rows, and returns a signed upload URL per photo.
       const res = await fetch(NEW_YORK_MOSAIC_UPLOAD_ENDPOINT, {
         method: "POST",
-        body: form,
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          files: selected.map((s) => ({
+            contentType: s.file.type,
+            size: s.file.size,
+            name: s.file.name,
+          })),
+          creditName: wantCredit && name.trim() ? name.trim() : null,
+        }),
       })
       if (!res.ok) {
         let message = "Something went wrong. Please try again."
@@ -204,6 +208,28 @@ export function NewYorkMosaicUpload({
         setStatus("idle")
         return
       }
+
+      const { uploads } = (await res.json()) as {
+        uploads: { uploadUrl: string; contentType: string }[]
+      }
+
+      // Step 2: PUT each photo straight to Supabase Storage (bypasses the
+      // serverless body limit). Order matches the files we sent.
+      const results = await Promise.all(
+        selected.map((s, i) =>
+          fetch(uploads[i]!.uploadUrl, {
+            method: "PUT",
+            headers: { "content-type": s.file.type },
+            body: s.file,
+          }).then((r) => r.ok)
+        )
+      )
+      if (results.some((ok) => !ok)) {
+        setError("Some photos didn't upload. Please try again.")
+        setStatus("idle")
+        return
+      }
+
       track(NEW_YORK_MOSAIC_UPLOAD_SUBMITTED_EVENT, {
         source,
         count: selected.length,

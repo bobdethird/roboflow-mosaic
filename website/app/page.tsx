@@ -1,9 +1,13 @@
+import Link from "next/link"
+
 import { SiteCredit } from "@/components/site-credit"
 import { MosaicGallery } from "@/components/mosaic-gallery"
 import { TileHint, MobileTileHint } from "@/components/tile-hint"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { HomeCta } from "@/components/home-cta"
-import { NewYorkMosaicFormLink } from "@/components/new-york-mosaic-form-link"
+// The intro sentence now links to the /newyork-mosaic page (with its in-page
+// upload flow) instead of the Google Form.
+// import { NewYorkMosaicFormLink } from "@/components/new-york-mosaic-form-link"
 
 export default function Page() {
   return (
@@ -19,12 +23,12 @@ export default function Page() {
           NEW <br /> YORK FOREVER
         </h1>
         <p className="max-w-lg self-center text-center font-sans text-sm leading-[1.80] text-pretty text-foreground sm:text-base md:self-end md:text-right">
-          <NewYorkMosaicFormLink
-            source="home-intro"
+          <Link
+            href="/newyork-mosaic"
             className="underline underline-offset-4 transition-colors hover:text-foreground"
           >
             the whole is greater than the sum of its parts
-          </NewYorkMosaicFormLink>
+          </Link>
           <span className="mt-6 block md:mt-8 lg:mt-10">
             New York, and especially the Knicks, are a beautiful reflection
             of this theme. The melting pot of backgrounds, experiences, and

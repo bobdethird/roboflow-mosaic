@@ -33,7 +33,9 @@ import {
   makeReferenceFromFile,
   type ReferenceImage,
 } from "@/components/reference-image"
-import { NewYorkMosaicFormLink } from "@/components/new-york-mosaic-form-link"
+// The NYC-mosaic invites (mobile shortcut + sidebar "contribute…") now link to
+// the /newyork-mosaic page's in-page upload flow instead of the Google Form.
+// import { NewYorkMosaicFormLink } from "@/components/new-york-mosaic-form-link"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { buildMosaicHitMap } from "@/lib/mosaic-hitmap"
@@ -1635,10 +1637,10 @@ export function CanvasHero({
               asChild
               className="h-auto p-0 underline md:hidden"
             >
-              <NewYorkMosaicFormLink source="canvas-mobile">
+              <Link href="/newyork-mosaic">
                 new york city mosaic
                 <ArrowRight />
-              </NewYorkMosaicFormLink>
+              </Link>
             </Button>
           </div>
 
@@ -1836,13 +1838,13 @@ export function CanvasHero({
               collaborative New York mosaic. */}
           <SidebarGroup className="hidden p-0 md:flex">
             <SidebarGroupContent>
-              <NewYorkMosaicFormLink
-                source="canvas-sidebar"
+              <Link
+                href="/newyork-mosaic"
                 className="group/contribute inline-flex items-center gap-1.5 text-sm text-muted-foreground underline underline-offset-4 transition-colors hover:text-foreground"
               >
                 contribute to the world&apos;s largest new york city mosaic
                 <ArrowRight className="size-4 shrink-0 transition-transform duration-200 group-hover/contribute:translate-x-0.5" />
-              </NewYorkMosaicFormLink>
+              </Link>
             </SidebarGroupContent>
           </SidebarGroup>
         </SidebarContent>
