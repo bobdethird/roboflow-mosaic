@@ -75,9 +75,10 @@ Ingests are slow (a large export is hundreds of megabytes), so the route starts
 one in the background and the page polls `status.json` for progress. Re-opening a
 dataset whose version is named in the URL is a pure cache hit — no API call.
 
-Picking **Project cover** for a dataset that has no cover saved (one ingested
-before covers were fetched) downloads just that one image via
-`/api/roboflow/cover` — no re-export. To rebuild a dataset from scratch, POST
+The cover is the default reference. If a dataset has none saved (one ingested
+before covers were fetched), generating pulls just that one image via
+`/api/roboflow/cover` — no re-export — and only a project that genuinely has no
+cover starts on the median. To rebuild a dataset from scratch, POST
 `{"url": …, "refresh": true}` to the ingest route.
 
 ## Layout

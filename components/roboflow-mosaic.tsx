@@ -243,7 +243,6 @@ export function RoboflowMosaic() {
         started.state === "ready" && started.dataset
           ? started.dataset
           : await pollIngest(started.slug, setStatus, controller.signal)
-      setDataset(resolved)
 
       setPhase("loading")
       const { items } = await loadRoboflowLibrary(resolved.slug)
@@ -255,11 +254,25 @@ export function RoboflowMosaic() {
       engineRef.current = engine
       idsRef.current = items.map((item) => item.id)
 
-      // Prefer the project's own cover image; fall back to the median when the
-      // project has none (or the ingest could not fetch it).
-      const kind: ReferenceKind = resolved.hasIcon ? "icon" : "median"
+      // The project's cover image is the default reference. A dataset ingested
+      // before covers were saved doesn't have one yet, so fetch it now (one
+      // small download) rather than silently starting on the median. Only a
+      // project that genuinely has no cover falls back.
+      let active = resolved
+      let kind: ReferenceKind = "icon"
+      if (!active.hasIcon) {
+        setLoadingNote("Fetching the project cover image")
+        try {
+          await fetchCover(active.slug)
+          active = { ...active, hasIcon: true }
+        } catch {
+          kind = "median"
+        }
+        setLoadingNote(null)
+      }
+      setDataset(active)
       setReferenceKind(kind)
-      const refUrl = roboflowReferenceUrl(resolved.slug, kind)
+      const refUrl = roboflowReferenceUrl(active.slug, kind)
       setReferenceUrl(refUrl)
       referenceRef.current = await loadImage(refUrl)
 
