@@ -1603,6 +1603,14 @@ export function CanvasHero({
           className="absolute top-6 right-6 z-30 hidden size-7 md:flex xl:top-8 xl:right-8"
         />
 
+        {/* Centred on the same band as the corner trigger. The horizontal
+            padding keeps the bar clear of that trigger at narrow widths. */}
+        {topBarSlot && (
+          <div className="absolute inset-x-0 top-[calc(env(safe-area-inset-top,0px)+1rem)] z-30 flex justify-center px-4 md:top-5 md:px-16 xl:top-7">
+            <div className="w-full max-w-xl md:max-w-2xl">{topBarSlot}</div>
+          </div>
+        )}
+
         {/* Mobile: a bottom bar that surfaces Generate directly once a photo
             is added, instead of hiding it behind the Controls sheet. */}
         <MobileActionBar
@@ -1639,8 +1647,6 @@ export function CanvasHero({
           }
         >
           <div className="z-20 flex min-w-0 items-start justify-between gap-3 max-md:absolute max-md:inset-x-3 max-md:top-[calc(env(safe-area-inset-top,0px)+1rem)] sm:max-md:inset-x-4 md:flex-col md:justify-start">
-            {topBarSlot}
-
             {/* Mobile-only shortcut to the collaborative NYC mosaic; on desktop
                 this link lives in the right sidebar instead. */}
             {collection.shareable && (

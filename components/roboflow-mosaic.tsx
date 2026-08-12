@@ -136,22 +136,27 @@ export function RoboflowMosaic() {
         }`
       : null
 
+  // The URL, with the action tucked into the right end.
   const datasetBar = (
-    <div className="flex min-w-0 flex-1 flex-col gap-2">
-      <div className="flex min-w-0 items-center gap-2">
+    <div className="flex w-full min-w-0 flex-col items-center gap-2">
+      <div className="relative w-full min-w-0">
         <Input
-            value={url}
-            onChange={(event) => setUrl(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && !ingesting) void handleLoad()
-            }}
+          value={url}
+          onChange={(event) => setUrl(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && !ingesting) void handleLoad()
+          }}
           placeholder={EXAMPLE_URL}
           spellCheck={false}
-          className="h-8 min-w-0 flex-1 text-sm"
+          // The base Input is a low-contrast chip; as a standalone search bar it
+          // needs a visible edge, especially floating over the mosaic. Corners
+          // and left padding stay at the base Input's defaults.
+          className="border-border/60 bg-input/60 h-11 w-full pr-24 shadow-sm backdrop-blur"
           aria-label="Roboflow Universe dataset URL"
         />
         <Button
           size="sm"
+          className="absolute top-1/2 right-1.5 h-8 -translate-y-1/2 px-4"
           onClick={() => void handleLoad()}
           disabled={ingesting || !url.trim()}
         >
@@ -163,9 +168,7 @@ export function RoboflowMosaic() {
           {statusLine}
         </p>
       )}
-      {error && (
-        <p className="text-destructive text-xs">{error}</p>
-      )}
+      {error && <p className="text-destructive text-xs">{error}</p>}
     </div>
   )
 
@@ -186,7 +189,7 @@ export function RoboflowMosaic() {
       ) : (
         // Before a dataset is loaded there is no CanvasHero to host the bar, so
         // it gets its own centered landing state.
-        <div className="mx-auto flex w-full max-w-xl flex-col gap-3 px-5 py-16">
+        <div className="mx-auto flex w-full max-w-2xl flex-col items-center gap-4 px-5 py-24 text-center">
           <h1 className="text-xl font-semibold tracking-tight">
             Roboflow dataset mosaic
           </h1>
