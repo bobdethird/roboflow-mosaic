@@ -1604,10 +1604,15 @@ export function CanvasHero({
         />
 
         {/* Centred on the same band as the corner trigger. The horizontal
-            padding keeps the bar clear of that trigger at narrow widths. */}
+            padding keeps the bar clear of that trigger at narrow widths, and
+            the container is click-through: it spans the full width, so without
+            `pointer-events-none` it would swallow clicks on the trigger (and on
+            anything else it passes over). Only the bar itself takes events. */}
         {topBarSlot && (
-          <div className="absolute inset-x-0 top-[calc(env(safe-area-inset-top,0px)+1rem)] z-30 flex justify-center px-4 md:top-5 md:px-16 xl:top-7">
-            <div className="w-full max-w-xl md:max-w-2xl">{topBarSlot}</div>
+          <div className="pointer-events-none absolute inset-x-0 top-[calc(env(safe-area-inset-top,0px)+1rem)] z-30 flex justify-center px-4 md:top-5 md:px-16 xl:top-7">
+            <div className="pointer-events-auto w-full max-w-xl md:max-w-2xl">
+              {topBarSlot}
+            </div>
           </div>
         )}
 
