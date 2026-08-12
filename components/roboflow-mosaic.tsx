@@ -163,7 +163,10 @@ export function RoboflowMosaic() {
           size="sm"
           // Fixed width so swapping the label for the spinner doesn't resize
           // the button (and animate that resize through the base transition).
-          className="absolute top-1/2 right-1 h-6 w-28 -translate-y-1/2 px-3 text-xs"
+          // Centred with `top-1` rather than a -translate-y-1/2: the base
+          // Button presses with `active:translate-y-px`, which would replace
+          // the centring transform and drop the button half its height.
+          className="absolute top-1 right-1 h-6 w-28 px-3 text-xs"
           onClick={() => void handleLoad()}
           disabled={ingesting || !url.trim()}
         >
