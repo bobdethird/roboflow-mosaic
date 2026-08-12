@@ -136,56 +136,41 @@ export function RoboflowMosaic() {
         }`
       : null
 
-  return (
-    <div className="flex min-h-svh flex-col">
-      <header className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-5 pt-8 pb-4">
-        <h1 className="text-xl font-semibold tracking-tight">
-          Roboflow dataset mosaic
-        </h1>
-        <div className="flex flex-col gap-2 sm:flex-row">
-          <Input
+  const datasetBar = (
+    <div className="flex min-w-0 flex-1 flex-col gap-2">
+      <div className="flex min-w-0 items-center gap-2">
+        <Input
             value={url}
             onChange={(event) => setUrl(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === "Enter" && !ingesting) void handleLoad()
             }}
-            placeholder={EXAMPLE_URL}
-            spellCheck={false}
-            className="flex-1"
-            aria-label="Roboflow Universe dataset URL"
-          />
-          <Button
-            onClick={() => void handleLoad()}
-            disabled={ingesting || !url.trim()}
-          >
-            {ingesting ? "Loading…" : "Load dataset"}
-          </Button>
-        </div>
-        {statusLine && (
-          <p className="text-muted-foreground text-sm tabular-nums">
-            {statusLine}
-          </p>
-        )}
-        {error && (
-          <p className="border-destructive/40 bg-destructive/5 text-destructive rounded-xl border px-4 py-3 text-sm">
-            {error}
-          </p>
-        )}
-        {dataset && !ingesting && (
-          <p className="text-muted-foreground text-sm">
-            <a
-              href={dataset.universeUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="text-foreground font-medium underline underline-offset-4"
-            >
-              {dataset.name}
-            </a>{" "}
-            v{dataset.version} · {dataset.imageCount.toLocaleString()} tiles
-          </p>
-        )}
-      </header>
+          placeholder={EXAMPLE_URL}
+          spellCheck={false}
+          className="h-8 min-w-0 flex-1 text-sm"
+          aria-label="Roboflow Universe dataset URL"
+        />
+        <Button
+          size="sm"
+          onClick={() => void handleLoad()}
+          disabled={ingesting || !url.trim()}
+        >
+          {ingesting ? "Loading…" : "Load"}
+        </Button>
+      </div>
+      {statusLine && (
+        <p className="text-muted-foreground text-xs tabular-nums">
+          {statusLine}
+        </p>
+      )}
+      {error && (
+        <p className="text-destructive text-xs">{error}</p>
+      )}
+    </div>
+  )
 
+  return (
+    <div className="flex min-h-svh flex-col">
       {collection && dataset ? (
         // Remounted per dataset so every piece of CanvasHero's state — library,
         // reference, cached mosaic — resets with the collection.
@@ -196,20 +181,28 @@ export function RoboflowMosaic() {
           minCellSize={MIN_CELL_SIZE}
           hideCollectionLabel
           referencePicker={ReferencePicker}
+          topBarSlot={datasetBar}
         />
       ) : (
-        !ingesting && (
-          <p className="text-muted-foreground mx-auto w-full max-w-3xl px-5 text-sm">
-            Load a dataset to start.{" "}
-            <button
-              type="button"
-              className="underline underline-offset-4"
-              onClick={() => setUrl(EXAMPLE_URL)}
-            >
-              Try {EXAMPLE_URL}
-            </button>
-          </p>
-        )
+        // Before a dataset is loaded there is no CanvasHero to host the bar, so
+        // it gets its own centered landing state.
+        <div className="mx-auto flex w-full max-w-xl flex-col gap-3 px-5 py-16">
+          <h1 className="text-xl font-semibold tracking-tight">
+            Roboflow dataset mosaic
+          </h1>
+          {datasetBar}
+          {!ingesting && (
+            <p className="text-muted-foreground text-sm">
+              <button
+                type="button"
+                className="underline underline-offset-4"
+                onClick={() => setUrl(EXAMPLE_URL)}
+              >
+                Try {EXAMPLE_URL}
+              </button>
+            </p>
+          )}
+        </div>
       )}
     </div>
   )

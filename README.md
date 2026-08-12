@@ -6,12 +6,12 @@ becomes a tile. What they reassemble into comes from the dataset too — either 
 **project's cover image**, or **any single image out of the set**, picked from a
 grid.
 
-A fork of [bobdethird/mosaic](https://github.com/bobdethird/mosaic), keeping only
-the website (that repo's `website/`, hoisted to the root here) and dropping the
-Python/video pipeline. `/roboflow` runs the *same* `CanvasHero` UI as
-`/knicks-mosaic` — pan/zoom viewer, hover a tile to see its source image,
-resolution controls, cached renders — with two things swapped: where the tiles
-come from, and how the reference is chosen.
+A fork of [bobdethird/mosaic](https://github.com/bobdethird/mosaic) reduced to
+this one page. It keeps that repo's `CanvasHero` interface wholesale — pan/zoom
+viewer, hover a tile to see its source image, resolution controls, cached
+renders — with two things swapped: where the tiles come from, and how the
+reference is chosen. Everything else (the Python/video pipeline, the Supabase
+collections and their pages, the gallery, sharing) is gone.
 
 ```bash
 pnpm install
@@ -101,7 +101,6 @@ re-export. To rebuild a dataset from scratch, POST
 | `components/roboflow-mosaic.tsx` | URL input → ingest → hand off to CanvasHero |
 | `components/roboflow-reference-picker.tsx` | project cover, or a grid of the dataset |
 | `lib/mosaic-source.ts` | where tiles come from (Supabase or Roboflow) |
-| `components/supabase-canvas-hero.tsx` | client wrapper for the Supabase pages |
 | `lib/roboflow.ts` | URL parsing, slugs, asset URLs (shared client/server) |
 | `lib/roboflow-api.ts` | the two Roboflow REST calls |
 | `lib/roboflow-ingest.ts` | download, extract, tiles, signatures, median |
@@ -112,6 +111,7 @@ re-export. To rebuild a dataset from scratch, POST
 | `app/api/roboflow/asset/` | serves one dataset's cached library files |
 | `lib/mosaic*.ts`, `lib/contour-mosaic.ts` | the inherited engine, untouched |
 | `components/canvas-hero.tsx` | the inherited UI, now source-agnostic |
+| `lib/tile-library.ts` | the shared tile/signature shapes |
 
 ## Any folder of images
 
@@ -124,9 +124,14 @@ pnpm ingest:dir ~/Pictures/some-folder myworkspace my-project 1
 
 This is also how to exercise the pipeline without an API key.
 
-## Inherited pages
+## What was removed
 
-The original site's pages (`/`, `/knicks-mosaic`, `/newyork-mosaic`, `/mosaic`,
-`/bake`) came along with the engine and still expect Supabase credentials
-(`NEXT_PUBLIC_SUPABASE_URL`, `SUPABASE_SECRET_KEY`). Without them, only
-`/roboflow` works — it reads from the local cache instead.
+The inherited pages (`/knicks-mosaic`, `/newyork-mosaic`, `/bake`, `/m/<id>`,
+`/admin`, the landing page and gallery) and everything only they used — the
+Supabase proxy, share and submission routes, the auth/admin helpers, the baked
+gallery assets — are deleted. `/` redirects to `/roboflow`, and no Supabase
+credentials are needed any more; only `ROBOFLOW_API_KEY`.
+
+One remnant: `CanvasHero` still carries the publish-to-a-share-link code path.
+It is unreachable (every source is `shareable: false`) but it does still
+reference the routes that were deleted.

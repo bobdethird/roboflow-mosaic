@@ -5,7 +5,7 @@
 // the Supabase `loadLibrary` with the bucket proxy swapped for the local asset
 // route. Thumbnails are still fetched lazily by the worker, one per placed tile.
 
-import { COARSE_SIG_BYTES, type LibraryItem } from "./photo-library"
+import { COARSE_SIG_BYTES, type LibraryItem } from "./tile-library"
 import {
   COARSE_SIGNATURES_FILE,
   MANIFEST_FILE,

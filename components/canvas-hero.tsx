@@ -4,7 +4,6 @@ import * as React from "react"
 import Link from "next/link"
 import { track } from "@vercel/analytics"
 import {
-  ArrowLeft,
   ArrowRight,
   Check,
   Copy,
@@ -16,7 +15,7 @@ import {
   X,
 } from "lucide-react"
 
-import { type LibraryItem } from "@/lib/photo-library"
+import { type LibraryItem } from "@/lib/tile-library"
 import { type MosaicSource } from "@/lib/mosaic-source"
 import {
   ReferenceCard,
@@ -135,7 +134,10 @@ function ControlsSidebarTrigger({
       size={isMobile ? "default" : "icon-sm"}
       aria-label={isOpen ? "Hide controls sidebar" : "Show controls sidebar"}
       aria-expanded={isOpen}
-      className={className}
+      className={cn(
+        "bg-transparent hover:bg-transparent dark:bg-transparent dark:hover:bg-transparent",
+        className
+      )}
       onClick={() => {
         onToggle?.()
         toggleSidebar()
@@ -793,6 +795,9 @@ type CanvasHeroProps = {
   // Label of the collection `onSwitchBucket` moves to. Only used when that
   // callback is supplied.
   switchLabel?: string
+  // Rendered in the top row, beside the controls-sidebar toggle. The Roboflow
+  // page puts its dataset input here so there is one header, not two.
+  topBarSlot?: React.ReactNode
   // Replaces the built-in upload card. Lets a page supply its own way of
   // choosing the reference image (the Roboflow page picks from the dataset).
   // Rendered in two places at different sizes, hence the variant; whatever it
@@ -825,6 +830,7 @@ export function CanvasHero({
   onSwitchBucket,
   switchLabel,
   referencePicker: ReferencePicker,
+  topBarSlot,
   switchLocked = false,
   maxTileReuse,
   minCellSize = DENSITY_MIN,
@@ -1633,12 +1639,7 @@ export function CanvasHero({
           }
         >
           <div className="z-20 flex min-w-0 items-start justify-between gap-3 max-md:absolute max-md:inset-x-3 max-md:top-[calc(env(safe-area-inset-top,0px)+1rem)] sm:max-md:inset-x-4 md:flex-col md:justify-start">
-            <Button variant="link" asChild className="h-auto p-0 underline">
-              <Link href="/">
-                <ArrowLeft />
-                back to home
-              </Link>
-            </Button>
+            {topBarSlot}
 
             {/* Mobile-only shortcut to the collaborative NYC mosaic; on desktop
                 this link lives in the right sidebar instead. */}
