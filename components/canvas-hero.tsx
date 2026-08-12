@@ -1600,7 +1600,7 @@ export function CanvasHero({
         {/* Desktop: a compact icon trigger in the corner. */}
         <ControlsSidebarTrigger
           onToggle={closeAdvanced}
-          className="absolute top-6 right-6 z-30 hidden size-7 md:flex xl:top-8 xl:right-8"
+          className="absolute top-6 right-6 z-30 hidden size-8 md:flex xl:top-8 xl:right-8"
         />
 
         {/* Centred on the same band as the corner trigger. The horizontal
@@ -1609,7 +1609,7 @@ export function CanvasHero({
             `pointer-events-none` it would swallow clicks on the trigger (and on
             anything else it passes over). Only the bar itself takes events. */}
         {topBarSlot && (
-          <div className="pointer-events-none absolute inset-x-0 top-[calc(env(safe-area-inset-top,0px)+1rem)] z-30 flex justify-center px-4 md:top-5 md:px-16 xl:top-7">
+          <div className="pointer-events-none absolute inset-x-0 top-[calc(env(safe-area-inset-top,0px)+1rem)] z-30 flex justify-center px-4 md:top-6 md:px-16 xl:top-8">
             <div className="pointer-events-auto w-full max-w-xl md:max-w-2xl">
               {topBarSlot}
             </div>

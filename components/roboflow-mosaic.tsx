@@ -153,16 +153,17 @@ export function RoboflowMosaic() {
           placeholder={EXAMPLE_URL}
           spellCheck={false}
           // The base Input is a low-contrast chip; as a standalone search bar it
-          // needs a visible edge, especially floating over the mosaic. Corners
-          // and left padding stay at the base Input's defaults.
-          className="h-11 w-full border-border/60 bg-input/60 pr-36 shadow-sm backdrop-blur"
+          // needs a visible edge, especially floating over the mosaic. Height,
+          // corners and left padding stay at the base Input's defaults, which
+          // is also what lines it up with the sidebar toggle beside it.
+          className="h-8 w-full border-border/60 bg-input/60 pr-32 shadow-sm backdrop-blur"
           aria-label="Roboflow Universe dataset URL"
         />
         <Button
           size="sm"
           // Fixed width so swapping the label for the spinner doesn't resize
           // the button (and animate that resize through the base transition).
-          className="absolute top-1/2 right-1.5 h-8 w-32 -translate-y-1/2 px-4"
+          className="absolute top-1/2 right-1 h-6 w-28 -translate-y-1/2 px-3 text-xs"
           onClick={() => void handleLoad()}
           disabled={ingesting || !url.trim()}
         >
