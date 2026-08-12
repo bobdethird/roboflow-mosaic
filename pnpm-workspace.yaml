@@ -1,6 +1,8 @@
 packages: []
 
-allowBuilds:
-  sharp: true
-  unrs-resolver: true
-  msw: false
+# Native/postinstall builds we explicitly allow (pnpm 10 blocks them by default).
+# sharp powers the server-side dataset ingest; esbuild backs tsx.
+onlyBuiltDependencies:
+  - sharp
+  - unrs-resolver
+  - esbuild

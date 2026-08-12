@@ -37,3 +37,4 @@ next-env.d.ts
 
 # roboflow dataset ingest cache (downloaded exports, thumbs, signatures)
 /.roboflow-cache/
+!.env.example
