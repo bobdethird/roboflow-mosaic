@@ -15,6 +15,7 @@ import { CanvasHero } from "@/components/canvas-hero"
 import { RoboflowReferencePicker } from "@/components/roboflow-reference-picker"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Spinner } from "@/components/ui/spinner"
 import { roboflowSource } from "@/lib/mosaic-source"
 import {
   ROBOFLOW_INGEST_PATH,
@@ -27,7 +28,8 @@ import {
 const MAX_TILE_REUSE = 24
 const MIN_CELL_SIZE = 8
 
-const EXAMPLE_URL = "https://universe.roboflow.com/joseph-nelson/chess-pieces-new"
+const EXAMPLE_URL =
+  "https://universe.roboflow.com/joseph-nelson/chess-pieces-new"
 
 async function startIngest(url: string): Promise<IngestStatus> {
   const response = await fetch(ROBOFLOW_INGEST_PATH, {
@@ -52,9 +54,11 @@ async function pollIngest(
       { signal }
     )
     const status = (await response.json()) as IngestStatus & { error?: string }
-    if (!response.ok) throw new Error(status.error ?? "Lost track of the ingest.")
+    if (!response.ok)
+      throw new Error(status.error ?? "Lost track of the ingest.")
     onStatus(status)
-    if (status.state === "error") throw new Error(status.error ?? "Ingest failed.")
+    if (status.state === "error")
+      throw new Error(status.error ?? "Ingest failed.")
     if (status.state === "ready") {
       if (!status.dataset) {
         throw new Error("The ingest finished without a dataset record.")
@@ -151,24 +155,26 @@ export function RoboflowMosaic() {
           // The base Input is a low-contrast chip; as a standalone search bar it
           // needs a visible edge, especially floating over the mosaic. Corners
           // and left padding stay at the base Input's defaults.
-          className="border-border/60 bg-input/60 h-11 w-full pr-24 shadow-sm backdrop-blur"
+          className="h-11 w-full border-border/60 bg-input/60 pr-36 shadow-sm backdrop-blur"
           aria-label="Roboflow Universe dataset URL"
         />
         <Button
           size="sm"
-          className="absolute top-1/2 right-1.5 h-8 -translate-y-1/2 px-4"
+          // Fixed width so swapping the label for the spinner doesn't resize
+          // the button (and animate that resize through the base transition).
+          className="absolute top-1/2 right-1.5 h-8 w-32 -translate-y-1/2 px-4"
           onClick={() => void handleLoad()}
           disabled={ingesting || !url.trim()}
         >
-          {ingesting ? "Loading…" : "Load"}
+          {ingesting ? <Spinner /> : "Load Dataset"}
         </Button>
       </div>
       {statusLine && (
-        <p className="text-muted-foreground text-xs tabular-nums">
+        <p className="text-xs text-muted-foreground tabular-nums">
           {statusLine}
         </p>
       )}
-      {error && <p className="text-destructive text-xs">{error}</p>}
+      {error && <p className="text-xs text-destructive">{error}</p>}
     </div>
   )
 
@@ -195,7 +201,7 @@ export function RoboflowMosaic() {
           </h1>
           {datasetBar}
           {!ingesting && (
-            <p className="text-muted-foreground text-sm">
+            <p className="text-sm text-muted-foreground">
               <button
                 type="button"
                 className="underline underline-offset-4"
