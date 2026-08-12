@@ -39,12 +39,19 @@ Results land in `.roboflow-cache/<workspace>--<project>--v<n>/`, laid out exactl
 like the Supabase buckets the original engine reads (`manifest.json`,
 `signatures-coarse.bin`, `thumbs/<id>.jpg`), plus `reference.jpg` — the median.
 
-**The median.** Every sampled image is cover-fitted to a common frame and folded
-into a per-pixel, per-channel value histogram, so the median runs over the whole
-dataset without ever holding it in memory. A median rather than a mean because
-the mean smears outliers into every pixel; the median keeps whatever structure
-the dataset actually shares — the framing, the background, the object that sits
-in the middle of every shot.
+**The median.** Every sampled image is folded into a per-pixel, per-channel value
+histogram, so the median runs over the whole dataset without ever holding it in
+memory. A median rather than a mean because the mean smears outliers into every
+pixel; the median keeps whatever structure the dataset actually shares — the
+framing, the background, the object that sits in the middle of every shot.
+
+Nothing is cropped out of the reference. The frame is the dataset's **own native
+size** (the size most of its images share, or the median width and height for a
+mixed set), and each image is resampled whole into it — so for the usual
+uniformly-sized export the map is 1:1 and no resampling happens at all. The only
+thing that can shrink the frame is the histogram's memory ceiling
+(width × height × 3 × 256 × 2 bytes, capped around a 512×512-equivalent), and
+that preserves the aspect ratio.
 
 **2. Generate (browser, unchanged engine).** The median image is handed to the
 existing contour-flow generator: a Sobel edge-vector field, Voronoi cells pushed

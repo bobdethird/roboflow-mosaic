@@ -12,9 +12,11 @@
 // so any folder of images can be mosaicked the same way.
 //
 // The reference is the dataset's **median image**: the per-pixel, per-channel
-// median across every sampled image, cover-fitted to a common frame. A median
-// (rather than a mean) keeps the dataset's dominant structure — the shape the
-// whole set agrees on — instead of smearing outliers into everything.
+// median across every sampled image. A median (rather than a mean) keeps the
+// dataset's dominant structure — the shape the whole set agrees on — instead of
+// smearing outliers into everything. It is computed at the dataset's own native
+// frame with every image resampled whole into it, so nothing is cropped out of
+// the reference.
 
 import { createHash } from "node:crypto"
 import { createWriteStream } from "node:fs"
@@ -48,10 +50,14 @@ const COARSE_VALUES = COARSE_GRID * COARSE_GRID * 3
 
 const THUMB_LONG_EDGE = 384
 const THUMB_QUALITY = 82
-// Long edge of the median reference. The median image is inherently smooth, so
-// this is plenty of detail — and the median histogram below costs
-// size² × 3 × 256 × 2 bytes of RAM, which grows fast.
-const REFERENCE_LONG_EDGE = 384
+// The median reference is built at the dataset's own native frame (see
+// `referenceDims`) so no image has to be cropped into it. The only limit is
+// memory: the median histogram costs width × height × 3 × 256 × 2 bytes, so
+// ~262k pixels (a 512×512-equivalent frame) is a ~400 MB ceiling. Bigger
+// datasets scale down with their aspect ratio preserved.
+const MEDIAN_MAX_PIXELS = 262_144
+// Used only if not one image in the sample could be read for its dimensions.
+const MEDIAN_FALLBACK_EDGE = 384
 // Cap on how many images feed the median. Beyond this the sample is strided
 // evenly across the (sorted) file list, so it stays deterministic.
 const MEDIAN_SAMPLE_MAX = 4000
@@ -180,6 +186,30 @@ async function rawCover(
   return data
 }
 
+// Same, but `fit: "fill"` — the WHOLE image is resampled into w×h, so nothing is
+// cropped away. Used for the median reference, which must see every image edge
+// to edge. The target is the dataset's own native frame (see `referenceDims`),
+// so for the usual uniformly-sized export this is a 1:1 map and no resampling
+// happens at all; only an image whose aspect differs from the dataset's is
+// stretched. The alternative for those would be letterboxing, and padding bars
+// would contaminate the median with a colour no image actually contains.
+async function rawFill(
+  bytes: Buffer,
+  width: number,
+  height: number
+): Promise<Buffer> {
+  const { data, info } = await sharp(bytes, { failOn: "none" })
+    .resize(width, height, { fit: "fill" })
+    .flatten({ background: "#ffffff" })
+    .toColourspace("srgb")
+    .raw()
+    .toBuffer({ resolveWithObject: true })
+  if (info.channels !== 3) {
+    throw new IngestError(`Unexpected channel count ${info.channels}`)
+  }
+  return data
+}
+
 // Pack a 16×16×3 uint8 signature into the worker's coarse uint16 LE format.
 function coarseSignature(sig: Buffer): Buffer {
   const out = Buffer.allocUnsafe(COARSE_VALUES * 2)
@@ -272,26 +302,62 @@ export type LibraryResult = {
   reference: { width: number; height: number; samples: number }
 }
 
-// Pick the median reference frame from a cheap header-only pass over the sample.
+function medianOf(values: number[]): number {
+  const sorted = [...values].sort((a, b) => a - b)
+  return sorted[Math.floor(sorted.length / 2)]
+}
+
+// The frame the median reference is computed in, from a cheap header-only pass
+// over the sample. It is the dataset's OWN native size, so images go in whole
+// rather than being cropped to fit: a Roboflow export is normally one uniform
+// size, and then this is exactly that size and every image maps 1:1. Mixed-size
+// datasets fall back to the median width and height.
+//
+// The frame is only ever shrunk by the histogram memory ceiling, and that keeps
+// the aspect ratio.
 async function referenceDims(
   files: string[]
 ): Promise<{ width: number; height: number }> {
-  const aspects: number[] = []
+  const widths: number[] = []
+  const heights: number[] = []
+  const exact = new Map<string, number>()
   await pooled(files.slice(0, 200), CONCURRENCY, async (file) => {
     try {
       const { width, height } = await sharp(file).metadata()
-      if (width && height) aspects.push(width / height)
+      if (!width || !height) return
+      widths.push(width)
+      heights.push(height)
+      const key = `${width}x${height}`
+      exact.set(key, (exact.get(key) ?? 0) + 1)
     } catch {
       // Unreadable images are skipped here and again in the main pass.
     }
   })
-  if (!aspects.length) return { width: REFERENCE_LONG_EDGE, height: REFERENCE_LONG_EDGE }
-  aspects.sort((a, b) => a - b)
-  const aspect = aspects[Math.floor(aspects.length / 2)]
-  const even = (n: number) => Math.max(2, Math.round(n / 2) * 2)
-  return aspect >= 1
-    ? { width: REFERENCE_LONG_EDGE, height: even(REFERENCE_LONG_EDGE / aspect) }
-    : { width: even(REFERENCE_LONG_EDGE * aspect), height: REFERENCE_LONG_EDGE }
+  if (!widths.length) {
+    return { width: MEDIAN_FALLBACK_EDGE, height: MEDIAN_FALLBACK_EDGE }
+  }
+
+  // A size most of the sample shares is the dataset's real frame — use it
+  // verbatim rather than a median that could land between two common sizes.
+  const [dominantKey, dominantCount] = [...exact.entries()].reduce((a, b) =>
+    b[1] > a[1] ? b : a
+  )
+  let width: number
+  let height: number
+  if (dominantCount >= widths.length / 2) {
+    ;[width, height] = dominantKey.split("x").map(Number)
+  } else {
+    width = medianOf(widths)
+    height = medianOf(heights)
+  }
+
+  const pixels = width * height
+  if (pixels > MEDIAN_MAX_PIXELS) {
+    const scale = Math.sqrt(MEDIAN_MAX_PIXELS / pixels)
+    width = Math.max(2, Math.round(width * scale))
+    height = Math.max(2, Math.round(height * scale))
+  }
+  return { width, height }
 }
 
 // Deterministic, evenly strided subsample so the median doesn't depend on which
@@ -357,7 +423,7 @@ export async function buildLibrary(
       }
 
       if (sample.has(file)) {
-        accumulator.add(await rawCover(bytes, dims.width, dims.height))
+        accumulator.add(await rawFill(bytes, dims.width, dims.height))
       }
     } catch {
       skipped += 1
