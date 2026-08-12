@@ -253,9 +253,11 @@ class MedianAccumulator {
     return this.samples
   }
 
-  // Lower median: the smallest value whose cumulative count reaches half the
-  // samples. For an even sample count this picks the lower of the two middles,
-  // which is fine for 8-bit channels and avoids a second pass.
+  // The smallest value whose cumulative count reaches ⌊n/2⌋+1 — i.e. the
+  // ⌈(n+1)/2⌉-th smallest sample. For an odd n that is exactly the median; for
+  // an even n it is the upper of the two middle values rather than their mean,
+  // which avoids inventing a value no image contributed and keeps this to one
+  // pass over the histogram.
   median(): Buffer {
     if (!this.samples) throw new IngestError("No images contributed to the median.")
     const half = Math.floor(this.samples / 2) + 1
