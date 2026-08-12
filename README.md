@@ -73,9 +73,12 @@ are fetched lazily, one thumbnail per placed cell.
 
 Ingests are slow (a large export is hundreds of megabytes), so the route starts
 one in the background and the page polls `status.json` for progress. Re-opening a
-dataset whose version is named in the URL is a pure cache hit — no API call. To
-force a re-download (e.g. to pick up a cover image for a dataset ingested before
-covers were fetched), POST `{"url": …, "refresh": true}` to the ingest route.
+dataset whose version is named in the URL is a pure cache hit — no API call.
+
+Picking **Project cover** for a dataset that has no cover saved (one ingested
+before covers were fetched) downloads just that one image via
+`/api/roboflow/cover` — no re-export. To rebuild a dataset from scratch, POST
+`{"url": …, "refresh": true}` to the ingest route.
 
 ## Layout
 
@@ -89,6 +92,7 @@ covers were fetched), POST `{"url": …, "refresh": true}` to the ingest route.
 | `lib/roboflow-store.ts` | cache layout, ingest status, job registry |
 | `lib/roboflow-library.ts` | browser-side library loader |
 | `app/api/roboflow/ingest/` | start (POST) / poll (GET) an ingest |
+| `app/api/roboflow/cover/` | fetches a project cover into an existing dataset |
 | `app/api/roboflow/asset/` | serves one dataset's cached library files |
 | `lib/mosaic*.ts`, `lib/contour-mosaic.ts` | the inherited engine, untouched |
 

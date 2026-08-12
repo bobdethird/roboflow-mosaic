@@ -34,11 +34,17 @@ import {
   MANIFEST_FILE,
   REFERENCE_FILE,
   datasetSlug,
+  parseDatasetSlug,
   universeUrl,
   type RoboflowDataset,
   type RoboflowRef,
 } from "./roboflow"
-import { exportFormats, fetchExportLink, fetchProjectInfo } from "./roboflow-api"
+import {
+  RoboflowApiError,
+  exportFormats,
+  fetchExportLink,
+  fetchProjectInfo,
+} from "./roboflow-api"
 import { datasetDir, type ProgressReporter } from "./roboflow-store"
 
 // Must match lib/mosaic.ts SIGNATURE_GRID and the worker's COARSE_GRID: the
@@ -594,6 +600,47 @@ export async function ingestDataset(
     await rm(zipPath, { force: true })
     if (!options.keepSource) await rm(sourceDir, { recursive: true, force: true })
   }
+}
+
+// Fetch just the project's cover image into an already-ingested dataset.
+//
+// Cheap next to a re-ingest — one project-info call and one image download, no
+// export and no zip — so a dataset ingested before covers existed can pick one
+// up on demand instead of being re-downloaded wholesale.
+export async function ensureCover(slug: string): Promise<boolean> {
+  if (await hasIconFile(slug)) return true
+
+  const ref = parseDatasetSlug(slug)
+  if (!ref) throw new IngestError(`Malformed dataset slug: ${slug}`)
+  if (!(await isIngested(slug))) {
+    throw new IngestError("That dataset has not been ingested yet.")
+  }
+
+  let info
+  try {
+    info = await fetchProjectInfo(ref)
+  } catch (error) {
+    // A locally-ingested folder has a slug that looks like a project but is not
+    // one; say so plainly instead of relaying Roboflow's 404 text.
+    if (error instanceof RoboflowApiError && error.status === 404) {
+      throw new IngestError(
+        `${ref.workspace}/${ref.project} is not a Roboflow project, so it has no ` +
+          "cover image. Use the median instead."
+      )
+    }
+    throw error
+  }
+  if (!info.iconUrl) {
+    throw new IngestError(`${info.name} has no cover image on Roboflow.`)
+  }
+  const saved = await downloadIcon(
+    info.iconUrl,
+    path.join(datasetDir(slug), ICON_FILE)
+  )
+  if (!saved) {
+    throw new IngestError("Roboflow's cover image could not be downloaded.")
+  }
+  return true
 }
 
 // Did this ingest save a project cover image?

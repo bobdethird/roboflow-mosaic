@@ -27,6 +27,7 @@ import {
 } from "@/lib/mosaic"
 import { frameDimsFor } from "@/lib/mosaic-bake"
 import {
+  ROBOFLOW_COVER_PATH,
   ROBOFLOW_INGEST_PATH,
   parseRoboflowUrl,
   type IngestStatus,
@@ -102,6 +103,21 @@ async function pollIngest(
   }
 }
 
+// Ask the server to pull the project's cover image into an already-ingested
+// dataset. Cheap next to a re-ingest, so the reference switch can offer it even
+// when the original ingest predates cover images.
+async function fetchCover(slug: string): Promise<void> {
+  const response = await fetch(ROBOFLOW_COVER_PATH, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ slug }),
+  })
+  const body = (await response.json()) as { hasIcon?: boolean; error?: string }
+  if (!response.ok || !body.hasIcon) {
+    throw new Error(body.error ?? "Could not fetch the cover image.")
+  }
+}
+
 export function RoboflowMosaic() {
   const [url, setUrl] = React.useState("")
   const [phase, setPhase] = React.useState<Phase>("idle")
@@ -116,6 +132,8 @@ export function RoboflowMosaic() {
   // when the ingest managed to fetch one; the median is always available.
   const [referenceKind, setReferenceKind] =
     React.useState<ReferenceKind>("icon")
+  // Overrides the generic "loading" status line for one-off waits.
+  const [loadingNote, setLoadingNote] = React.useState<string | null>(null)
 
   const canvasRef = React.useRef<HTMLCanvasElement | null>(null)
   const engineRef = React.useRef<MosaicEngine | null>(null)
@@ -258,14 +276,25 @@ export function RoboflowMosaic() {
   const handleReferenceKind = React.useCallback(
     (kind: ReferenceKind) => {
       if (!dataset || kind === referenceKind) return
-      const refUrl = roboflowReferenceUrl(dataset.slug, kind)
-      setReferenceKind(kind)
-      setReferenceUrl(refUrl)
+      setError(null)
       void (async () => {
         try {
+          // A dataset ingested before cover images were saved has everything
+          // else on disk; pull just the cover rather than re-ingesting.
+          if (kind === "icon" && !dataset.hasIcon) {
+            setPhase("loading")
+            setLoadingNote("Fetching the project cover image")
+            await fetchCover(dataset.slug)
+            setDataset({ ...dataset, hasIcon: true })
+            setLoadingNote(null)
+          }
+          const refUrl = roboflowReferenceUrl(dataset.slug, kind)
+          setReferenceKind(kind)
+          setReferenceUrl(refUrl)
           referenceRef.current = await loadImage(refUrl)
           await runGeneration(CELL_SIZES[density])
         } catch (runError) {
+          setLoadingNote(null)
           setError(
             runError instanceof Error ? runError.message : "Re-render failed."
           )
@@ -310,7 +339,7 @@ export function RoboflowMosaic() {
           : ""
       return `${status.step}${pct}`
     }
-    if (phase === "loading") return "Loading tile signatures"
+    if (phase === "loading") return loadingNote ?? "Loading tile signatures"
     if (phase === "generating") {
       return progress.total > 0
         ? `Placing tiles — ${progress.done}/${progress.total}`
@@ -412,10 +441,10 @@ export function RoboflowMosaic() {
                     size="xs"
                     variant={kind === referenceKind ? "default" : "outline"}
                     onClick={() => handleReferenceKind(kind)}
-                    disabled={busy || (kind === "icon" && !dataset?.hasIcon)}
+                    disabled={busy}
                     title={
                       kind === "icon" && !dataset?.hasIcon
-                        ? "No cover image saved for this dataset — re-ingest to fetch one"
+                        ? "Downloads the project's cover image from Roboflow"
                         : undefined
                     }
                   >

@@ -117,6 +117,16 @@ export function isDatasetSlug(value: string): boolean {
   return /^[a-zA-Z0-9._-]+--[a-zA-Z0-9._-]+--v\d+$/.test(value)
 }
 
+// Inverse of `datasetSlug`, for the routes that are handed a slug rather than a
+// URL. Returns null when the slug is malformed.
+export function parseDatasetSlug(
+  slug: string
+): (RoboflowRef & { version: number }) | null {
+  if (!isDatasetSlug(slug)) return null
+  const [workspace, project, versionTag] = slug.split("--")
+  return { workspace, project, version: Number(versionTag.slice(1)) }
+}
+
 export function universeUrl(ref: RoboflowRef & { version: number }): string {
   return `https://universe.roboflow.com/${ref.workspace}/${ref.project}/dataset/${ref.version}`
 }
@@ -125,6 +135,7 @@ export function universeUrl(ref: RoboflowRef & { version: number }): string {
 
 export const ROBOFLOW_ASSET_BASE = "/api/roboflow/asset"
 export const ROBOFLOW_INGEST_PATH = "/api/roboflow/ingest"
+export const ROBOFLOW_COVER_PATH = "/api/roboflow/cover"
 
 export const MANIFEST_FILE = "manifest.json"
 export const COARSE_SIGNATURES_FILE = "signatures-coarse.bin"
