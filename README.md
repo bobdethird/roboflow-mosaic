@@ -1,20 +1,17 @@
 # Roboflow dataset mosaic
 
 Give it a [Roboflow Universe](https://universe.roboflow.com) dataset URL and it
-renders that dataset as a photo mosaic of itself: every tile is one image from
-the dataset. What they reassemble into is your choice —
-
-- the **project's cover image**, the shot the dataset's author picked to
-  represent it (the default), or
-- the dataset's **median image**, the per-pixel median of the whole set — the
-  shape every image in it agrees on.
-
-Both are written during the ingest, so switching between them re-renders in the
-browser with no refetch.
+renders that dataset as a photo mosaic of itself: every image in the dataset
+becomes a tile. What they reassemble into comes from the dataset too — either the
+**project's cover image**, or **any single image out of the set**, picked from a
+grid.
 
 A fork of [bobdethird/mosaic](https://github.com/bobdethird/mosaic), keeping only
-the in-browser mosaic engine (that repo's `website/`, hoisted to the root here)
-and dropping the Python/video pipeline.
+the website (that repo's `website/`, hoisted to the root here) and dropping the
+Python/video pipeline. `/roboflow` runs the *same* `CanvasHero` UI as
+`/knicks-mosaic` — pan/zoom viewer, hover a tile to see its source image,
+resolution controls, cached renders — with two things swapped: where the tiles
+come from, and how the reference is chosen.
 
 ```bash
 pnpm install
@@ -51,7 +48,9 @@ like the Supabase buckets the original engine reads (`manifest.json`,
 `signatures-coarse.bin`, `thumbs/<id>.jpg`), plus the two references:
 `reference.jpg` (the median) and `icon.jpg` (the cover).
 
-**The median.** Every sampled image is folded into a per-pixel, per-channel value
+**The median.** Still computed and written as `reference.jpg`, though the UI no
+longer offers it — the reference is the cover or an image from the set. Every
+sampled image is folded into a per-pixel, per-channel value
 histogram, so the median runs over the whole dataset without ever holding it in
 memory. A median rather than a mean because the mean smears outliers into every
 pixel; the median keeps whatever structure the dataset actually shares — the
@@ -65,20 +64,33 @@ thing that can shrink the frame is the histogram's memory ceiling
 (width × height × 3 × 256 × 2 bytes, capped around a 512×512-equivalent), and
 that preserves the aspect ratio.
 
-**2. Generate (browser, unchanged engine).** The chosen reference is handed to
-the existing contour-flow generator: a Sobel edge-vector field, Voronoi cells pushed
-out of edges so cell borders settle along contours, one colour signature per
-cell, and a min-error tile per cell drawn rotated along the local contour. Tiles
-are fetched lazily, one thumbnail per placed cell.
+**2. Generate (browser, unchanged engine + unchanged UI).** The reference is
+handed to the existing contour-flow generator: a Sobel edge-vector field, Voronoi
+cells pushed out of edges so cell borders settle along contours, one colour
+signature per cell, and a min-error tile per cell drawn rotated along the local
+contour. Tiles are fetched lazily, one thumbnail per placed cell.
+
+**Where the tiles come from** is now an argument. `lib/mosaic-source.ts` defines
+a `MosaicSource` — how the library loads, how a tile's URL is built, whether the
+result can be published — with `supabaseSource(bucket)` and
+`roboflowSource(dataset)` behind it. `CanvasHero` used to take a bucket name and
+call Supabase directly; it takes a source instead, so one UI serves both. A
+source holds functions, so it has to be built on the client: server pages go
+through `SupabaseCanvasHero`.
+
+**How the reference is chosen** is a `referencePicker` prop. Supplying one
+replaces CanvasHero's upload card (and its "replace" control) so there is a
+single route to a reference image. The Roboflow picker offers the project cover
+and a grid of the dataset's own images, and hands back a `File` — exactly what
+the upload card produced, so nothing downstream changes.
 
 Ingests are slow (a large export is hundreds of megabytes), so the route starts
 one in the background and the page polls `status.json` for progress. Re-opening a
 dataset whose version is named in the URL is a pure cache hit — no API call.
 
-The cover is the default reference. If a dataset has none saved (one ingested
-before covers were fetched), generating pulls just that one image via
-`/api/roboflow/cover` — no re-export — and only a project that genuinely has no
-cover starts on the median. To rebuild a dataset from scratch, POST
+Picking **Project cover** for a dataset with none saved (one ingested before
+covers were fetched) pulls just that image via `/api/roboflow/cover` — no
+re-export. To rebuild a dataset from scratch, POST
 `{"url": …, "refresh": true}` to the ingest route.
 
 ## Layout
@@ -86,7 +98,10 @@ cover starts on the median. To rebuild a dataset from scratch, POST
 | Path | What |
 | --- | --- |
 | `app/roboflow/` | the page |
-| `components/roboflow-mosaic.tsx` | URL input → ingest → generate → canvas |
+| `components/roboflow-mosaic.tsx` | URL input → ingest → hand off to CanvasHero |
+| `components/roboflow-reference-picker.tsx` | project cover, or a grid of the dataset |
+| `lib/mosaic-source.ts` | where tiles come from (Supabase or Roboflow) |
+| `components/supabase-canvas-hero.tsx` | client wrapper for the Supabase pages |
 | `lib/roboflow.ts` | URL parsing, slugs, asset URLs (shared client/server) |
 | `lib/roboflow-api.ts` | the two Roboflow REST calls |
 | `lib/roboflow-ingest.ts` | download, extract, tiles, signatures, median |
@@ -96,6 +111,7 @@ cover starts on the median. To rebuild a dataset from scratch, POST
 | `app/api/roboflow/cover/` | fetches a project cover into an existing dataset |
 | `app/api/roboflow/asset/` | serves one dataset's cached library files |
 | `lib/mosaic*.ts`, `lib/contour-mosaic.ts` | the inherited engine, untouched |
+| `components/canvas-hero.tsx` | the inherited UI, now source-agnostic |
 
 ## Any folder of images
 

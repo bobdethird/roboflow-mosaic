@@ -16,16 +16,8 @@ import {
   X,
 } from "lucide-react"
 
-import {
-  loadLibrary,
-  fetchLibraryVersion,
-  thumbUrl,
-  BUCKET_LABELS,
-  BUCKET_COPY,
-  MOSAIC_BUCKETS,
-  type LibraryItem,
-  type MosaicBucket,
-} from "@/lib/photo-library"
+import { type LibraryItem } from "@/lib/photo-library"
+import { type MosaicSource } from "@/lib/mosaic-source"
 import {
   ReferenceCard,
   ReferenceEmptyCard,
@@ -174,7 +166,7 @@ function MosaicActionControls({
   isPublishing = false,
   className,
 }: {
-  collection: MosaicBucket
+  collection: string
   source: MosaicActionSource
   resolutionMode: ResolutionMode
   onSelectMode: (mode: ResolutionMode) => void
@@ -557,7 +549,7 @@ function openMosaicCache(): Promise<IDBDatabase> {
   })
 }
 
-// The generated mosaic is cached per collection (keyed by bucket) so each one
+// The generated mosaic is cached per collection (keyed by source id) so each one
 // remembers its own last reference + render independently.
 async function readCachedMosaic(key: string): Promise<CachedMosaic | null> {
   const db = await openMosaicCache()
@@ -787,12 +779,29 @@ function ShareCapacityDialog({ onClose }: { onClose: () => void }) {
 }
 
 type CanvasHeroProps = {
-  // Which collection's photos power the tiles. The parent remounts CanvasHero
-  // (via `key={bucket}`) when this changes, so all state resets per collection.
-  bucket: MosaicBucket
+  // Where the tiles come from — a Supabase collection or an ingested Roboflow
+  // dataset. The parent remounts CanvasHero (via `key={collection.id}`) when
+  // this changes, so all state resets per collection.
+  //
+  // Must be referentially stable: it is an effect dependency, so a client
+  // component building one inline has to `useMemo` it or the library will
+  // reload on every render.
+  collection: MosaicSource
   // Switch to the other collection. Optional: when omitted (e.g. a standalone
   // single-collection page), the "switch to …" control is hidden entirely.
   onSwitchBucket?: () => void
+  // Label of the collection `onSwitchBucket` moves to. Only used when that
+  // callback is supplied.
+  switchLabel?: string
+  // Replaces the built-in upload card. Lets a page supply its own way of
+  // choosing the reference image (the Roboflow page picks from the dataset).
+  // Rendered in two places at different sizes, hence the variant; whatever it
+  // renders hands a File back through `onSelect`, the same shape the upload
+  // card produces, so the rest of the pipeline is unchanged.
+  referencePicker?: React.ComponentType<{
+    onSelect: (file: File) => void
+    variant: "hero" | "panel"
+  }>
   // True when the collection the switch points to is password-gated and not yet
   // unlocked, so the link shows a lock hint (the parent prompts on click).
   switchLocked?: boolean
@@ -812,8 +821,10 @@ type CanvasHeroProps = {
 }
 
 export function CanvasHero({
-  bucket,
+  collection,
   onSwitchBucket,
+  switchLabel,
+  referencePicker: ReferencePicker,
   switchLocked = false,
   maxTileReuse,
   minCellSize = DENSITY_MIN,
@@ -939,7 +950,7 @@ export function CanvasHero({
     const engine = new MosaicEngine()
     engineRef.current = engine
     void (async () => {
-      const { version, items } = await loadLibrary(bucket)
+      const { version, items } = await collection.loadLibrary()
       if (cancelled || items.length === 0) return
       libraryVersionRef.current = version
       engine.hydrate(items)
@@ -952,18 +963,18 @@ export function CanvasHero({
       engine.terminate()
       engineRef.current = null
     }
-  }, [bucket, maxTileReuse])
+  }, [collection, maxTileReuse])
 
   React.useEffect(() => {
     let cancelled = false
     void (async () => {
       try {
-        const cached = await readCachedMosaic(bucket)
+        const cached = await readCachedMosaic(collection.id)
         if (cancelled || !cached) return
         // If the library was re-seeded since this mosaic was generated, the baked
         // render can contain tiles that no longer exist — keep the reference so
         // the user can regenerate, but don't show the stale image.
-        const currentVersion = await fetchLibraryVersion(bucket)
+        const currentVersion = await collection.fetchVersion()
         if (cancelled) return
         const stale =
           (currentVersion !== null &&
@@ -1010,7 +1021,7 @@ export function CanvasHero({
     return () => {
       cancelled = true
     }
-  }, [bucket, maxTileReuse, densityMin, eraEmphasis])
+  }, [collection, maxTileReuse, densityMin, eraEmphasis])
 
   const referenceRef = React.useRef<ReferenceImage | null>(null)
   React.useEffect(() => {
@@ -1045,12 +1056,12 @@ export function CanvasHero({
     (id: string): GalleryTile => {
       const item = libraryById.get(id)
       return {
-        url: item?.fullUrl ?? item?.url ?? thumbUrl(bucket, id),
-        previewUrl: item?.url ?? thumbUrl(bucket, id),
+        url: item?.fullUrl ?? item?.url ?? collection.thumbUrl(id),
+        previewUrl: item?.url ?? collection.thumbUrl(id),
         title: item?.galleryTitle ?? item?.gallery ?? id,
       }
     },
-    [libraryById, bucket]
+    [libraryById, collection]
   )
 
   // Zoom explorer state. Opening snapshots the current canvas as the base image
@@ -1099,12 +1110,12 @@ export function CanvasHero({
         setIsGenerating(false)
         setGenerateProgress(null)
         setRestoredMosaicUrl(null)
-        void clearCachedMosaic(bucket)
+        void clearCachedMosaic(collection.id)
       } catch {
         // Unreadable image — keep current state so the user can retry.
       }
     },
-    [bucket]
+    [collection]
   )
 
   const handleRemoveReference = React.useCallback(() => {
@@ -1121,8 +1132,8 @@ export function CanvasHero({
     setIsGenerating(false)
     setGenerateProgress(null)
     setRestoredMosaicUrl(null)
-    void clearCachedMosaic(bucket)
-  }, [bucket])
+    void clearCachedMosaic(collection.id)
+  }, [collection])
 
   // Generate the contour-flow mosaic and paint it into the canvas. The raw tiles
   // sit on the reference's average color (the grout) showing through the gaps.
@@ -1229,7 +1240,7 @@ export function CanvasHero({
             ) {
               return
             }
-            await writeCachedMosaic(bucket, {
+            await writeCachedMosaic(collection.id, {
               version: 3,
               reference: {
                 name: ref.name,
@@ -1263,7 +1274,7 @@ export function CanvasHero({
         setGenerateProgress(null)
       }
     }
-  }, [bucket, maxTileReuse, eraEmphasis])
+  }, [collection, maxTileReuse, eraEmphasis])
 
   // Export the current mosaic canvas as a downloaded PNG. The canvas is never
   // tainted (tiles are fetched with CORS — the same toBlob path backs the
@@ -1275,7 +1286,7 @@ export function CanvasHero({
       const blob = await canvasToBlob(canvas)
       if (!blob) return
       const url = URL.createObjectURL(blob)
-      const base = reference?.name.replace(/\.[^./\\]+$/, "").trim() || bucket
+      const base = reference?.name.replace(/\.[^./\\]+$/, "").trim() || collection.id
       const a = document.createElement("a")
       a.href = url
       a.download = `${base}-mosaic.png`
@@ -1286,7 +1297,7 @@ export function CanvasHero({
     } catch {
       // Download is best-effort; failure leaves the on-screen mosaic intact.
     }
-  }, [hasMosaic, reference, bucket])
+  }, [hasMosaic, reference, collection])
 
   // Publish the current mosaic to a shareable /m/<id> link. Builds the same
   // hover hit-map the gallery uses, captures the canvas as a JPEG, and posts
@@ -1298,7 +1309,7 @@ export function CanvasHero({
     if (!canvas || !map || !fr || !hasMosaic || isPublishing) return
     track(MOSAIC_SHARE_BUTTON_EVENT, {
       button: "publish",
-      collection: bucket,
+      collection: collection.id,
       source,
     })
     setIsPublishing(true)
@@ -1337,7 +1348,7 @@ export function CanvasHero({
         })
         fd.append("geometry", JSON.stringify(encodeGeometry(geometry)))
       }
-      fd.append("collection", bucket)
+      fd.append("collection", collection.id)
       fd.append("w", String(shot.w))
       fd.append("h", String(shot.h))
 
@@ -1361,7 +1372,7 @@ export function CanvasHero({
     } finally {
       setIsPublishing(false)
     }
-  }, [tileMap, frame, hasMosaic, isPublishing, bucket, resolveTile])
+  }, [tileMap, frame, hasMosaic, isPublishing, collection, resolveTile])
 
   React.useEffect(() => {
     if (!restoredMosaicUrl || !frame) return
@@ -1436,7 +1447,7 @@ export function CanvasHero({
       const id = tileMap.tileIds[tileMap.assignment[cell]]
       if (!id) return null
       const item = libraryById.get(id)
-      const previewUrl = item?.url ?? thumbUrl(bucket, id)
+      const previewUrl = item?.url ?? collection.thumbUrl(id)
       return {
         cell,
         id,
@@ -1450,7 +1461,7 @@ export function CanvasHero({
         height: item?.h,
       }
     },
-    [frame, hasMosaic, tileMap, bucket, libraryById]
+    [frame, hasMosaic, tileMap, collection, libraryById]
   )
 
   // Desktop hover reveals the tile under the cursor (a tooltip preview). Touch
@@ -1532,10 +1543,9 @@ export function CanvasHero({
     }
   }, [tileMap, libraryById])
 
-  const otherBucket = MOSAIC_BUCKETS.find((b) => b !== bucket) ?? bucket
-  const currentLabel = BUCKET_LABELS[bucket]
-  const otherLabel = BUCKET_LABELS[otherBucket]
-  const copy = BUCKET_COPY[bucket]
+  const currentLabel = collection.label
+  const otherLabel = switchLabel ?? ""
+  const copy = collection.copy
   const resolutionValue = resolutionForDensity(density, densityMin)
   const resolutionMode = nearestResolutionMode(density, densityMin)
   const closeAdvanced = React.useCallback(() => setShowAdvanced(false), [])
@@ -1592,7 +1602,7 @@ export function CanvasHero({
         <MobileActionBar
           hasReference={Boolean(reference)}
           onToggleControls={closeAdvanced}
-          collection={bucket}
+          collection={collection.id}
           source="mobile-bottom-bar"
           resolutionMode={resolutionMode}
           onSelectMode={handleSelectResolution}
@@ -1602,7 +1612,7 @@ export function CanvasHero({
           progressPct={displayedProgressPct}
           generateDisabled={tileCount === 0 || isGenerating}
           onDownload={handleDownload}
-          showPublish
+          showPublish={collection.shareable}
           onPublish={handlePublish}
           isPublishing={isPublishing}
         />
@@ -1632,16 +1642,18 @@ export function CanvasHero({
 
             {/* Mobile-only shortcut to the collaborative NYC mosaic; on desktop
                 this link lives in the right sidebar instead. */}
-            <Button
-              variant="link"
-              asChild
-              className="h-auto p-0 underline md:hidden"
-            >
-              <Link href="/newyork-mosaic">
-                new york city mosaic
-                <ArrowRight />
-              </Link>
-            </Button>
+            {collection.shareable && (
+              <Button
+                variant="link"
+                asChild
+                className="h-auto p-0 underline md:hidden"
+              >
+                <Link href="/newyork-mosaic">
+                  new york city mosaic
+                  <ArrowRight />
+                </Link>
+              </Button>
+            )}
           </div>
 
           <div className="mx-auto grid w-full min-w-0 place-items-center max-md:flex max-md:flex-1 max-md:items-center max-md:justify-center md:max-w-[94vw] xl:max-w-none">
@@ -1741,7 +1753,14 @@ export function CanvasHero({
                 )}
               </div>
             ) : (
-              <ReferenceEmptyCard onSelect={handleSetReference} />
+              ReferencePicker ? (
+                <ReferencePicker
+                  onSelect={handleSetReference}
+                  variant="hero"
+                />
+              ) : (
+                <ReferenceEmptyCard onSelect={handleSetReference} />
+              )
             )}
           </div>
         </div>
@@ -1798,9 +1817,24 @@ export function CanvasHero({
                   reference={reference}
                   onReplace={handleSetReference}
                   onRemove={handleRemoveReference}
+                  replaceSlot={
+                    ReferencePicker ? (
+                      <ReferencePicker
+                        onSelect={handleSetReference}
+                        variant="panel"
+                      />
+                    ) : undefined
+                  }
                 />
               ) : (
-                <ReferencePanelEmpty onSelect={handleSetReference} />
+                ReferencePicker ? (
+                  <ReferencePicker
+                    onSelect={handleSetReference}
+                    variant="panel"
+                  />
+                ) : (
+                  <ReferencePanelEmpty onSelect={handleSetReference} />
+                )
               )}
             </SidebarGroupContent>
           </SidebarGroup>
@@ -1814,7 +1848,7 @@ export function CanvasHero({
               </SidebarGroupLabel>
               <SidebarGroupContent>
                 <MosaicActionControls
-                  collection={bucket}
+                  collection={collection.id}
                   source="desktop-sidebar"
                   resolutionMode={resolutionMode}
                   onSelectMode={handleSelectResolution}
@@ -1824,7 +1858,7 @@ export function CanvasHero({
                   progressPct={displayedProgressPct}
                   generateDisabled={tileCount === 0 || isGenerating}
                   onDownload={handleDownload}
-                  showPublish
+                  showPublish={collection.shareable}
                   onPublish={handlePublish}
                   isPublishing={isPublishing}
                 />
@@ -1835,7 +1869,9 @@ export function CanvasHero({
           <SidebarSeparator className="mx-0 hidden md:block" />
 
           {/* Invite visitors from this personal-mosaic experiment over to the
-              collaborative New York mosaic. */}
+              collaborative New York mosaic. Site-specific, so it rides along
+              with `shareable` — the Roboflow page opts out of both. */}
+          {collection.shareable && (
           <SidebarGroup className="hidden p-0 md:flex">
             <SidebarGroupContent>
               <Link
@@ -1847,6 +1883,7 @@ export function CanvasHero({
               </Link>
             </SidebarGroupContent>
           </SidebarGroup>
+          )}
         </SidebarContent>
 
         <SidebarFooter className="mt-auto flex flex-col gap-3 border-t p-4">

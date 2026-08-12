@@ -1,4 +1,4 @@
-import { CanvasHero } from "@/components/canvas-hero"
+import { SupabaseCanvasHero } from "@/components/supabase-canvas-hero"
 
 const KNICKS_MAX_TILE_REUSE = 20
 const KNICKS_MIN_CELL_SIZE = 8
@@ -17,7 +17,7 @@ export const metadata = {
 //   pnpm knicks:photo-frames && pnpm knicks:photo-seed
 export default function KnicksMosaicPage() {
   return (
-    <CanvasHero
+    <SupabaseCanvasHero
       bucket="knicks-mosaic"
       maxTileReuse={KNICKS_MAX_TILE_REUSE}
       minCellSize={KNICKS_MIN_CELL_SIZE}

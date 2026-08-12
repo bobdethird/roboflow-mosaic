@@ -181,6 +181,9 @@ interface ReferenceCardProps {
   reference: ReferenceImage
   onReplace: (file: File) => void
   onRemove: () => void
+  // Replaces the built-in "replace" file input, for callers that source their
+  // reference some other way.
+  replaceSlot?: React.ReactNode
 }
 
 // Persistent home for the active reference: thumbnail + filename + actions.
@@ -188,6 +191,7 @@ export function ReferenceCard({
   reference,
   onReplace,
   onRemove,
+  replaceSlot,
 }: ReferenceCardProps) {
   const inputRef = React.useRef<HTMLInputElement>(null)
   return (
@@ -207,14 +211,19 @@ export function ReferenceCard({
           {reference.name}
         </span>
         <div className="flex items-center gap-2">
-          <Button
-            variant="link"
-            size="xs"
-            className="h-auto p-0"
-            onClick={() => inputRef.current?.click()}
-          >
-            replace
-          </Button>
+          {/* A caller that supplies its own way of choosing a reference (the
+              Roboflow page picks out of the dataset) replaces the file input
+              here, so there is only ever one route to a reference image. */}
+          {replaceSlot ?? (
+            <Button
+              variant="link"
+              size="xs"
+              className="h-auto p-0"
+              onClick={() => inputRef.current?.click()}
+            >
+              replace
+            </Button>
+          )}
           <Separator
             orientation="vertical"
             className="h-3 data-vertical:self-center"

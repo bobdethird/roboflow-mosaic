@@ -9,13 +9,11 @@ import { COARSE_SIG_BYTES, type LibraryItem } from "./photo-library"
 import {
   COARSE_SIGNATURES_FILE,
   MANIFEST_FILE,
-  referenceFile,
   roboflowAssetUrl,
   roboflowThumbPath,
-  type ReferenceKind,
 } from "./roboflow"
 
-type RoboflowManifest = {
+export type RoboflowManifest = {
   version: string
   photos: { id: string; w: number; h: number; file?: string }[]
 }
@@ -25,13 +23,29 @@ export type RoboflowLibrary = {
   items: LibraryItem[]
 }
 
-// URL of the image the mosaic reproduces: the project's cover image or the
-// dataset's computed median.
-export function roboflowReferenceUrl(
-  slug: string,
-  kind: ReferenceKind
-): string {
-  return roboflowAssetUrl(slug, referenceFile(kind))
+// The manifest alone — the id list the reference picker browses.
+export async function loadRoboflowManifest(
+  slug: string
+): Promise<RoboflowManifest> {
+  const response = await fetch(roboflowAssetUrl(slug, MANIFEST_FILE))
+  if (!response.ok) {
+    throw new Error(`Could not load the dataset manifest (${response.status}).`)
+  }
+  return (await response.json()) as RoboflowManifest
+}
+
+// Just the library version, without pulling the signatures blob — used to spot a
+// cached mosaic whose tiles came from an earlier ingest.
+export async function roboflowLibraryVersion(
+  slug: string
+): Promise<string | null> {
+  try {
+    const response = await fetch(roboflowAssetUrl(slug, MANIFEST_FILE))
+    if (!response.ok) return null
+    return ((await response.json()) as RoboflowManifest).version ?? null
+  } catch {
+    return null
+  }
 }
 
 export async function loadRoboflowLibrary(
