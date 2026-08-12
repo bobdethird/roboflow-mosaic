@@ -9,9 +9,10 @@ import { COARSE_SIG_BYTES, type LibraryItem } from "./photo-library"
 import {
   COARSE_SIGNATURES_FILE,
   MANIFEST_FILE,
-  REFERENCE_FILE,
+  referenceFile,
   roboflowAssetUrl,
   roboflowThumbPath,
+  type ReferenceKind,
 } from "./roboflow"
 
 type RoboflowManifest = {
@@ -24,8 +25,13 @@ export type RoboflowLibrary = {
   items: LibraryItem[]
 }
 
-export function roboflowReferenceUrl(slug: string): string {
-  return roboflowAssetUrl(slug, REFERENCE_FILE)
+// URL of the image the mosaic reproduces: the project's cover image or the
+// dataset's computed median.
+export function roboflowReferenceUrl(
+  slug: string,
+  kind: ReferenceKind
+): string {
+  return roboflowAssetUrl(slug, referenceFile(kind))
 }
 
 export async function loadRoboflowLibrary(

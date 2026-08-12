@@ -58,6 +58,20 @@ export type ProjectInfo = {
   latestVersion: number | null
   versions: number[]
   imagesByVersion: Map<number, number>
+  // Full-size URL of the project's cover image, when it has one.
+  iconUrl?: string
+}
+
+// `project.icon` is `{ original, thumb, annotation }` on every project seen so
+// far, but tolerate a bare URL string too.
+function iconUrl(icon: unknown): string | undefined {
+  if (typeof icon === "string") return icon || undefined
+  if (icon && typeof icon === "object") {
+    const { original, thumb } = icon as Record<string, unknown>
+    if (typeof original === "string" && original) return original
+    if (typeof thumb === "string" && thumb) return thumb
+  }
+  return undefined
 }
 
 // Roboflow rejects an unknown export format outright, and the valid set depends
@@ -143,6 +157,7 @@ export async function fetchProjectInfo(ref: RoboflowRef): Promise<ProjectInfo> {
     latestVersion: versions.length ? versions[versions.length - 1] : null,
     versions,
     imagesByVersion,
+    iconUrl: iconUrl(project.icon),
   }
 }
 

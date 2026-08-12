@@ -28,6 +28,7 @@ const ALLOWED = new Set([
   "manifest.json",
   "signatures-coarse.bin",
   "reference.jpg",
+  "icon.jpg",
 ])
 
 function isSameOriginRequest(request: Request): boolean {

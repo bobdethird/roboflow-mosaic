@@ -6,9 +6,10 @@
 //   1. Ingest — POST the URL to /api/roboflow/ingest and poll until the server
 //      has built the tile library and the dataset's median image.
 //   2. Generate — hydrate the mosaic Web Worker with those tiles and run the
-//      same contour-flow generation the rest of the site uses, with the median
-//      image as the reference. So the mosaic is the dataset drawing itself:
-//      the shape every image agrees on, rebuilt out of the individual images.
+//      same contour-flow generation the rest of the site uses. Either way the
+//      mosaic is the dataset drawing itself, out of its own images; the switch
+//      is what it draws — the project's cover image (default), or the median,
+//      the shape every image in the set agrees on.
 
 import * as React from "react"
 
@@ -29,6 +30,7 @@ import {
   ROBOFLOW_INGEST_PATH,
   parseRoboflowUrl,
   type IngestStatus,
+  type ReferenceKind,
   type RoboflowDataset,
 } from "@/lib/roboflow"
 import {
@@ -46,6 +48,16 @@ const CELL_SIZES = [28, 22, 18, 14, 11, 9]
 const DEFAULT_DENSITY = 2
 
 const EXAMPLE_URL = "https://universe.roboflow.com/joseph-nelson/chess-pieces-new"
+
+const REFERENCE_LABELS: Record<ReferenceKind, string> = {
+  icon: "Project cover",
+  median: "Median image",
+}
+
+const REFERENCE_BLURBS: Record<ReferenceKind, string> = {
+  icon: "The cover image the dataset's author chose",
+  median: "Per-pixel median of the whole dataset",
+}
 
 type Phase = "idle" | "ingesting" | "loading" | "generating" | "done" | "error"
 
@@ -100,6 +112,10 @@ export function RoboflowMosaic() {
   const [tileCount, setTileCount] = React.useState(0)
   const [progress, setProgress] = React.useState({ done: 0, total: 0 })
   const [referenceUrl, setReferenceUrl] = React.useState<string | null>(null)
+  // Which image the mosaic reproduces. The project's cover image is the default
+  // when the ingest managed to fetch one; the median is always available.
+  const [referenceKind, setReferenceKind] =
+    React.useState<ReferenceKind>("icon")
 
   const canvasRef = React.useRef<HTMLCanvasElement | null>(null)
   const engineRef = React.useRef<MosaicEngine | null>(null)
@@ -221,7 +237,11 @@ export function RoboflowMosaic() {
       engineRef.current = engine
       idsRef.current = items.map((item) => item.id)
 
-      const refUrl = roboflowReferenceUrl(resolved.slug)
+      // Prefer the project's own cover image; fall back to the median when the
+      // project has none (or the ingest could not fetch it).
+      const kind: ReferenceKind = resolved.hasIcon ? "icon" : "median"
+      setReferenceKind(kind)
+      const refUrl = roboflowReferenceUrl(resolved.slug, kind)
       setReferenceUrl(refUrl)
       referenceRef.current = await loadImage(refUrl)
 
@@ -232,6 +252,29 @@ export function RoboflowMosaic() {
       setPhase("error")
     }
   }, [density, runGeneration, url])
+
+  // Swap the reference and re-render. Both images were written by the ingest, so
+  // this is a client-side re-run — no refetch of the dataset.
+  const handleReferenceKind = React.useCallback(
+    (kind: ReferenceKind) => {
+      if (!dataset || kind === referenceKind) return
+      const refUrl = roboflowReferenceUrl(dataset.slug, kind)
+      setReferenceKind(kind)
+      setReferenceUrl(refUrl)
+      void (async () => {
+        try {
+          referenceRef.current = await loadImage(refUrl)
+          await runGeneration(CELL_SIZES[density])
+        } catch (runError) {
+          setError(
+            runError instanceof Error ? runError.message : "Re-render failed."
+          )
+          setPhase("error")
+        }
+      })()
+    },
+    [dataset, density, referenceKind, runGeneration]
+  )
 
   const handleDensityCommit = React.useCallback(
     (value: number[]) => {
@@ -284,9 +327,10 @@ export function RoboflowMosaic() {
         </h1>
         <p className="text-muted-foreground max-w-2xl text-sm">
           Paste a Roboflow Universe dataset URL. Every image in the dataset
-          becomes a tile, and the reference the mosaic reproduces is the
-          dataset&rsquo;s <strong>median image</strong> — the per-pixel median of
-          the whole set. The result is the dataset rendered out of itself.
+          becomes a tile, so the result is the dataset rendered out of itself.
+          What it reproduces is the project&rsquo;s{" "}
+          <strong>cover image</strong> — or switch to the dataset&rsquo;s{" "}
+          <strong>median image</strong>, the per-pixel median of the whole set.
         </p>
       </header>
 
@@ -350,17 +394,35 @@ export function RoboflowMosaic() {
         <aside className="flex flex-col gap-4">
           {referenceUrl && (
             <figure className="flex flex-col gap-2">
-              {/* The median image is generated per dataset, so next/image's
+              {/* Both references are generated per dataset, so next/image's
                   optimizer has nothing to pre-size — a plain img is correct. */}
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={referenceUrl}
-                alt="Median image of the dataset"
+                alt={`${REFERENCE_LABELS[referenceKind]} — the mosaic's reference`}
                 className="w-full rounded-xl border"
               />
               <figcaption className="text-muted-foreground text-xs">
-                Median image — the reference
+                {REFERENCE_BLURBS[referenceKind]}
               </figcaption>
+              <div className="flex gap-1">
+                {(["icon", "median"] as const).map((kind) => (
+                  <Button
+                    key={kind}
+                    size="xs"
+                    variant={kind === referenceKind ? "default" : "outline"}
+                    onClick={() => handleReferenceKind(kind)}
+                    disabled={busy || (kind === "icon" && !dataset?.hasIcon)}
+                    title={
+                      kind === "icon" && !dataset?.hasIcon
+                        ? "No cover image saved for this dataset — re-ingest to fetch one"
+                        : undefined
+                    }
+                  >
+                    {REFERENCE_LABELS[kind]}
+                  </Button>
+                ))}
+              </div>
             </figure>
           )}
           {(phase === "done" || phase === "generating") && (

@@ -30,6 +30,7 @@ import yauzl from "yauzl"
 
 import {
   COARSE_SIGNATURES_FILE,
+  ICON_FILE,
   MANIFEST_FILE,
   REFERENCE_FILE,
   datasetSlug,
@@ -61,6 +62,9 @@ const MEDIAN_FALLBACK_EDGE = 384
 // Cap on how many images feed the median. Beyond this the sample is strided
 // evenly across the (sorted) file list, so it stays deterministic.
 const MEDIAN_SAMPLE_MAX = 4000
+// Long edge the project cover image is stored at. Matches the mosaic frame in
+// lib/mosaic-bake.ts — the engine never draws the reference bigger than this.
+const ICON_MAX_EDGE = 1600
 const CONCURRENCY = 8
 
 const IMAGE_EXTENSIONS = new Set([
@@ -480,11 +484,39 @@ export async function buildLibrary(
 
 // ─── Orchestration ───────────────────────────────────────────────────────────
 
+// The project's cover image, saved as the alternative reference. It is whatever
+// single image the dataset's author picked to represent the project, so it shows
+// one real scene rather than the whole set's consensus.
+//
+// Capped at the mosaic's own frame size (no crop, aspect preserved) because the
+// originals run to several megapixels and the engine never draws the reference
+// larger than this. A failure here is not fatal — the median is always there.
+async function downloadIcon(url: string, destination: string): Promise<boolean> {
+  try {
+    const response = await fetch(url)
+    if (!response.ok) return false
+    const bytes = Buffer.from(await response.arrayBuffer())
+    await sharp(bytes, { failOn: "none" })
+      .rotate() // honour EXIF orientation before the dimensions are baked in
+      .resize(ICON_MAX_EDGE, ICON_MAX_EDGE, {
+        fit: "inside",
+        withoutEnlargement: true,
+      })
+      .flatten({ background: "#ffffff" })
+      .jpeg({ quality: 92 })
+      .toFile(destination)
+    return true
+  } catch {
+    return false
+  }
+}
+
 export async function resolveDataset(ref: RoboflowRef): Promise<{
   ref: RoboflowRef & { version: number }
   name: string
   type?: string
   images: number
+  iconUrl?: string
 }> {
   const info = await fetchProjectInfo(ref)
   const version = ref.version ?? info.latestVersion
@@ -504,6 +536,7 @@ export async function resolveDataset(ref: RoboflowRef): Promise<{
     name: info.name,
     type: info.type,
     images: info.imagesByVersion.get(version) ?? 0,
+    iconUrl: info.iconUrl,
   }
 }
 
@@ -536,6 +569,16 @@ export async function ingestDataset(
 
     await downloadZip(link, zipPath, report)
     const files = await extractImages(zipPath, sourceDir, report)
+
+    let hasIcon = false
+    if (resolved.iconUrl) {
+      report("Fetching project cover image", 0, 0)
+      hasIcon = await downloadIcon(
+        resolved.iconUrl,
+        path.join(outputDir, ICON_FILE)
+      )
+    }
+
     const result = await buildLibrary(files, outputDir, report)
 
     return {
@@ -545,10 +588,21 @@ export async function ingestDataset(
       type: resolved.type,
       imageCount: result.photoCount,
       universeUrl: universeUrl(resolved.ref),
+      hasIcon,
     }
   } finally {
     await rm(zipPath, { force: true })
     if (!options.keepSource) await rm(sourceDir, { recursive: true, force: true })
+  }
+}
+
+// Did this ingest save a project cover image?
+export async function hasIconFile(slug: string): Promise<boolean> {
+  try {
+    await stat(path.join(datasetDir(slug), ICON_FILE))
+    return true
+  } catch {
+    return false
   }
 }
 

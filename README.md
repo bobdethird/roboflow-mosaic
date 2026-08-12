@@ -1,9 +1,16 @@
 # Roboflow dataset mosaic
 
 Give it a [Roboflow Universe](https://universe.roboflow.com) dataset URL and it
-renders that dataset as a photo mosaic of **its own median image**: every tile is
-one image from the dataset, and the picture they reassemble into is the
-per-pixel median of the whole set — the shape the dataset agrees on.
+renders that dataset as a photo mosaic of itself: every tile is one image from
+the dataset. What they reassemble into is your choice —
+
+- the **project's cover image**, the shot the dataset's author picked to
+  represent it (the default), or
+- the dataset's **median image**, the per-pixel median of the whole set — the
+  shape every image in it agrees on.
+
+Both are written during the ingest, so switching between them re-renders in the
+browser with no refetch.
 
 A fork of [bobdethird/mosaic](https://github.com/bobdethird/mosaic), keeping only
 the in-browser mosaic engine (that repo's `website/`, hoisted to the root here)
@@ -35,9 +42,14 @@ extracted. Then one pass per image produces:
 - a **thumbnail** (384px long edge), and
 - a contribution to the **median image**.
 
+The project's cover image is downloaded alongside them (`project.icon` from the
+Roboflow API, capped at 1600px, aspect preserved). A project without one — or a
+local-folder ingest — just leaves the median as the only reference.
+
 Results land in `.roboflow-cache/<workspace>--<project>--v<n>/`, laid out exactly
 like the Supabase buckets the original engine reads (`manifest.json`,
-`signatures-coarse.bin`, `thumbs/<id>.jpg`), plus `reference.jpg` — the median.
+`signatures-coarse.bin`, `thumbs/<id>.jpg`), plus the two references:
+`reference.jpg` (the median) and `icon.jpg` (the cover).
 
 **The median.** Every sampled image is folded into a per-pixel, per-channel value
 histogram, so the median runs over the whole dataset without ever holding it in
@@ -53,15 +65,17 @@ thing that can shrink the frame is the histogram's memory ceiling
 (width × height × 3 × 256 × 2 bytes, capped around a 512×512-equivalent), and
 that preserves the aspect ratio.
 
-**2. Generate (browser, unchanged engine).** The median image is handed to the
-existing contour-flow generator: a Sobel edge-vector field, Voronoi cells pushed
+**2. Generate (browser, unchanged engine).** The chosen reference is handed to
+the existing contour-flow generator: a Sobel edge-vector field, Voronoi cells pushed
 out of edges so cell borders settle along contours, one colour signature per
 cell, and a min-error tile per cell drawn rotated along the local contour. Tiles
 are fetched lazily, one thumbnail per placed cell.
 
 Ingests are slow (a large export is hundreds of megabytes), so the route starts
 one in the background and the page polls `status.json` for progress. Re-opening a
-dataset whose version is named in the URL is a pure cache hit — no API call.
+dataset whose version is named in the URL is a pure cache hit — no API call. To
+force a re-download (e.g. to pick up a cover image for a dataset ingested before
+covers were fetched), POST `{"url": …, "refresh": true}` to the ingest route.
 
 ## Layout
 

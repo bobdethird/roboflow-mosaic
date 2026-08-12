@@ -20,7 +20,16 @@ export type RoboflowDataset = RoboflowRef & {
   // Roboflow project type (object-detection, classification, ...).
   type?: string
   universeUrl: string
+  // Whether the project's cover image was fetched during the ingest. Local
+  // folder ingests and projects without a cover leave this false, and then the
+  // median is the only reference available.
+  hasIcon?: boolean
 }
+
+// Which image the mosaic reproduces.
+//   icon   — the project's own cover image, as chosen by the dataset's author
+//   median — the dataset's per-pixel median, computed during the ingest
+export type ReferenceKind = "icon" | "median"
 
 const ROBOFLOW_HOSTS = new Set([
   "universe.roboflow.com",
@@ -119,8 +128,14 @@ export const ROBOFLOW_INGEST_PATH = "/api/roboflow/ingest"
 
 export const MANIFEST_FILE = "manifest.json"
 export const COARSE_SIGNATURES_FILE = "signatures-coarse.bin"
-// The dataset's median image — the mosaic's reference.
+// The dataset's median image, computed during the ingest.
 export const REFERENCE_FILE = "reference.jpg"
+// The project's cover image, downloaded from Roboflow during the ingest.
+export const ICON_FILE = "icon.jpg"
+
+export function referenceFile(kind: ReferenceKind): string {
+  return kind === "icon" ? ICON_FILE : REFERENCE_FILE
+}
 
 export function roboflowAssetUrl(slug: string, path: string): string {
   const encoded = path

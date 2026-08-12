@@ -15,6 +15,7 @@ import {
 import { RoboflowApiError } from "@/lib/roboflow-api"
 import {
   IngestError,
+  hasIconFile,
   ingestDataset,
   isIngested,
   resolveDataset,
@@ -81,6 +82,7 @@ async function statusFromDisk(slug: string): Promise<IngestStatus | null> {
     name,
     imageCount,
     universeUrl: universeUrl({ workspace, project, version }),
+    hasIcon: await hasIconFile(slug),
   }
   return {
     slug,
@@ -93,13 +95,24 @@ async function statusFromDisk(slug: string): Promise<IngestStatus | null> {
   }
 }
 
+// The dataset record in a status.json can predate a feature — an ingest from
+// before cover images were fetched has no `hasIcon` at all. The filesystem is
+// the truth, so re-derive it rather than trusting a stale record.
+async function withIconState(status: IngestStatus): Promise<IngestStatus> {
+  if (status.state !== "ready" || !status.dataset) return status
+  const hasIcon = await hasIconFile(status.slug)
+  if (status.dataset.hasIcon === hasIcon) return status
+  return { ...status, dataset: { ...status.dataset, hasIcon } }
+}
+
 export async function GET(request: Request): Promise<Response> {
   const slug = new URL(request.url).searchParams.get("slug")?.trim()
   if (!slug || !isDatasetSlug(slug)) {
     return json({ error: "Missing or malformed slug." }, 400)
   }
-  const status = (await readStatus(slug)) ?? (await statusFromDisk(slug))
-  if (!status) return json({ error: "Unknown dataset." }, 404)
+  const raw = (await readStatus(slug)) ?? (await statusFromDisk(slug))
+  if (!raw) return json({ error: "Unknown dataset." }, 404)
+  const status = await withIconState(raw)
   // A status file can claim "running" after a server restart killed the job.
   if (status.state === "running" && !isRunning(slug)) {
     const stale = Date.now() - Date.parse(status.updatedAt) > 60_000
@@ -134,7 +147,7 @@ export async function POST(request: Request): Promise<Response> {
       const known = datasetSlug({ ...ref, version: ref.version })
       if (await isIngested(known)) {
         const cached = (await readStatus(known)) ?? (await statusFromDisk(known))
-        if (cached?.state === "ready") return json(cached)
+        if (cached?.state === "ready") return json(await withIconState(cached))
       }
     }
 
@@ -147,7 +160,7 @@ export async function POST(request: Request): Promise<Response> {
     }
     if (!body.refresh && (await isIngested(slug))) {
       const cached = (await readStatus(slug)) ?? (await statusFromDisk(slug))
-      if (cached?.state === "ready") return json(cached)
+      if (cached?.state === "ready") return json(await withIconState(cached))
     }
 
     started = {
