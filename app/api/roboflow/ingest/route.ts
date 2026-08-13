@@ -19,7 +19,6 @@ import {
 import { RoboflowApiError } from "@/lib/roboflow-api"
 import {
   IngestError,
-  MAX_VERCEL_IMAGES,
   VERCEL_INGEST_DEADLINE_MS,
   hasIconFile,
   ingestDataset,
@@ -265,14 +264,6 @@ export async function POST(request: Request): Promise<Response> {
 
     const resolved = await resolveDataset(ref)
     slug = datasetSlug(resolved.ref)
-    if (IS_VERCEL && resolved.images > MAX_VERCEL_IMAGES) {
-      return json(
-        {
-          error: `This dataset has too many images for this deployment (limit: ${MAX_VERCEL_IMAGES.toLocaleString()}). Try a smaller dataset.`,
-        },
-        413
-      )
-    }
 
     if (isRunning(slug)) {
       const current = await loadStatus(slug)

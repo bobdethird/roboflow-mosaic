@@ -4,7 +4,6 @@ export const MIB = 1024 * 1024
 // status files, and a few in-flight thumbnails.
 export const MAX_VERCEL_EXPORT_BYTES = 320 * MIB
 export const MAX_VERCEL_LIBRARY_BYTES = 128 * MIB
-export const MAX_VERCEL_IMAGES = 5_000
 
 // The browser incrementally unpacks the streamed ZIP, but still retains every
 // thumbnail as an object URL and one Blob for IndexedDB. Match the server's
@@ -24,8 +23,4 @@ export function storageLimitMessage(
 ): string {
   const limit = Math.floor(maxBytes / MIB)
   return `This dataset's ${kind} is too large for this deployment (limit: ${limit} MB). Try a smaller dataset.`
-}
-
-export function imageLimitMessage(maxImages: number): string {
-  return `This dataset has too many images for this deployment (limit: ${maxImages.toLocaleString()}). Try a smaller dataset.`
 }

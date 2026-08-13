@@ -14,8 +14,6 @@ import {
 } from "../lib/roboflow-control"
 import {
   MAX_PACK_BYTES,
-  MAX_VERCEL_IMAGES,
-  imageLimitMessage,
   storageLimitMessage,
 } from "../lib/roboflow-limits"
 import { unpackArchive } from "../lib/roboflow-pack"
@@ -67,9 +65,8 @@ test("the project-wide ingest window has a separate ceiling", () => {
 
 test("deployment limits stay mutually compatible", () => {
   assert.equal(MAX_PACK_BYTES, 128 * 1024 * 1024)
-  assert.equal(MAX_VERCEL_IMAGES, 5_000)
   assert.match(storageLimitMessage("export", 320 * 1024 * 1024), /320 MB/)
-  assert.match(imageLimitMessage(MAX_VERCEL_IMAGES), /5,000/)
+  assert.match(storageLimitMessage("library", 128 * 1024 * 1024), /128 MB/)
 })
 
 test("zoom geometry skips tiles whose image URL is not ready", () => {

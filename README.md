@@ -32,12 +32,12 @@ deleted after each finished or failed ingest. The completed library is streamed
 to Blob and the browser downloads it from the Blob CDN.
 
 To stay below the function's 500 MB scratch-space ceiling, deployments accept
-exports up to 320 MB, generated libraries up to 128 MB, and up to 5,000 images.
-Larger datasets fail with a size-limit message instead of filling the filesystem
-or running into the function deadline. Ingests use distributed per-dataset
-leases, same-origin checks, and a four-per-15-minute client rate window so one
-public caller cannot repeatedly trigger the same expensive export. A separate
-project-wide window caps aggregate work from distributed callers.
+exports up to 320 MB and generated libraries up to 128 MB. Larger datasets fail
+with a size-limit message instead of filling the filesystem. Ingests use
+distributed per-dataset leases, same-origin checks, and a four-per-15-minute
+client rate window so one public caller cannot repeatedly trigger the same
+expensive export. A separate project-wide window caps aggregate work from
+distributed callers.
 
 ## How it works
 

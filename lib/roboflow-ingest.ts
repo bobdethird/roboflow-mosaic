@@ -57,14 +57,12 @@ import {
 import {
   MAX_EXPORT_WAIT_MS,
   MAX_VERCEL_EXPORT_BYTES,
-  MAX_VERCEL_IMAGES,
   MAX_VERCEL_LIBRARY_BYTES,
   VERCEL_INGEST_DEADLINE_MS,
-  imageLimitMessage,
   storageLimitMessage,
 } from "./roboflow-limits"
 
-export { MAX_VERCEL_IMAGES, VERCEL_INGEST_DEADLINE_MS } from "./roboflow-limits"
+export { VERCEL_INGEST_DEADLINE_MS } from "./roboflow-limits"
 
 // Must match lib/mosaic.ts SIGNATURE_GRID and the worker's COARSE_GRID: the
 // browser compares tiles on 8×8×3 values stored as uint16 LE fixed-point, where
@@ -471,7 +469,6 @@ export type LibraryResult = {
 
 export type BuildLimits = {
   maxOutputBytes?: number
-  maxImages?: number
   deadline?: number
 }
 
@@ -484,9 +481,6 @@ export async function buildLibrary(
   limits: BuildLimits = {}
 ): Promise<LibraryResult> {
   const files = [...imageFiles].sort()
-  if (limits.maxImages && files.length > limits.maxImages) {
-    throw new IngestStorageLimitError(imageLimitMessage(limits.maxImages))
-  }
   const thumbsDir = path.join(outputDir, "thumbs")
   await rm(thumbsDir, { recursive: true, force: true })
   await mkdir(thumbsDir, { recursive: true })
@@ -595,9 +589,6 @@ async function buildLibraryFromZip(
   const names = (await zipImageNames(zipPath)).sort()
   if (!names.length) {
     throw new IngestError("The dataset export contained no images.")
-  }
-  if (limits.maxImages && names.length > limits.maxImages) {
-    throw new IngestStorageLimitError(imageLimitMessage(limits.maxImages))
   }
 
   const thumbsDir = path.join(outputDir, "thumbs")
@@ -770,9 +761,6 @@ export async function ingestDataset(
     options.deadline ??
     (IS_VERCEL ? Date.now() + VERCEL_INGEST_DEADLINE_MS : undefined)
   assertBeforeDeadline(deadline)
-  if (IS_VERCEL && resolved.images > MAX_VERCEL_IMAGES) {
-    throw new IngestStorageLimitError(imageLimitMessage(MAX_VERCEL_IMAGES))
-  }
   const slug = datasetSlug(resolved.ref)
   const outputDir = await createIngestDirectory(slug)
   const zipPath = path.join(outputDir, "export.zip")
@@ -819,13 +807,11 @@ export async function ingestDataset(
           report,
           {
             maxOutputBytes: IS_VERCEL ? MAX_VERCEL_LIBRARY_BYTES : undefined,
-            maxImages: IS_VERCEL ? MAX_VERCEL_IMAGES : undefined,
             deadline,
           }
         )
       : await buildLibraryFromZip(zipPath, outputDir, report, {
           maxOutputBytes: IS_VERCEL ? MAX_VERCEL_LIBRARY_BYTES : undefined,
-          maxImages: IS_VERCEL ? MAX_VERCEL_IMAGES : undefined,
           deadline,
         })
     if (blobEnabled()) {
