@@ -43,8 +43,13 @@ const EOCD_SEARCH_BYTES = 64 * 1024 + EOCD_FIXED + 20
 const DIRECTORY_WINDOW = 4 * 1024 * 1024
 // One ranged read may cover several entries. Reading a little dead space between
 // them beats paying for another request; reading a lot does not.
-const READ_WINDOW = 16 * 1024 * 1024
-const MERGE_GAP = 256 * 1024
+//
+// This is also what the ingest's memory footprint is made of, since a window is
+// held while the entries inside it are decoded: this times the read concurrency,
+// and nothing to do with how large the export is. Bigger windows mean fewer
+// requests for the same bytes, which stops mattering well below this size.
+const READ_WINDOW = 4 * 1024 * 1024
+const MERGE_GAP = 128 * 1024
 // The local header repeats the entry name and may carry a different extra
 // field than the central directory did, so a coalesced read leaves this much
 // slack for it. A larger local header just costs one extra request.
@@ -151,10 +156,58 @@ function parseTotalSize(header: string | null): number {
   return Number.isFinite(size) ? size : 0
 }
 
+// Read a response of known length into one buffer.
+//
+// `arrayBuffer()` collects the chunks and then concatenates them, so it holds the
+// body twice at the moment it finishes. Several of those overlap during an ingest
+// and the garbage they leave is the largest thing the process would hold, so the
+// bytes go straight into a buffer of the size that was asked for instead.
+async function readBody(
+  response: Response,
+  limit: number,
+  // Where to put them. A caller that reads windows over and over supplies the
+  // same buffer each time rather than leaving the allocator to churn megabytes.
+  into?: Buffer
+): Promise<Buffer> {
+  const declared = Number(response.headers.get("content-length") ?? NaN)
+  const expected = Number.isFinite(declared) ? Math.min(declared, limit) : limit
+  if (!response.body || expected <= 0) {
+    await response.body?.cancel().catch(() => undefined)
+    return Buffer.alloc(0)
+  }
+
+  const bytes =
+    into && into.length >= expected
+      ? into.subarray(0, expected)
+      : Buffer.allocUnsafe(expected)
+  let filled = 0
+  const reader = response.body.getReader()
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      // A host answering with more than it was asked for is not one this can
+      // read from safely; the alternative is growing a buffer without a bound.
+      if (filled + value.length > bytes.length) {
+        throw new ZipReadError(
+          "The export host returned more than the requested range."
+        )
+      }
+      bytes.set(value, filled)
+      filled += value.length
+    }
+  } finally {
+    await reader.cancel().catch(() => undefined)
+  }
+  return filled === bytes.length ? bytes : bytes.subarray(0, filled)
+}
+
 async function fetchRange(
   url: string,
   range: string,
-  signal?: AbortSignal
+  limit: number,
+  signal?: AbortSignal,
+  into?: Buffer
 ): Promise<RangeResult> {
   const response = await fetch(url, {
     headers: { range },
@@ -173,7 +226,7 @@ async function fetchRange(
     )
   }
   return {
-    bytes: Buffer.from(await response.arrayBuffer()),
+    bytes: await readBody(response, limit, into),
     totalSize: parseTotalSize(response.headers.get("content-range")),
   }
 }
@@ -182,9 +235,16 @@ function fetchSpan(
   url: string,
   start: number,
   length: number,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  into?: Buffer
 ): Promise<RangeResult> {
-  return fetchRange(url, `bytes=${start}-${start + length - 1}`, signal)
+  return fetchRange(
+    url,
+    `bytes=${start}-${start + length - 1}`,
+    length,
+    signal,
+    into
+  )
 }
 
 // ─── Central directory ───────────────────────────────────────────────────────
@@ -218,6 +278,7 @@ async function readEocd(
   const { bytes: tail, totalSize } = await fetchRange(
     url,
     `bytes=-${EOCD_SEARCH_BYTES}`,
+    EOCD_SEARCH_BYTES,
     signal
   )
   const at = findEocd(tail)
@@ -500,13 +561,18 @@ export async function readZipEntries(
   let failure: unknown = null
 
   // A window covers many entries, so losing one to a blip loses all of them.
-  const fetchWindow = async (group: ReadGroup): Promise<Buffer> => {
+  const fetchWindow = async (
+    group: ReadGroup,
+    into: Buffer
+  ): Promise<Buffer> => {
+    const length = group.end - group.start
     try {
       const { bytes } = await fetchSpan(
         url,
         group.start,
-        group.end - group.start,
-        options.signal
+        length,
+        options.signal,
+        into
       )
       return bytes
     } catch (error) {
@@ -514,28 +580,38 @@ export async function readZipEntries(
       const { bytes } = await fetchSpan(
         url,
         group.start,
-        group.end - group.start,
-        options.signal
+        length,
+        options.signal,
+        into
       )
       return bytes
     }
   }
 
   const worker = async () => {
+    // One window per worker for the whole read. A worker holds its window while
+    // it decodes the entries inside it and does not refill it until they are
+    // done, so this is the read's entire footprint: concurrency × READ_WINDOW,
+    // whatever the export's size. An entry too large for a shared window (a
+    // single image bigger than one) gets a buffer of its own.
+    const window = Buffer.allocUnsafe(READ_WINDOW)
     while (failure === null) {
       if (options.stop?.()) return
       const index = next++
       if (index >= groups.length) return
       const group = groups[index]
       try {
-        const window = { start: group.start, bytes: await fetchWindow(group) }
+        const read = {
+          start: group.start,
+          bytes: await fetchWindow(group, window),
+        }
         for (const entry of group.entries) {
           if (failure !== null) return
           try {
             const compressed = await entryBytes(
               url,
               entry,
-              window,
+              read,
               options.signal
             )
             await visit(entry, await expand(entry, compressed))
