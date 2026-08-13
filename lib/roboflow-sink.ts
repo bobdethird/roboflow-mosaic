@@ -159,7 +159,8 @@ export function multipartArchiveSink(
   const flush = async (final: boolean): Promise<void> => {
     for (;;) {
       if (failure) throw failure
-      const take = queuedBytes >= PART_BYTES ? PART_BYTES : final ? queuedBytes : 0
+      const take =
+        queuedBytes >= PART_BYTES ? PART_BYTES : final ? queuedBytes : 0
       if (!take) return
       startPart(takeBytes(queue, take))
       queuedBytes -= take

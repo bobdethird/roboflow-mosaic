@@ -7,7 +7,11 @@
 import type { CollectionCopy, LibraryItem } from "./tile-library"
 import type { RoboflowDataset } from "./roboflow"
 import { loadRoboflowLibrary } from "./roboflow-library"
-import { releasePack, type PackProgress, type RoboflowPack } from "./roboflow-pack"
+import {
+  releasePack,
+  type PackProgress,
+  type RoboflowPack,
+} from "./roboflow-pack"
 
 export type LibraryLoad = {
   version: string

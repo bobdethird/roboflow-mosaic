@@ -205,7 +205,9 @@ function findEocd(tail: Buffer): number {
     const commentLength = tail.readUInt16LE(at + 20)
     if (at + EOCD_FIXED + commentLength === tail.length) return at
   }
-  throw new ZipReadError("The export zip has no end-of-central-directory record.")
+  throw new ZipReadError(
+    "The export zip has no end-of-central-directory record."
+  )
 }
 
 async function readEocd(
@@ -314,7 +316,10 @@ function parseDirectoryWindow(
       offset === 0xffffffff
     ) {
       applyZip64Extra(
-        buffer.subarray(nameStart + nameLength, nameStart + nameLength + extraLength),
+        buffer.subarray(
+          nameStart + nameLength,
+          nameStart + nameLength + extraLength
+        ),
         entry,
         {
           compressed: compressedSize === 0xffffffff,
@@ -351,7 +356,9 @@ export async function readZipIndex(
       !eocd.directorySize ||
       eocd.directoryOffset + eocd.directorySize > (totalSize || Infinity)
     ) {
-      throw new ZipReadError("The export zip's central directory is out of range.")
+      throw new ZipReadError(
+        "The export zip's central directory is out of range."
+      )
     }
 
     const sample = new EvenSample<ZipEntry>(options.maxEntries)

@@ -19,10 +19,7 @@ import { unzipSync } from "fflate"
 import sharp from "sharp"
 import { ZipFile } from "yazl"
 
-import {
-  buildLibraryFromExport,
-  planTileSample,
-} from "../lib/roboflow-ingest"
+import { buildLibraryFromExport, planTileSample } from "../lib/roboflow-ingest"
 import { COARSE_SIG_BYTES } from "../lib/tile-library"
 import {
   PART_BYTES,
@@ -111,7 +108,9 @@ async function serve(body: Buffer, ranges = true): Promise<Host> {
     const [, rawStart, rawEnd] = match
     // "bytes=-500" is the last 500 bytes, which is how the reader finds the
     // central directory without knowing the archive's size.
-    const start = rawStart ? Number(rawStart) : Math.max(0, body.length - Number(rawEnd))
+    const start = rawStart
+      ? Number(rawStart)
+      : Math.max(0, body.length - Number(rawEnd))
     const end = rawStart
       ? Math.min(body.length - 1, rawEnd ? Number(rawEnd) : body.length - 1)
       : body.length - 1
@@ -225,10 +224,7 @@ test("reading a sample touches only the sampled entries", async () => {
       },
       { concurrency: 2 }
     )
-    assert.deepEqual(
-      seen.sort(),
-      wanted.map((entry) => entry.name).sort()
-    )
+    assert.deepEqual(seen.sort(), wanted.map((entry) => entry.name).sort())
   } finally {
     await host.close()
   }
@@ -453,7 +449,8 @@ function collectingUploader() {
     },
   }
 
-  const ordered = () => [...uploaded].sort((a, b) => a.partNumber - b.partNumber)
+  const ordered = () =>
+    [...uploaded].sort((a, b) => a.partNumber - b.partNumber)
 
   return {
     uploader,
