@@ -1,22 +1,18 @@
-// Turns a Roboflow Universe dataset into a mosaic tile library plus the
-// reference image the mosaic is built from.
+// Turns a Roboflow Universe dataset into the mosaic's tile library.
 //
 // Pipeline:
 //   1. resolve the dataset version and ask Roboflow for a zip export link
 //   2. stream the zip down
 //   3. one decode per image → content-addressed id, 16×16 colour signature,
-//      thumbnail, and a contribution to the dataset's median image
-//   4. write manifest.json + signatures-coarse.bin + thumbs/ + reference.jpg
+//      and a thumbnail
+//   4. write manifest.json + signatures-coarse.bin + thumbs/
 //
-// Steps 3–4 are shared with the local-directory ingest (scripts/ingest-dir.ts),
+// Steps 3–4 are shared with the local-directory ingest (scripts/ingest-dir.mts),
 // so any folder of images can be mosaicked the same way.
 //
-// The reference is the dataset's **median image**: the per-pixel, per-channel
-// median across every sampled image. A median (rather than a mean) keeps the
-// dataset's dominant structure — the shape the whole set agrees on — instead of
-// smearing outliers into everything. It is computed at the dataset's own native
-// frame with every image resampled whole into it, so nothing is cropped out of
-// the reference.
+// What the mosaic reproduces is chosen in the browser afterwards — the project
+// cover, or any single image out of the dataset — so the ingest does not build
+// a reference image of its own.
 
 import { createHash } from "node:crypto"
 import { createWriteStream } from "node:fs"
@@ -32,7 +28,6 @@ import {
   COARSE_SIGNATURES_FILE,
   ICON_FILE,
   MANIFEST_FILE,
-  REFERENCE_FILE,
   datasetSlug,
   parseDatasetSlug,
   universeUrl,
@@ -64,17 +59,6 @@ const COARSE_VALUES = COARSE_GRID * COARSE_GRID * 3
 
 const THUMB_LONG_EDGE = 384
 const THUMB_QUALITY = 82
-// The median reference is built at the dataset's own native frame (see
-// `referenceDims`) so no image has to be cropped into it. The only limit is
-// memory: the median histogram costs width × height × 3 × 256 × 2 bytes, so
-// ~262k pixels (a 512×512-equivalent frame) is a ~400 MB ceiling. Bigger
-// datasets scale down with their aspect ratio preserved.
-const MEDIAN_MAX_PIXELS = 262_144
-// Used only if not one image in the sample could be read for its dimensions.
-const MEDIAN_FALLBACK_EDGE = 384
-// Cap on how many images feed the median. Beyond this the sample is strided
-// evenly across the (sorted) file list, so it stays deterministic.
-const MEDIAN_SAMPLE_MAX = 4000
 // Long edge the project cover image is stored at. Matches the mosaic frame in
 // lib/mosaic-bake.ts — the engine never draws the reference bigger than this.
 const ICON_MAX_EDGE = 1600
@@ -204,8 +188,8 @@ function readZipEntry(zip: yauzl.ZipFile, entry: yauzl.Entry): Promise<Buffer> {
   })
 }
 
-// Names of image entries, without decompressing them. Used to pick the median
-// sample and the dimension probe before the (expensive) pixel pass.
+// Names of image entries, without decompressing them. Sorting these fixes the
+// manifest order — and so the signature order — independently of zip order.
 async function zipImageNames(zipPath: string): Promise<string[]> {
   const zip = await openZip(zipPath)
   const names: string[] = []
@@ -282,17 +266,10 @@ async function forEachZipImage(
 
 // ─── Per-image work ──────────────────────────────────────────────────────────
 
-async function rawRgb(
-  pipeline: sharp.Sharp,
-  width: number,
-  height: number,
-  fit: "cover" | "fill"
-): Promise<Buffer> {
+// The 16×16 centre crop the tile signature is computed from.
+async function signatureGrid(pipeline: sharp.Sharp): Promise<Buffer> {
   const { data, info } = await pipeline
-    .resize(width, height, {
-      fit,
-      ...(fit === "cover" ? { position: "centre" as const } : {}),
-    })
+    .resize(SIG_GRID, SIG_GRID, { fit: "cover", position: "centre" })
     .flatten({ background: "#ffffff" })
     .toColourspace("srgb")
     .raw()
@@ -303,48 +280,30 @@ async function rawRgb(
   return data
 }
 
-// One decode of `bytes`, then clones for whichever outputs we need. Signature,
-// thumbnail, and median contribution used to each construct their own Sharp
-// pipeline — four JPEG decodes of the same file.
+// The two things every tile needs: its coarse colour signature and its
+// thumbnail. Both are cloned off one Sharp instance — that does not share the
+// JPEG decode (measured: it is no faster than two independent pipelines), but
+// libvips shrinks on load for both targets, so neither ever decodes full size.
 async function decodeOutputs(
   bytes: Buffer,
-  need: {
-    signature: boolean
-    thumbPath: string | null
-    median: MedianAccumulator | null
-  }
-): Promise<{ width: number; height: number; signature?: Buffer }> {
+  thumbPath: string
+): Promise<{ width: number; height: number; signature: Buffer }> {
   const image = sharp(bytes, { failOn: "none" })
   const metadata = await image.metadata()
-  const tasks: Promise<unknown>[] = []
-  let signature: Buffer | undefined
 
-  if (need.signature) {
-    tasks.push(
-      rawRgb(image.clone(), SIG_GRID, SIG_GRID, "cover").then((data) => {
-        signature = coarseSignature(data)
+  const [signature] = await Promise.all([
+    signatureGrid(image.clone()).then(coarseSignature),
+    image
+      .clone()
+      .resize(THUMB_LONG_EDGE, THUMB_LONG_EDGE, {
+        fit: "inside",
+        withoutEnlargement: true,
       })
-    )
-  }
-  if (need.thumbPath) {
-    tasks.push(
-      image
-        .clone()
-        .resize(THUMB_LONG_EDGE, THUMB_LONG_EDGE, {
-          fit: "inside",
-          withoutEnlargement: true,
-        })
-        .flatten({ background: "#ffffff" })
-        .jpeg({ quality: THUMB_QUALITY })
-        .toFile(need.thumbPath)
-    )
-  }
-  if (need.median) {
-    const acc = need.median
-    tasks.push(rawRgb(image.clone(), acc.width, acc.height, "fill").then((data) => acc.add(data)))
-  }
+      .flatten({ background: "#ffffff" })
+      .jpeg({ quality: THUMB_QUALITY })
+      .toFile(thumbPath),
+  ])
 
-  await Promise.all(tasks)
   return {
     width: metadata.width ?? 0,
     height: metadata.height ?? 0,
@@ -372,56 +331,6 @@ function coarseSignature(sig: Buffer): Buffer {
   return out
 }
 
-// Per-pixel-per-channel value histogram. Accumulating counts lets the median run
-// over every sampled image without ever holding them all in memory.
-class MedianAccumulator {
-  private readonly counts: Uint16Array
-  private samples = 0
-
-  constructor(
-    readonly width: number,
-    readonly height: number
-  ) {
-    this.counts = new Uint16Array(width * height * 3 * 256)
-  }
-
-  add(rgb: Buffer): void {
-    const counts = this.counts
-    for (let i = 0; i < rgb.length; i++) counts[i * 256 + rgb[i]] += 1
-    this.samples += 1
-  }
-
-  get count(): number {
-    return this.samples
-  }
-
-  // The smallest value whose cumulative count reaches ⌊n/2⌋+1 — i.e. the
-  // ⌈(n+1)/2⌉-th smallest sample. For an odd n that is exactly the median; for
-  // an even n it is the upper of the two middle values rather than their mean,
-  // which avoids inventing a value no image contributed and keeps this to one
-  // pass over the histogram.
-  median(): Buffer {
-    if (!this.samples) throw new IngestError("No images contributed to the median.")
-    const half = Math.floor(this.samples / 2) + 1
-    const values = this.width * this.height * 3
-    const out = Buffer.allocUnsafe(values)
-    for (let i = 0; i < values; i++) {
-      const base = i * 256
-      let cumulative = 0
-      let value = 255
-      for (let v = 0; v < 256; v++) {
-        cumulative += this.counts[base + v]
-        if (cumulative >= half) {
-          value = v
-          break
-        }
-      }
-      out[i] = value
-    }
-    return out
-  }
-}
-
 // Run `task` over `items` with a bounded number in flight.
 async function pooled<T>(
   items: T[],
@@ -443,87 +352,10 @@ export type ManifestPhoto = { id: string; w: number; h: number; file: string }
 export type LibraryResult = {
   photoCount: number
   skipped: number
-  reference: { width: number; height: number; samples: number }
 }
 
-function medianOf(values: number[]): number {
-  const sorted = [...values].sort((a, b) => a - b)
-  return sorted[Math.floor(sorted.length / 2)]
-}
-
-function frameFromSizes(
-  sizes: { width: number; height: number }[]
-): { width: number; height: number } {
-  if (!sizes.length) {
-    return { width: MEDIAN_FALLBACK_EDGE, height: MEDIAN_FALLBACK_EDGE }
-  }
-
-  const exact = new Map<string, number>()
-  for (const { width, height } of sizes) {
-    const key = `${width}x${height}`
-    exact.set(key, (exact.get(key) ?? 0) + 1)
-  }
-
-  // A size most of the sample shares is the dataset's real frame — use it
-  // verbatim rather than a median that could land between two common sizes.
-  const [dominantKey, dominantCount] = [...exact.entries()].reduce((a, b) =>
-    b[1] > a[1] ? b : a
-  )
-  let width: number
-  let height: number
-  if (dominantCount >= sizes.length / 2) {
-    ;[width, height] = dominantKey.split("x").map(Number)
-  } else {
-    width = medianOf(sizes.map((s) => s.width))
-    height = medianOf(sizes.map((s) => s.height))
-  }
-
-  const pixels = width * height
-  if (pixels > MEDIAN_MAX_PIXELS) {
-    const scale = Math.sqrt(MEDIAN_MAX_PIXELS / pixels)
-    width = Math.max(2, Math.round(width * scale))
-    height = Math.max(2, Math.round(height * scale))
-  }
-  return { width, height }
-}
-
-// The frame the median reference is computed in, from a cheap header-only pass
-// over the sample. It is the dataset's OWN native size, so images go in whole
-// rather than being cropped to fit: a Roboflow export is normally one uniform
-// size, and then this is exactly that size and every image maps 1:1. Mixed-size
-// datasets fall back to the median width and height.
-//
-// The frame is only ever shrunk by the histogram memory ceiling, and that keeps
-// the aspect ratio.
-async function referenceDims(
-  files: string[]
-): Promise<{ width: number; height: number }> {
-  const sizes: { width: number; height: number }[] = []
-  await pooled(files.slice(0, 200), CONCURRENCY, async (file) => {
-    try {
-      const { width, height } = await sharp(file).metadata()
-      if (!width || !height) return
-      sizes.push({ width, height })
-    } catch {
-      // Unreadable images are skipped here and again in the main pass.
-    }
-  })
-  return frameFromSizes(sizes)
-}
-
-// Deterministic, evenly strided subsample so the median doesn't depend on which
-// images happen to come first in the zip.
-function medianSample(files: string[]): string[] {
-  if (files.length <= MEDIAN_SAMPLE_MAX) return files
-  const stride = files.length / MEDIAN_SAMPLE_MAX
-  return Array.from(
-    { length: MEDIAN_SAMPLE_MAX },
-    (_, i) => files[Math.floor(i * stride)]
-  )
-}
-
-// Build the tile library + median reference from a directory of images and
-// write them into `outputDir` in the layout the browser engine expects.
+// Build the tile library from a directory of images and write it into
+// `outputDir` in the layout the browser engine expects.
 export async function buildLibrary(
   imageFiles: string[],
   outputDir: string,
@@ -532,11 +364,6 @@ export async function buildLibrary(
   const files = [...imageFiles].sort()
   const thumbsDir = path.join(outputDir, "thumbs")
   await mkdir(thumbsDir, { recursive: true })
-
-  report("Measuring images", 0, files.length)
-  const dims = await referenceDims(files)
-  const accumulator = new MedianAccumulator(dims.width, dims.height)
-  const sample = new Set(medianSample(files))
 
   const photos: (ManifestPhoto | null)[] = new Array(files.length).fill(null)
   const signatures: (Buffer | null)[] = new Array(files.length).fill(null)
@@ -548,25 +375,21 @@ export async function buildLibrary(
     try {
       const bytes = await readFile(file)
       const id = createHash("sha1").update(bytes).digest("hex").slice(0, 16)
-      const isNew = !seen.has(id)
-      if (isNew) seen.add(id)
-      const inSample = sample.has(file)
-      if (!isNew && !inSample) return
+      // A byte-identical duplicate already has its thumbnail and signature.
+      if (seen.has(id)) return
+      seen.add(id)
 
-      const decoded = await decodeOutputs(bytes, {
-        signature: isNew,
-        thumbPath: isNew ? path.join(thumbsDir, `${id}.jpg`) : null,
-        median: inSample ? accumulator : null,
-      })
-      if (isNew && decoded.signature) {
-        photos[index] = {
-          id,
-          w: decoded.width,
-          h: decoded.height,
-          file: path.basename(file),
-        }
-        signatures[index] = decoded.signature
+      const decoded = await decodeOutputs(
+        bytes,
+        path.join(thumbsDir, `${id}.jpg`)
+      )
+      photos[index] = {
+        id,
+        w: decoded.width,
+        h: decoded.height,
+        file: path.basename(file),
       }
+      signatures[index] = decoded.signature
     } catch {
       skipped += 1
     } finally {
@@ -589,31 +412,17 @@ export async function buildLibrary(
     throw new IngestError("None of the dataset's images could be read.")
   }
 
-  await writeLibrary(outputDir, keptPhotos, keptSignatures, accumulator, dims, report)
+  await writeLibrary(outputDir, keptPhotos, keptSignatures, report)
 
-  return {
-    photoCount: keptPhotos.length,
-    skipped,
-    reference: { ...dims, samples: accumulator.count },
-  }
+  return { photoCount: keptPhotos.length, skipped }
 }
 
 async function writeLibrary(
   outputDir: string,
   photos: ManifestPhoto[],
   signatures: Buffer[],
-  accumulator: MedianAccumulator,
-  dims: { width: number; height: number },
   report: ProgressReporter
 ): Promise<void> {
-  report("Computing median reference", 0, 0)
-  const medianRgb = accumulator.median()
-  await sharp(medianRgb, {
-    raw: { width: dims.width, height: dims.height, channels: 3 },
-  })
-    .jpeg({ quality: 92 })
-    .toFile(path.join(outputDir, REFERENCE_FILE))
-
   report("Writing library", 0, 0)
   await writeFile(
     path.join(outputDir, COARSE_SIGNATURES_FILE),
@@ -627,28 +436,6 @@ async function writeLibrary(
       2
     )
   )
-}
-
-async function sizesFromZip(
-  zipPath: string,
-  names: string[]
-): Promise<{ width: number; height: number }[]> {
-  const wanted = new Set(names)
-  const sizes: { width: number; height: number }[] = []
-  await forEachZipImage(
-    zipPath,
-    async (_name, bytes) => {
-      try {
-        const { width, height } = await sharp(bytes, { failOn: "none" }).metadata()
-        if (width && height) sizes.push({ width, height })
-      } catch {
-        // Same as the file probe: unreadable images are skipped here and again
-        // in the main pass.
-      }
-    },
-    (name) => wanted.has(name)
-  )
-  return sizes
 }
 
 // Same outputs as `buildLibrary`, but images are decoded straight from the
@@ -667,11 +454,6 @@ async function buildLibraryFromZip(
   const thumbsDir = path.join(outputDir, "thumbs")
   await mkdir(thumbsDir, { recursive: true })
 
-  report("Measuring images", 0, names.length)
-  const dims = frameFromSizes(await sizesFromZip(zipPath, names.slice(0, 200)))
-  const accumulator = new MedianAccumulator(dims.width, dims.height)
-  const sample = new Set(medianSample(names))
-
   const byName = new Map<string, { photo: ManifestPhoto; signature: Buffer }>()
   const seen = new Set<string>()
   let processed = 0
@@ -680,27 +462,23 @@ async function buildLibraryFromZip(
   await forEachZipImage(zipPath, async (fileName, bytes) => {
     try {
       const id = createHash("sha1").update(bytes).digest("hex").slice(0, 16)
-      const isNew = !seen.has(id)
-      if (isNew) seen.add(id)
-      const inSample = sample.has(fileName)
-      if (!isNew && !inSample) return
+      // A byte-identical duplicate already has its thumbnail and signature.
+      if (seen.has(id)) return
+      seen.add(id)
 
-      const decoded = await decodeOutputs(bytes, {
-        signature: isNew,
-        thumbPath: isNew ? path.join(thumbsDir, `${id}.jpg`) : null,
-        median: inSample ? accumulator : null,
+      const decoded = await decodeOutputs(
+        bytes,
+        path.join(thumbsDir, `${id}.jpg`)
+      )
+      byName.set(fileName, {
+        photo: {
+          id,
+          w: decoded.width,
+          h: decoded.height,
+          file: path.basename(fileName),
+        },
+        signature: decoded.signature,
       })
-      if (isNew && decoded.signature) {
-        byName.set(fileName, {
-          photo: {
-            id,
-            w: decoded.width,
-            h: decoded.height,
-            file: path.basename(fileName),
-          },
-          signature: decoded.signature,
-        })
-      }
     } catch {
       skipped += 1
     } finally {
@@ -721,24 +499,20 @@ async function buildLibraryFromZip(
     throw new IngestError("None of the dataset's images could be read.")
   }
 
-  await writeLibrary(outputDir, keptPhotos, keptSignatures, accumulator, dims, report)
+  await writeLibrary(outputDir, keptPhotos, keptSignatures, report)
 
-  return {
-    photoCount: keptPhotos.length,
-    skipped,
-    reference: { ...dims, samples: accumulator.count },
-  }
+  return { photoCount: keptPhotos.length, skipped }
 }
 
 // ─── Orchestration ───────────────────────────────────────────────────────────
 
-// The project's cover image, saved as the alternative reference. It is whatever
-// single image the dataset's author picked to represent the project, so it shows
-// one real scene rather than the whole set's consensus.
+// The project's cover image — whatever single image the dataset's author picked
+// to represent it, and the default thing the mosaic reproduces.
 //
 // Capped at the mosaic's own frame size (no crop, aspect preserved) because the
 // originals run to several megapixels and the engine never draws the reference
-// larger than this. A failure here is not fatal — the median is always there.
+// larger than this. A failure here is not fatal: the picker can still offer any
+// image out of the dataset.
 async function downloadIcon(url: string, destination: string): Promise<boolean> {
   try {
     const response = await fetch(url)
@@ -871,7 +645,7 @@ export async function ensureCover(slug: string): Promise<boolean> {
     if (error instanceof RoboflowApiError && error.status === 404) {
       throw new IngestError(
         `${ref.workspace}/${ref.project} is not a Roboflow project, so it has no ` +
-          "cover image. Use the median instead."
+          "cover image. Pick an image from the dataset instead."
       )
     }
     throw error
@@ -905,7 +679,6 @@ async function isIngestedLocally(slug: string): Promise<boolean> {
     const dir = datasetDir(slug)
     await stat(path.join(dir, MANIFEST_FILE))
     await stat(path.join(dir, COARSE_SIGNATURES_FILE))
-    await stat(path.join(dir, REFERENCE_FILE))
     const thumbs = await readdir(path.join(dir, "thumbs"))
     return thumbs.length > 0
   } catch {

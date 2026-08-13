@@ -5,7 +5,7 @@
 //   <cache>/<slug>/manifest.json           { version, photos: [{ id, w, h }] }
 //   <cache>/<slug>/signatures-coarse.bin   uint16 LE coarse signatures, in photo order
 //   <cache>/<slug>/thumbs/<id>.jpg         one thumbnail per photo
-//   <cache>/<slug>/reference.jpg           the dataset's median image
+//   <cache>/<slug>/icon.jpg                the project's cover image
 //   <cache>/<slug>/status.json             ingest progress / result
 //
 // Ingests are long-running, so the route starts one in the background and the

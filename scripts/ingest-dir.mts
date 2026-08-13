@@ -6,9 +6,9 @@
 // script runs on top-level await.
 //
 // Useful for two things: mosaicking a folder you already have on disk, and
-// exercising the whole tile/median pipeline without a Roboflow API key. It
-// writes the same cache layout the API route does, so /roboflow can render the
-// result once the slug is known.
+// exercising the whole tile pipeline without a Roboflow API key. It writes the
+// same cache layout the API route does, so /roboflow can render the result once
+// the slug is known.
 
 import { mkdir, readdir, writeFile } from "node:fs/promises"
 import path from "node:path"
@@ -86,9 +86,5 @@ const status: IngestStatus = {
 }
 await writeFile(path.join(outputDir, "status.json"), JSON.stringify(status, null, 2))
 
-console.log(
-  `\n\nDone: ${result.photoCount} tiles, ${result.skipped} skipped, ` +
-    `reference ${result.reference.width}x${result.reference.height} ` +
-    `from ${result.reference.samples} samples`
-)
+console.log(`\n\nDone: ${result.photoCount} tiles, ${result.skipped} skipped`)
 console.log(`slug: ${slug}`)

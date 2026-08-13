@@ -1,6 +1,6 @@
 // Serves one ingested dataset's library files: manifest.json,
-// signatures-coarse.bin, reference.jpg, and thumbs/<id>.jpg. Same-origin only,
-// and no path may escape the dataset's own directory.
+// signatures-coarse.bin, icon.jpg, and thumbs/<id>.jpg. Same-origin only, and
+// no path may escape the dataset's own directory.
 //
 // The local cache is tried first. On a serverless host that cache is empty
 // unless this instance ran the ingest, so a miss hydrates from the published
@@ -32,7 +32,6 @@ const CONTENT_TYPES: Record<string, string> = {
 const ALLOWED = new Set([
   "manifest.json",
   "signatures-coarse.bin",
-  "reference.jpg",
   "icon.jpg",
 ])
 
