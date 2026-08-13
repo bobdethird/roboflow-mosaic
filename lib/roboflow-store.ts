@@ -12,16 +12,24 @@
 // page polls status.json. `runningJobs` keeps a single process from starting the
 // same ingest twice.
 
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises"
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises"
 import path from "node:path"
 
 import type { IngestStatus, RoboflowDataset } from "./roboflow"
 import { isDatasetSlug } from "./roboflow"
 
-// On a serverless host the deployment directory is read-only, so status lives
-// under /tmp. Nothing else does: a serverless ingest streams the library it
-// builds straight to Blob (lib/roboflow-sink.ts) rather than staging it on a
-// filesystem that is a few hundred megabytes and shared between invocations.
+// On a serverless host the deployment directory is read-only and /tmp is the
+// only place an ingest can build. Status lives under this root; large build
+// files use isolated .jobs directories and are removed after Blob publication.
 export const IS_VERCEL = process.env.VERCEL === "1"
 
 const DEFAULT_CACHE_ROOT = IS_VERCEL
@@ -35,6 +43,40 @@ export const CACHE_ROOT = path.resolve(
 export function datasetDir(slug: string): string {
   if (!isDatasetSlug(slug)) throw new Error(`Invalid dataset slug: ${slug}`)
   return path.join(CACHE_ROOT, slug)
+}
+
+const JOBS_DIR = path.join(CACHE_ROOT, ".jobs")
+// A function is configured for five minutes. Anything this old cannot still be
+// one of our live jobs, even if a hard timeout prevented its `finally` cleanup.
+const STALE_JOB_MS = 15 * 60 * 1000
+
+async function removeStaleWorkDirectories(): Promise<void> {
+  const entries = await readdir(JOBS_DIR, { withFileTypes: true }).catch(
+    () => []
+  )
+  const cutoff = Date.now() - STALE_JOB_MS
+  await Promise.all(
+    entries
+      .filter((entry) => entry.isDirectory())
+      .map(async (entry) => {
+        const directory = path.join(JOBS_DIR, entry.name)
+        const info = await stat(directory).catch(() => null)
+        if (info && info.mtimeMs < cutoff) {
+          await rm(directory, { recursive: true, force: true })
+        }
+      })
+  )
+}
+
+// Serverless builds use an isolated, disposable directory. Status remains in
+// `datasetDir(slug)`, so removing work files cannot make polling lose the job.
+// Local development intentionally keeps the finished library as its cache.
+export async function createIngestDirectory(slug: string): Promise<string> {
+  if (!IS_VERCEL) return datasetDir(slug)
+  if (!isDatasetSlug(slug)) throw new Error(`Invalid dataset slug: ${slug}`)
+  await mkdir(JOBS_DIR, { recursive: true })
+  await removeStaleWorkDirectories()
+  return mkdtemp(path.join(JOBS_DIR, `${slug}-`))
 }
 
 // Resolve a request path inside a dataset directory, refusing anything that
@@ -179,10 +221,9 @@ export function isRunning(slug: string): boolean {
   return runningJobs.has(slug) || reservedJobs.has(slug)
 }
 
-// Reserve synchronously before the route's first status write. On Vercel one job
-// per process keeps two ingests from competing for the same function's CPU (and
-// halving each other's tile budget). Local development only blocks a duplicate of
-// the same dataset.
+// Reserve synchronously before the route's first status write. On Vercel one
+// job per process keeps two concurrent exports from sharing the 500 MB /tmp
+// allowance. Local development only blocks a duplicate of the same dataset.
 export function reserveJob(slug: string): boolean {
   if (isRunning(slug)) return false
   if (IS_VERCEL && runningJobs.size + reservedJobs.size > 0) return false

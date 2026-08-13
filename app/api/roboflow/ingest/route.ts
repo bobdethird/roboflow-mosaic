@@ -199,9 +199,9 @@ export async function POST(request: Request): Promise<Response> {
     return json({ error: "Expected a JSON body with a `url`." }, 400)
   }
 
-  // A serverless instance keeps nothing, so the library has to have somewhere
-  // durable to go. Without a Blob store the ingest would succeed and then be
-  // unreachable from the very next request, which lands on another instance.
+  // /tmp is scratch space, not a deployment cache. Refuse to download a large
+  // export when there is nowhere durable to publish it; otherwise a successful
+  // ingest disappears across instances and eventually fills the warm one.
   if (IS_VERCEL && !blobEnabled()) {
     return json(
       {

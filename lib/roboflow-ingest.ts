@@ -2,41 +2,37 @@
 //
 // Pipeline:
 //   1. resolve the dataset version and ask Roboflow for a zip export link
-//   2. read the export's index (its central directory) over HTTP and choose
-//      which image entries this deployment can afford to build tiles from
-//   3. pull those entries straight out of the remote zip — one decode per image →
-//      content-addressed id, 16×16 colour signature, and a thumbnail
-//   4. write manifest.json + signatures-coarse.bin + thumbs/ into a sink
-//
-// Nothing along that path is staged on disk. The export is never spooled, the
-// thumbnails are never written on a serverless host: they are zipped and pushed
-// to Blob as they are produced (lib/roboflow-sink.ts). That is deliberate —
-// `/tmp` is ~500 MB, datasets are not, and the size of the dataset should not
-// decide whether the site works.
+//   2. stream the zip down
+//   3. one decode per image → content-addressed id, 16×16 colour signature,
+//      and a thumbnail
+//   4. write manifest.json + signatures-coarse.bin + thumbs/
 //
 // Steps 3–4 are shared with the local-directory ingest (scripts/ingest-dir.mts),
 // so any folder of images can be mosaicked the same way.
 //
 // What the mosaic reproduces is chosen in the browser afterwards — the project
-// cover, or any single image out of the dataset — so the ingest does not build a
-// reference image of its own.
+// cover, or any single image out of the dataset — so the ingest does not build
+// a reference image of its own.
 //
 // Everything written here ends up in one zip that the browser downloads whole
 // (lib/roboflow-pack.ts), which is why the thumbnails are sized for the client
 // rather than for an image CDN.
 
 import { createHash } from "node:crypto"
-import { readdir, readFile, stat } from "node:fs/promises"
+import { createWriteStream } from "node:fs"
+import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises"
 import path from "node:path"
+import { Readable, Transform } from "node:stream"
+import { pipeline } from "node:stream/promises"
 
 import sharp from "sharp"
+import yauzl from "yauzl"
 
 import {
   COARSE_SIGNATURES_FILE,
   ICON_FILE,
   MANIFEST_FILE,
   datasetSlug,
-  roboflowThumbPath,
   universeUrl,
   type RoboflowDataset,
   type RoboflowRef,
@@ -46,31 +42,22 @@ import {
   fetchExportLink,
   fetchProjectInfo,
 } from "./roboflow-api"
-import { blobEnabled, blobHasDataset, blobHasIcon } from "./roboflow-blob"
 import {
-  blobArchiveSink,
-  directorySink,
-  publishManifest,
-  type LibrarySink,
-} from "./roboflow-sink"
-import { IS_VERCEL, datasetDir, type ProgressReporter } from "./roboflow-store"
+  blobEnabled,
+  blobHasDataset,
+  blobHasIcon,
+  publishDataset,
+} from "./roboflow-blob"
+import {
+  IS_VERCEL,
+  createIngestDirectory,
+  datasetDir,
+  type ProgressReporter,
+} from "./roboflow-store"
 import {
   MAX_EXPORT_WAIT_MS,
-  MAX_INDEXED_IMAGES,
-  MIN_PARTIAL_TILES,
-  PUBLISH_RESERVE_MS,
-  TILE_BUDGET,
-  TILE_DECODE_MS,
-  TILE_FETCH_BYTES_PER_MS,
   VERCEL_INGEST_DEADLINE_MS,
 } from "./roboflow-limits"
-import {
-  readZipEntries,
-  readZipIndex,
-  streamZipEntries,
-  type ZipEntry,
-  type ZipIndex,
-} from "./roboflow-zip"
 
 export { VERCEL_INGEST_DEADLINE_MS } from "./roboflow-limits"
 
@@ -92,12 +79,20 @@ const THUMB_QUALITY = 80
 // Long edge the project cover image is stored at. Matches the mosaic frame in
 // lib/mosaic-bake.ts — the engine never draws the reference bigger than this.
 const ICON_MAX_EDGE = 1600
-// Ranged reads of the export overlap the network with the decode, so a serverless
-// function can keep more in flight than it has cores. A local machine reading
-// files off its own disk is purely CPU-bound.
-const READ_CONCURRENCY = IS_VERCEL ? 6 : 8
-// A sequential read is one connection, so extra slots only queue decodes.
-const STREAM_CONCURRENCY = IS_VERCEL ? 3 : 8
+// Hobby functions are 1 vCPU; eight Sharp pipelines just contend. Local
+// machines can keep more in flight.
+const CONCURRENCY = IS_VERCEL ? 3 : 8
+
+const IMAGE_EXTENSIONS = new Set([
+  ".jpg",
+  ".jpeg",
+  ".png",
+  ".webp",
+  ".bmp",
+  ".tif",
+  ".tiff",
+  ".avif",
+])
 
 export class IngestError extends Error {}
 
@@ -106,7 +101,7 @@ class IngestDeadlineError extends IngestError {}
 function assertBeforeDeadline(deadline?: number): void {
   if (deadline && Date.now() >= deadline) {
     throw new IngestDeadlineError(
-      "This dataset could not be prepared within the deployment time limit. Try again — a second run reuses the export Roboflow has already generated."
+      "This dataset could not be prepared within the deployment time limit. Try a smaller dataset."
     )
   }
 }
@@ -122,6 +117,231 @@ function isTimeoutError(error: unknown): boolean {
     error instanceof Error &&
     (error.name === "AbortError" || error.name === "TimeoutError")
   )
+}
+
+function isImagePath(name: string): boolean {
+  return IMAGE_EXTENSIONS.has(path.extname(name).toLowerCase())
+}
+
+// ─── Zip download + extraction ───────────────────────────────────────────────
+
+async function downloadZip(
+  link: string,
+  destination: string,
+  report: ProgressReporter,
+  deadline?: number
+): Promise<number> {
+  let response: Response
+  try {
+    response = await fetch(link, { signal: deadlineSignal(deadline) })
+  } catch (error) {
+    if (isTimeoutError(error)) assertBeforeDeadline(deadline)
+    throw error
+  }
+  if (!response.ok || !response.body) {
+    throw new IngestError(
+      `Downloading the dataset export failed (${response.status} ${response.statusText}).`
+    )
+  }
+  const total = Number(response.headers.get("content-length") ?? 0)
+  let received = 0
+  const source = Readable.fromWeb(
+    response.body as Parameters<typeof Readable.fromWeb>[0]
+  )
+  const meter = new Transform({
+    transform(chunk: Buffer, _encoding, callback) {
+      received += chunk.length
+      report("Downloading export", received, total)
+      callback(null, chunk)
+    },
+  })
+  try {
+    await pipeline(source, meter, createWriteStream(destination))
+  } catch (error) {
+    if (isTimeoutError(error)) assertBeforeDeadline(deadline)
+    throw error
+  }
+  return received
+}
+
+function openZip(file: string): Promise<yauzl.ZipFile> {
+  return new Promise((resolve, reject) => {
+    yauzl.open(file, { lazyEntries: true, autoClose: true }, (error, zip) => {
+      if (error || !zip)
+        reject(error ?? new IngestError("Could not open the export zip."))
+      else resolve(zip)
+    })
+  })
+}
+
+// Extract every image entry into one flat directory. Roboflow exports nest
+// images under train/valid/test (and sometimes a class folder), none of which
+// matters here — the mosaic just wants the pixels. Names are prefixed with the
+// entry index so same-named files across splits can't collide.
+async function extractImages(
+  zipPath: string,
+  destination: string,
+  report: ProgressReporter
+): Promise<string[]> {
+  await rm(destination, { recursive: true, force: true })
+  await mkdir(destination, { recursive: true })
+  const zip = await openZip(zipPath)
+  const written: string[] = []
+
+  await new Promise<void>((resolve, reject) => {
+    let index = 0
+    const total = zip.entryCount
+
+    zip.on("entry", (entry: yauzl.Entry) => {
+      index += 1
+      if (entry.fileName.endsWith("/") || !isImagePath(entry.fileName)) {
+        zip.readEntry()
+        return
+      }
+      zip.openReadStream(entry, (error, stream) => {
+        if (error || !stream) {
+          reject(error ?? new IngestError(`Could not read ${entry.fileName}`))
+          return
+        }
+        const safe = path.basename(entry.fileName).replace(/[^\w.-]+/g, "_")
+        const target = path.join(destination, `${written.length}-${safe}`)
+        pipeline(stream, createWriteStream(target))
+          .then(() => {
+            written.push(target)
+            report("Extracting images", index, total)
+            zip.readEntry()
+          })
+          .catch(reject)
+      })
+    })
+    zip.on("end", resolve)
+    zip.on("error", reject)
+    zip.readEntry()
+  })
+
+  if (!written.length) {
+    throw new IngestError("The dataset export contained no images.")
+  }
+  return written
+}
+
+function streamToBuffer(stream: NodeJS.ReadableStream): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = []
+    stream.on("data", (chunk: Buffer) => chunks.push(chunk))
+    stream.on("end", () => resolve(Buffer.concat(chunks)))
+    stream.on("error", reject)
+  })
+}
+
+function readZipEntry(zip: yauzl.ZipFile, entry: yauzl.Entry): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    zip.openReadStream(entry, (error, stream) => {
+      if (error || !stream) {
+        reject(error ?? new IngestError(`Could not read ${entry.fileName}`))
+        return
+      }
+      streamToBuffer(stream).then(resolve, reject)
+    })
+  })
+}
+
+// Names of image entries, without decompressing them. Sorting these fixes the
+// manifest order — and so the signature order — independently of zip order.
+async function zipImageNames(zipPath: string): Promise<string[]> {
+  const zip = await openZip(zipPath)
+  const names: string[] = []
+  await new Promise<void>((resolve, reject) => {
+    zip.on("entry", (entry: yauzl.Entry) => {
+      if (!entry.fileName.endsWith("/") && isImagePath(entry.fileName)) {
+        names.push(entry.fileName)
+      }
+      zip.readEntry()
+    })
+    zip.on("end", resolve)
+    zip.on("error", reject)
+    zip.readEntry()
+  })
+  return names
+}
+
+// Walk image entries in zip order. `visit` runs with a bounded number in
+// flight; the next entry is not decompressed until a slot is free, so a large
+// export cannot pile up in memory.
+async function forEachZipImage(
+  zipPath: string,
+  visit: (fileName: string, bytes: Buffer) => Promise<void>,
+  shouldRead: (fileName: string) => boolean = () => true
+): Promise<void> {
+  const zip = await openZip(zipPath)
+  let chain = Promise.resolve()
+  let active = 0
+  const waiting: Array<() => void> = []
+  const tasks: Promise<void>[] = []
+  let visitError: unknown = null
+
+  const acquire = () =>
+    new Promise<void>((resolve) => {
+      if (active < CONCURRENCY) {
+        active += 1
+        resolve()
+        return
+      }
+      waiting.push(resolve)
+    })
+
+  const release = () => {
+    const next = waiting.shift()
+    if (next) next()
+    else active -= 1
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    zip.on("entry", (entry: yauzl.Entry) => {
+      chain = chain
+        .then(async () => {
+          if (visitError) {
+            zip.readEntry()
+            return
+          }
+          if (entry.fileName.endsWith("/") || !isImagePath(entry.fileName)) {
+            zip.readEntry()
+            return
+          }
+          if (!shouldRead(entry.fileName)) {
+            zip.readEntry()
+            return
+          }
+          const bytes = await readZipEntry(zip, entry)
+          await acquire()
+          if (visitError) {
+            release()
+            zip.readEntry()
+            return
+          }
+          tasks.push(
+            visit(entry.fileName, bytes)
+              .catch((error: unknown) => {
+                visitError ??= error
+              })
+              .finally(release)
+          )
+          zip.readEntry()
+        })
+        .catch(reject)
+    })
+    zip.on("end", () => {
+      chain
+        .then(() => Promise.all(tasks))
+        .then(() => {
+          if (visitError) reject(visitError)
+          else resolve()
+        })
+        .catch(reject)
+    })
+    zip.on("error", reject)
+    zip.readEntry()
+  })
 }
 
 // ─── Per-image work ──────────────────────────────────────────────────────────
@@ -144,11 +364,14 @@ async function signatureGrid(pipeline: sharp.Sharp): Promise<Buffer> {
 // thumbnail. Both are cloned off one Sharp instance — that does not share the
 // JPEG decode (measured: it is no faster than two independent pipelines), but
 // libvips shrinks on load for both targets, so neither ever decodes full size.
-async function decodeOutputs(bytes: Buffer): Promise<{
+async function decodeOutputs(
+  bytes: Buffer,
+  thumbPath: string
+): Promise<{
   width: number
   height: number
   signature: Buffer
-  thumbnail: Buffer
+  thumbnailBytes: number
 }> {
   const image = sharp(bytes, { failOn: "none" })
   const metadata = await image.metadata()
@@ -163,14 +386,14 @@ async function decodeOutputs(bytes: Buffer): Promise<{
       })
       .flatten({ background: "#ffffff" })
       .jpeg({ quality: THUMB_QUALITY })
-      .toBuffer(),
+      .toFile(thumbPath),
   ])
 
   return {
     width: metadata.width ?? 0,
     height: metadata.height ?? 0,
     signature,
-    thumbnail,
+    thumbnailBytes: thumbnail.size,
   }
 }
 
@@ -229,110 +452,8 @@ export type LibraryResult = {
   version: string
 }
 
-// ─── Building a library into a sink ──────────────────────────────────────────
-
-// Turns image bytes into tiles and hands each one to the sink as it is built.
-// Nothing accumulates here except the manifest rows and their signatures — 200
-// bytes or so per tile, which is why the ceiling on tiles is about what the
-// mosaic can draw rather than what the host can hold.
-type TileBuilder = {
-  // Turn one source image into a tile. Never throws for a bad image: a dataset
-  // with one unreadable file still mosaics.
-  add: (name: string, bytes: Buffer) => Promise<void>
-  // Note an image that could not be read at all, so progress stays honest.
-  drop: () => void
-  readonly count: number
-  readonly processed: number
-  readonly skipped: number
-  readonly full: boolean
-  setTotal: (total: number) => void
-  // Write manifest.json and signatures-coarse.bin, closing the library out.
-  write: () => Promise<{ version: string; manifest: Buffer }>
-}
-
-function tileBuilder(
-  sink: LibrarySink,
-  report: ProgressReporter,
-  options: { budget: number }
-): TileBuilder {
-  // Keyed by source name so the manifest can be ordered independently of the
-  // order the reader happened to produce entries in.
-  const kept = new Map<string, { photo: ManifestPhoto; signature: Buffer }>()
-  const seen = new Set<string>()
-  let processed = 0
-  let skipped = 0
-  let total = 0
-
-  const tick = () => {
-    processed += 1
-    report("Building tiles", processed, total)
-  }
-
-  return {
-    add: async (name, bytes) => {
-      try {
-        const id = createHash("sha1").update(bytes).digest("hex").slice(0, 16)
-        // Roboflow exports the same image into several splits, and augmented
-        // copies alongside it; a byte-identical duplicate already has a tile.
-        if (seen.has(id)) return
-        seen.add(id)
-
-        const decoded = await decodeOutputs(bytes)
-        await sink.add(roboflowThumbPath(id), decoded.thumbnail)
-        kept.set(name, {
-          photo: {
-            id,
-            w: decoded.width,
-            h: decoded.height,
-            file: path.basename(name),
-          },
-          signature: decoded.signature,
-        })
-      } catch {
-        skipped += 1
-      } finally {
-        tick()
-      }
-    },
-    drop: () => {
-      skipped += 1
-      tick()
-    },
-    get count() {
-      return kept.size
-    },
-    get processed() {
-      return processed
-    },
-    get skipped() {
-      return skipped
-    },
-    get full() {
-      return kept.size >= options.budget
-    },
-    setTotal: (value) => {
-      total = value
-    },
-    write: async () => {
-      if (!kept.size) {
-        throw new IngestError("None of the dataset's images could be read.")
-      }
-      report("Writing library", 0, 0)
-      const version = new Date().toISOString()
-      const photos: ManifestPhoto[] = []
-      const signatures: Buffer[] = []
-      for (const name of [...kept.keys()].sort()) {
-        const entry = kept.get(name)
-        if (!entry) continue
-        photos.push(entry.photo)
-        signatures.push(entry.signature)
-      }
-      const manifest = Buffer.from(JSON.stringify({ version, photos }))
-      await sink.add(COARSE_SIGNATURES_FILE, Buffer.concat(signatures))
-      await sink.add(MANIFEST_FILE, manifest)
-      return { version, manifest }
-    },
-  }
+export type BuildLimits = {
+  deadline?: number
 }
 
 // Build the tile library from a directory of images and write it into
@@ -341,199 +462,158 @@ export async function buildLibrary(
   imageFiles: string[],
   outputDir: string,
   report: ProgressReporter,
-  limits: { deadline?: number } = {}
+  limits: BuildLimits = {}
 ): Promise<LibraryResult> {
   const files = [...imageFiles].sort()
-  const sink = await directorySink(outputDir)
-  const builder = tileBuilder(sink, report, { budget: TILE_BUDGET })
-  builder.setTotal(files.length)
+  const thumbsDir = path.join(outputDir, "thumbs")
+  await rm(thumbsDir, { recursive: true, force: true })
+  await mkdir(thumbsDir, { recursive: true })
 
-  await pooled(files, READ_CONCURRENCY, async (file) => {
+  const photos: (ManifestPhoto | null)[] = new Array(files.length).fill(null)
+  const signatures: (Buffer | null)[] = new Array(files.length).fill(null)
+  const seen = new Set<string>()
+  let processed = 0
+  let skipped = 0
+
+  await pooled(files, CONCURRENCY, async (file, index) => {
     assertBeforeDeadline(limits.deadline)
-    if (builder.full) return
-    await builder.add(file, await readFile(file))
+    try {
+      const bytes = await readFile(file)
+      const id = createHash("sha1").update(bytes).digest("hex").slice(0, 16)
+      // A byte-identical duplicate already has its thumbnail and signature.
+      if (seen.has(id)) return
+      seen.add(id)
+
+      const decoded = await decodeOutputs(
+        bytes,
+        path.join(thumbsDir, `${id}.jpg`)
+      )
+      photos[index] = {
+        id,
+        w: decoded.width,
+        h: decoded.height,
+        file: path.basename(file),
+      }
+      signatures[index] = decoded.signature
+    } catch {
+      skipped += 1
+    } finally {
+      processed += 1
+      report("Building tiles", processed, files.length)
+    }
   })
 
-  const { version } = await builder.write()
-  await sink.finish()
-  return { photoCount: builder.count, skipped: builder.skipped, version }
-}
-
-// ─── Choosing what to build tiles from ───────────────────────────────────────
-
-// How many tiles this run can afford, and which entries they come from.
-//
-// A dataset with more images than the tile budget is sampled across the whole
-// set rather than cut off partway, so the mosaic still draws from all of it. When
-// there is a deadline, the sample also shrinks to what can plausibly be fetched
-// and decoded before it — a 40 GB export cannot be read in five minutes at any
-// tile size, and a mosaic of 8,000 tiles out of it beats an error message.
-export function planTileSample(
-  index: ZipIndex,
-  options: { budget: number; msAvailable?: number }
-): ZipEntry[] {
-  const entries = index.entries
-  if (!entries.length) return []
-
-  let count = Math.min(entries.length, options.budget)
-  if (options.msAvailable !== undefined) {
-    let bytes = 0
-    for (const entry of entries) bytes += entry.compressedSize
-    const averageBytes = bytes / entries.length
-    const msPerTile = averageBytes / TILE_FETCH_BYTES_PER_MS + TILE_DECODE_MS
-    const affordable = Math.floor(Math.max(0, options.msAvailable) / msPerTile)
-    count = Math.max(1, Math.min(count, affordable))
+  const keptPhotos: ManifestPhoto[] = []
+  const keptSignatures: Buffer[] = []
+  for (let i = 0; i < files.length; i++) {
+    const photo = photos[i]
+    const signature = signatures[i]
+    if (photo && signature) {
+      keptPhotos.push(photo)
+      keptSignatures.push(signature)
+    }
   }
-  if (count >= entries.length) return entries
-
-  // Even stride across the index, which is itself an even sample of the export.
-  const sampled: ZipEntry[] = new Array(count)
-  for (let i = 0; i < count; i++) {
-    sampled[i] = entries[Math.floor((i * entries.length) / count)]
-  }
-  return sampled
-}
-
-type CollectResult = {
-  // Image entries the export holds, as far as the reader could tell.
-  sourceImages: number
-  // The library is a subset of the export: more images than the mosaic can use,
-  // or more than this run had time for.
-  sampled: boolean
-}
-
-async function collectTiles(
-  link: string,
-  builder: TileBuilder,
-  report: ProgressReporter,
-  options: { deadline?: number; budget: number }
-): Promise<CollectResult> {
-  // Everything up to here is interruptible; the reserve is what publishes the
-  // library that has been built, so reads never run into the hard deadline.
-  const readDeadline = options.deadline
-    ? options.deadline - PUBLISH_RESERVE_MS
-    : undefined
-  assertBeforeDeadline(readDeadline)
-  const stop = () =>
-    builder.full || Boolean(readDeadline && Date.now() >= readDeadline)
-
-  report("Reading export index", 0, 0)
-  const index = await readZipIndex(link, {
-    maxEntries: MAX_INDEXED_IMAGES,
-    signal: deadlineSignal(readDeadline),
-  })
-
-  const finished = (sampled: boolean, sourceImages: number): CollectResult => {
-    if (builder.count) return { sourceImages, sampled }
-    // Nothing usable came back, so whatever stopped the read is the failure.
-    assertBeforeDeadline(readDeadline)
+  if (!keptPhotos.length) {
     throw new IngestError("None of the dataset's images could be read.")
   }
 
-  const enough = () => builder.count >= MIN_PARTIAL_TILES
+  const version = await writeLibrary(
+    outputDir,
+    keptPhotos,
+    keptSignatures,
+    report
+  )
 
-  if (index) {
-    const plan = planTileSample(index, {
-      budget: options.budget,
-      msAvailable: readDeadline ? readDeadline - Date.now() : undefined,
-    })
-    if (!plan.length) {
-      throw new IngestError("The dataset export contained no images.")
-    }
-    builder.setTotal(plan.length)
-    report("Building tiles", 0, plan.length)
-    try {
-      await readZipEntries(
-        link,
-        plan,
-        (entry, bytes) => builder.add(entry.name, bytes),
-        {
-          concurrency: READ_CONCURRENCY,
-          signal: deadlineSignal(readDeadline),
-          stop,
-          // One unreadable entry in a 20,000-image export is not a failed
-          // ingest; it is a tile the mosaic does without.
-          onEntryError: () => builder.drop(),
-        }
-      )
-    } catch (error) {
-      // A read that ran out of time still leaves a usable library behind.
-      if (!isTimeoutError(error) || !enough()) throw error
-      return finished(true, index.imageCount)
-    }
-    return finished(
-      plan.length < index.imageCount || builder.processed < plan.length,
-      index.imageCount
-    )
-  }
-
-  // No index: the host will not serve ranges, so the export can only be read in
-  // order. Every entry costs its bytes whether or not it becomes a tile, so this
-  // takes images until the budget is met and then stops the download rather than
-  // striding across a dataset it would have to read all of anyway.
-  let images = 0
-  // Counted as entries are accepted rather than as tiles land: a decode takes
-  // long enough that `builder.count` would still read zero after a hundred
-  // small entries have gone past.
-  let taken = 0
-  builder.setTotal(options.budget)
-  report("Building tiles", 0, options.budget)
-  try {
-    await streamZipEntries(
-      link,
-      (entry, bytes) => builder.add(entry.name, bytes),
-      {
-        want: () => {
-          images += 1
-          if (taken >= options.budget) return false
-          taken += 1
-          return true
-        },
-        concurrency: STREAM_CONCURRENCY,
-        signal: deadlineSignal(readDeadline),
-        stop: () => taken >= options.budget || stop(),
-      }
-    )
-  } catch (error) {
-    if (!isTimeoutError(error) || !enough()) throw error
-    return finished(true, images)
-  }
-  return finished(taken >= options.budget, images)
+  return { photoCount: keptPhotos.length, skipped, version }
 }
 
-export type ExportBuild = LibraryResult & {
-  // Images the export holds, whether or not each became a tile.
-  sourceImages: number
-  // The library is an even sample of the export rather than all of it.
-  sampled: boolean
-  // manifest.json, so a caller that publishes can do so without rereading it.
-  manifest: Buffer
+async function writeLibrary(
+  outputDir: string,
+  photos: ManifestPhoto[],
+  signatures: Buffer[],
+  report: ProgressReporter
+): Promise<string> {
+  report("Writing library", 0, 0)
+  const version = new Date().toISOString()
+  const signatureBytes = Buffer.concat(signatures)
+  const manifest = JSON.stringify({ version, photos }, null, 2)
+  await writeFile(path.join(outputDir, COARSE_SIGNATURES_FILE), signatureBytes)
+  await writeFile(path.join(outputDir, MANIFEST_FILE), manifest)
+  return version
 }
 
-// Build a whole tile library out of a remote export zip, writing it into `sink`
-// as it goes. The export is never held anywhere: entries are read from the
-// remote zip, turned into tiles, and handed straight on.
-export async function buildLibraryFromExport(
-  link: string,
-  sink: LibrarySink,
+// Same outputs as `buildLibrary`, but images are decoded straight from the
+// export zip so the full-resolution originals never land on disk.
+async function buildLibraryFromZip(
+  zipPath: string,
+  outputDir: string,
   report: ProgressReporter,
-  options: { budget?: number; deadline?: number } = {}
-): Promise<ExportBuild> {
-  const budget = options.budget ?? TILE_BUDGET
-  const builder = tileBuilder(sink, report, { budget })
-  const collected = await collectTiles(link, builder, report, {
-    deadline: options.deadline,
-    budget,
-  })
-  const { version, manifest } = await builder.write()
-  return {
-    version,
-    manifest,
-    photoCount: builder.count,
-    skipped: builder.skipped,
-    sourceImages: Math.max(collected.sourceImages, builder.count),
-    sampled: collected.sampled,
+  limits: BuildLimits = {}
+): Promise<LibraryResult> {
+  report("Listing images", 0, 0)
+  const names = (await zipImageNames(zipPath)).sort()
+  if (!names.length) {
+    throw new IngestError("The dataset export contained no images.")
   }
+
+  const thumbsDir = path.join(outputDir, "thumbs")
+  await rm(thumbsDir, { recursive: true, force: true })
+  await mkdir(thumbsDir, { recursive: true })
+
+  const byName = new Map<string, { photo: ManifestPhoto; signature: Buffer }>()
+  const seen = new Set<string>()
+  let processed = 0
+  let skipped = 0
+
+  await forEachZipImage(zipPath, async (fileName, bytes) => {
+    assertBeforeDeadline(limits.deadline)
+    try {
+      const id = createHash("sha1").update(bytes).digest("hex").slice(0, 16)
+      // A byte-identical duplicate already has its thumbnail and signature.
+      if (seen.has(id)) return
+      seen.add(id)
+
+      const decoded = await decodeOutputs(
+        bytes,
+        path.join(thumbsDir, `${id}.jpg`)
+      )
+      byName.set(fileName, {
+        photo: {
+          id,
+          w: decoded.width,
+          h: decoded.height,
+          file: path.basename(fileName),
+        },
+        signature: decoded.signature,
+      })
+    } catch {
+      skipped += 1
+    } finally {
+      processed += 1
+      report("Building tiles", processed, names.length)
+    }
+  })
+
+  const keptPhotos: ManifestPhoto[] = []
+  const keptSignatures: Buffer[] = []
+  for (const name of names) {
+    const kept = byName.get(name)
+    if (!kept) continue
+    keptPhotos.push(kept.photo)
+    keptSignatures.push(kept.signature)
+  }
+  if (!keptPhotos.length) {
+    throw new IngestError("None of the dataset's images could be read.")
+  }
+
+  const version = await writeLibrary(
+    outputDir,
+    keptPhotos,
+    keptSignatures,
+    report
+  )
+
+  return { photoCount: keptPhotos.length, skipped, version }
 }
 
 // ─── Orchestration ───────────────────────────────────────────────────────────
@@ -547,16 +627,17 @@ export async function buildLibraryFromExport(
 // image out of the dataset.
 async function downloadIcon(
   url: string,
+  destination: string,
   deadline?: number
-): Promise<Buffer | null> {
+): Promise<boolean> {
   try {
     const remaining = deadline ? deadline - Date.now() : 10_000
     const response = await fetch(url, {
       signal: AbortSignal.timeout(Math.max(1, Math.min(10_000, remaining))),
     })
-    if (!response.ok) return null
+    if (!response.ok) return false
     const bytes = Buffer.from(await response.arrayBuffer())
-    return await sharp(bytes, { failOn: "none" })
+    await sharp(bytes, { failOn: "none" })
       .rotate() // honour EXIF orientation before the dimensions are baked in
       .resize(ICON_MAX_EDGE, ICON_MAX_EDGE, {
         fit: "inside",
@@ -564,9 +645,10 @@ async function downloadIcon(
       })
       .flatten({ background: "#ffffff" })
       .jpeg({ quality: 92 })
-      .toBuffer()
+      .toFile(destination)
+    return true
   } catch {
-    return null
+    return false
   }
 }
 
@@ -604,12 +686,13 @@ export async function resolveDataset(
 }
 
 export type IngestOptions = {
-  // The route already resolves this to check the cache and the limits. Supplying
-  // it avoids a second Roboflow project-info request inside the background job.
+  // Also extract the original images under source/. Off by default: the
+  // thumbnails are what the mosaic draws, and exports can be gigabytes.
+  keepSource?: boolean
+  // The route already resolves this to check cache/limits. Supplying it avoids
+  // a second Roboflow project-info request inside the background job.
   resolved?: ResolvedDataset
   deadline?: number
-  // Tiles to build at most. Defaults to the deployment's budget.
-  budget?: number
 }
 
 export async function ingestDataset(
@@ -622,6 +705,11 @@ export async function ingestDataset(
       "Dataset storage is not configured. Connect a Vercel Blob store and redeploy."
     )
   }
+  if (IS_VERCEL && options.keepSource) {
+    throw new IngestError(
+      "Keeping full-resolution source images is not supported on Vercel."
+    )
+  }
   report("Resolving dataset", 0, 0)
   const resolved = options.resolved ?? (await resolveDataset(ref))
   const deadline =
@@ -629,45 +717,56 @@ export async function ingestDataset(
     (IS_VERCEL ? Date.now() + VERCEL_INGEST_DEADLINE_MS : undefined)
   assertBeforeDeadline(deadline)
   const slug = datasetSlug(resolved.ref)
-
-  report("Requesting export", 0, 0)
-  const exportWait = deadline
-    ? Math.min(MAX_EXPORT_WAIT_MS, Math.max(1, deadline - Date.now() - 120_000))
-    : undefined
-  const { link } = await fetchExportLink(
-    resolved.ref,
-    exportFormats(resolved.type),
-    (message) => report(message, 0, 0),
-    exportWait
-  )
-  assertBeforeDeadline(deadline)
-
-  const publishing = blobEnabled()
-  const sink = publishing
-    ? await blobArchiveSink(slug, { abortSignal: deadlineSignal(deadline) })
-    : await directorySink(datasetDir(slug))
+  const outputDir = await createIngestDirectory(slug)
+  const zipPath = path.join(outputDir, "export.zip")
+  await mkdir(outputDir, { recursive: true })
 
   try {
-    // The cover goes in first so a run that stops early still has one.
+    report("Requesting export", 0, 0)
+    const exportWait = deadline
+      ? Math.min(
+          MAX_EXPORT_WAIT_MS,
+          Math.max(1, deadline - Date.now() - 120_000)
+        )
+      : undefined
+    const { link } = await fetchExportLink(
+      resolved.ref,
+      exportFormats(resolved.type),
+      (message) => report(message, 0, 0),
+      exportWait
+    )
+    assertBeforeDeadline(deadline)
+
+    await downloadZip(link, zipPath, report, deadline)
+
     let hasIcon = false
     if (resolved.iconUrl) {
       report("Fetching project cover image", 0, 0)
-      const icon = await downloadIcon(resolved.iconUrl, deadline)
-      if (icon) {
-        await sink.add(ICON_FILE, icon)
-        hasIcon = true
-      }
+      hasIcon = await downloadIcon(
+        resolved.iconUrl,
+        path.join(outputDir, ICON_FILE),
+        deadline
+      )
     }
 
-    const built = await buildLibraryFromExport(link, sink, report, {
-      budget: options.budget,
-      deadline,
-    })
-
-    report("Publishing library", 0, 0)
-    await sink.finish()
-    if (publishing) {
-      await publishManifest(slug, built.manifest, deadlineSignal(deadline))
+    const result = options.keepSource
+      ? await buildLibrary(
+          await extractImages(zipPath, path.join(outputDir, "source"), report),
+          outputDir,
+          report,
+          { deadline }
+        )
+      : await buildLibraryFromZip(zipPath, outputDir, report, { deadline })
+    if (blobEnabled()) {
+      // The export is no longer needed once thumbnails and signatures exist.
+      // Release it before upload so the two large allocations never overlap.
+      await rm(zipPath, { force: true })
+      try {
+        await publishDataset(slug, outputDir, report, deadlineSignal(deadline))
+      } catch (error) {
+        if (isTimeoutError(error)) assertBeforeDeadline(deadline)
+        throw error
+      }
     }
 
     return {
@@ -675,18 +774,16 @@ export async function ingestDataset(
       slug,
       name: resolved.name,
       type: resolved.type,
-      imageCount: built.photoCount,
-      // Only set when the library really is a subset, so the page can say so.
-      sourceImages: built.sampled
-        ? Math.max(built.sourceImages, resolved.images)
-        : undefined,
+      imageCount: result.photoCount,
       universeUrl: universeUrl(resolved.ref),
       hasIcon,
-      libraryVersion: built.version,
+      libraryVersion: result.version,
     }
-  } catch (error) {
-    await sink.abort().catch(() => undefined)
-    throw error
+  } finally {
+    await rm(zipPath, { force: true })
+    if (IS_VERCEL) {
+      await rm(outputDir, { recursive: true, force: true })
+    }
   }
 }
 

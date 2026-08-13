@@ -7,11 +7,7 @@
 import type { CollectionCopy, LibraryItem } from "./tile-library"
 import type { RoboflowDataset } from "./roboflow"
 import { loadRoboflowLibrary } from "./roboflow-library"
-import {
-  releasePack,
-  type PackProgress,
-  type RoboflowPack,
-} from "./roboflow-pack"
+import { releasePack, type PackProgress, type RoboflowPack } from "./roboflow-pack"
 
 export type LibraryLoad = {
   version: string
@@ -39,18 +35,6 @@ export type MosaicSource = {
   thumbUrl: (id: string) => string | null
 }
 
-// A mosaic can only draw so many distinct tiles, so a dataset with more images
-// than that becomes an even sample of itself. Say so rather than implying every
-// image is on the canvas.
-function describeTiles(dataset: RoboflowDataset): string {
-  const tiles = dataset.imageCount.toLocaleString()
-  const source = dataset.sourceImages ?? 0
-  if (source > dataset.imageCount) {
-    return `${tiles} tiles, sampled evenly across the ${source.toLocaleString()} images in this Roboflow dataset.`
-  }
-  return `${tiles} images from this Roboflow dataset, every one of them a tile.`
-}
-
 export function roboflowSource(dataset: RoboflowDataset): MosaicSource {
   // Held so `thumbUrl` can answer for ids the caller did not keep an item for.
   let pack: RoboflowPack | null = null
@@ -60,7 +44,10 @@ export function roboflowSource(dataset: RoboflowDataset): MosaicSource {
     label: dataset.name,
     copy: {
       heading: dataset.name,
-      description: `${describeTiles(dataset)} Pick what they should reassemble into — the project's cover image, or any image out of the dataset.`,
+      description:
+        `${dataset.imageCount.toLocaleString()} images from this Roboflow ` +
+        "dataset, every one of them a tile. Pick what they should reassemble " +
+        "into — the project's cover image, or any image out of the dataset.",
     },
     loadLibrary: async (options = {}) => {
       const library = await loadRoboflowLibrary(dataset.slug, {

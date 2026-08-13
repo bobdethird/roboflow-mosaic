@@ -1,32 +1,33 @@
 // Durable copy of an ingested dataset, for serverless hosts.
 //
-// A Vercel instance cannot keep the library it builds, so the library is
-// streamed to Blob as it is produced (lib/roboflow-sink.ts) and this module
-// covers everything else the Blob copy is used for: durable ingest status,
-// existence checks, and the public CDN url the pack route redirects to.
+// The library is built on local disk the same way it always was. A Vercel
+// instance cannot keep that directory, so the finished library is packed as a
+// stream and uploaded once — a single PUT, not one per thumbnail or a second
+// archive written to /tmp.
 //
 // Nothing downloads that zip back onto a server. The browser fetches it whole
 // from the Blob CDN and reads every tile out of it locally (lib/roboflow-pack.ts),
 // so no instance ever needs the dataset on disk except the one that built it.
 
 import { head, put } from "@vercel/blob"
-import { readdir } from "node:fs/promises"
+import { readdir, readFile } from "node:fs/promises"
 import path from "node:path"
 import { Readable } from "node:stream"
 import { ZipFile } from "yazl"
 
-import { ICON_FILE, type IngestStatus } from "./roboflow"
-import { STATUS_FILE } from "./roboflow-store"
+import { ICON_FILE, MANIFEST_FILE, type IngestStatus } from "./roboflow"
+import { STATUS_FILE, type ProgressReporter } from "./roboflow-store"
 
 const PREFIX = "roboflow"
 export const ARCHIVE_FILE = "library.zip"
-export const PUBLISHED_FILE = "published.json"
+const META_FILE = "published.json"
 
 // Short: a re-ingest overwrites these keys in place, and the browser keeps its
 // own copy of the archive keyed by library version anyway.
-export const STORE_MAX_AGE = 60
+const STORE_MAX_AGE = 60
 
-const SKIP_FILES = new Set([STATUS_FILE, ARCHIVE_FILE, PUBLISHED_FILE])
+const SKIP_DIRS = new Set(["source"])
+const SKIP_FILES = new Set([STATUS_FILE, "export.zip", ARCHIVE_FILE, META_FILE])
 
 export function blobEnabled(): boolean {
   return Boolean(process.env.BLOB_READ_WRITE_TOKEN)
@@ -74,7 +75,7 @@ export async function blobUrl(
 
 export async function blobHasIcon(slug: string): Promise<boolean> {
   if (await blobHasFile(slug, ICON_FILE)) return true
-  const text = await readBlobText(slug, PUBLISHED_FILE)
+  const text = await readBlobText(slug, META_FILE)
   if (!text) return false
   try {
     return Boolean((JSON.parse(text) as { hasIcon?: boolean }).hasIcon)
@@ -140,7 +141,8 @@ async function libraryFiles(directory: string): Promise<string[]> {
       .relative(directory, path.join(entry.parentPath, entry.name))
       .split(path.sep)
       .join("/")
-    if (SKIP_FILES.has(relative)) continue
+    const [top] = relative.split("/")
+    if (SKIP_DIRS.has(top) || SKIP_FILES.has(relative)) continue
     if (relative.endsWith(".tmp")) continue
     files.push(relative)
   }
@@ -180,4 +182,67 @@ export async function libraryArchiveStream(
   return Readable.toWeb(
     libraryArchiveNodeStream(directory, files)
   ) as ReadableStream<Uint8Array>
+}
+
+export async function publishFile(
+  slug: string,
+  directory: string,
+  relativePath: string,
+  abortSignal?: AbortSignal
+): Promise<void> {
+  const body = await readFile(path.join(directory, relativePath))
+  await put(blobKey(slug, relativePath), body, {
+    access: "public",
+    addRandomSuffix: false,
+    allowOverwrite: true,
+    cacheControlMaxAge: STORE_MAX_AGE,
+    abortSignal,
+  })
+}
+
+export async function publishDataset(
+  slug: string,
+  directory: string,
+  report: ProgressReporter,
+  abortSignal?: AbortSignal
+): Promise<void> {
+  const files = await libraryFiles(directory)
+  if (!files.length) {
+    throw new Error("Nothing to publish — the library was empty.")
+  }
+
+  report("Packing library", 0, files.length)
+  const archive = libraryArchiveNodeStream(directory, files)
+  try {
+    report("Uploading library", 0, 0)
+    await put(blobKey(slug, ARCHIVE_FILE), archive, {
+      access: "public",
+      addRandomSuffix: false,
+      allowOverwrite: true,
+      contentType: "application/zip",
+      cacheControlMaxAge: STORE_MAX_AGE,
+      multipart: true,
+      abortSignal,
+      onUploadProgress: (event) => {
+        report("Uploading library", event.loaded, event.total)
+      },
+    })
+  } finally {
+    archive.destroy()
+  }
+
+  const manifest = files.find((file) => file === MANIFEST_FILE)
+  if (manifest) await publishFile(slug, directory, manifest, abortSignal)
+  await put(
+    blobKey(slug, META_FILE),
+    JSON.stringify({ hasIcon: files.includes(ICON_FILE) }),
+    {
+      access: "public",
+      addRandomSuffix: false,
+      allowOverwrite: true,
+      contentType: "application/json",
+      cacheControlMaxAge: STORE_MAX_AGE,
+      abortSignal,
+    }
+  )
 }

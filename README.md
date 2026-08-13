@@ -27,15 +27,14 @@ datasets still need one.
 
 Connect a public Vercel Blob store to the project before deploying. The ingest
 route requires both `ROBOFLOW_API_KEY` and the store-provided
-`BLOB_READ_WRITE_TOKEN`: a serverless instance keeps nothing of its own, so the
-library it builds is streamed to Blob and the browser downloads it from the Blob
-CDN.
+`BLOB_READ_WRITE_TOKEN`: Vercel's `/tmp` filesystem is only scratch space and is
+deleted after each finished or failed ingest. The completed library is streamed
+to Blob and the browser downloads it from the Blob CDN.
 
-Datasets of any size are accepted, and the size of one does not decide whether it
-works. Nothing is staged on the function's ~500 MB `/tmp`: the export is read
-over HTTP and the library is uploaded as it is built, so peak disk is zero and
-peak memory is one 8 MB upload part regardless of how large the export is (see
-"Datasets of any size" below). Ingests use distributed per-dataset leases,
+Datasets of any size are accepted; a dataset that does not fit in the function's
+~500 MB `/tmp` scratch space (or exceeds the route's five-minute deadline) fails
+mid-ingest rather than with an up-front size message, so very large exports may
+be unreliable on Vercel. Ingests still use distributed per-dataset leases,
 same-origin checks, and a four-per-15-minute client rate window so one public
 caller cannot repeatedly trigger the same expensive export. A separate
 project-wide window caps aggregate work from distributed callers.
@@ -46,9 +45,8 @@ project-wide window caps aggregate work from distributed callers.
 `workspace / project / version`; a missing version resolves to the project's
 latest. Roboflow is asked for a zip export (the format is chosen from the project
 type, falling back through the others — every format ships the same images, only
-the annotation sidecars differ). That zip is never downloaded as a file: its
-entries are read out of the remote archive over HTTP and decoded in memory
-(`lib/roboflow-zip.ts`). One pass per image produces:
+the annotation sidecars differ). Images are decoded directly from that zip, so
+the full-resolution originals are not extracted to disk. One pass produces:
 
 - a **content-addressed id** (sha1 of the bytes), which also de-duplicates the
   augmented copies that Roboflow exports across splits,
@@ -57,10 +55,9 @@ entries are read out of the remote archive over HTTP and decoded in memory
 - a **thumbnail** (192px long edge).
 
 The project's cover image is downloaded alongside them (`project.icon` from the
-Roboflow API, capped at 1600px, aspect preserved). Where the finished tiles go is
-a `LibrarySink` (`lib/roboflow-sink.ts`): locally they are written into
-`.roboflow-cache/<workspace>--<project>--v<n>/`, and on Vercel they are zipped
-and pushed to Blob as they are produced, so no build directory exists to clean up.
+Roboflow API, capped at 1600px, aspect preserved). Locally, results remain in
+`.roboflow-cache/<workspace>--<project>--v<n>/`. On Vercel, the library is
+streamed as one zip to Blob and the temporary build directory is deleted.
 
 **2. Generate (browser, unchanged engine + unchanged UI).** The reference is
 handed to the existing contour-flow generator: a Sobel edge-vector field, Voronoi
@@ -93,40 +90,6 @@ also publishes it to Blob so polls can land on another function instance.
 Re-opening a published dataset version is a cache hit. To rebuild one from
 scratch, POST `{"url": …, "refresh": true}` to the ingest route.
 
-## Datasets of any size
-
-A Vercel function has ~500 MB of `/tmp` and a five-minute ceiling. Roboflow
-exports are not bounded by either, so neither end of the ingest touches a
-filesystem and neither holds more than a working set.
-
-**Reading the export.** A zip's index (its central directory) sits at the end of
-the file, so two range requests are enough to learn every image entry's name,
-offset and size before an image byte moves (`readZipIndex`). The ingest can then
-fetch precisely the entries it wants — nearby ones coalesced into shared ranged
-reads — instead of the whole archive. A host that ignores `Range` falls back to
-one sequential pass that keeps what it needs and discards the rest as it goes
-past. Either way the peak is one read window, not one export.
-
-**Writing the library.** The library is the zip the browser downloads, and it is
-produced as a stream: each thumbnail is added to a zip as it is encoded and the
-resulting bytes are uploaded to Blob as 8 MB multipart parts, two in flight
-(`lib/roboflow-sink.ts`). Nothing waits for the finished archive, so a 2 GB
-library costs the same memory as a 20 MB one.
-
-Measured on a 2 GB export (3,600 images), read from a local range-serving host:
-23s, zero bytes written to disk, and a steady state of ~440 MB RSS that does not
-move when the same process ingests it three times over.
-
-**Choosing tiles.** What caps a build is what the mosaic can draw, not what the
-host can hold: the frame is 1600px and the finest cell is 8px, so past ~20,000
-tiles the extra ones are bytes the browser downloads to draw nothing. A dataset
-with more images than that is sampled evenly across the whole export rather than
-truncated at the front, and when the deadline is the tighter constraint the sample
-shrinks to what can be fetched and decoded in the time left. A build that runs out
-of time publishes the tiles it has instead of failing, which keeps the download
-fast for the reader and the result honest — the page says when a mosaic is drawn
-from a sample.
-
 ## Layout
 
 | Path                                       | What                                                   |
@@ -137,11 +100,9 @@ from a sample.
 | `lib/mosaic-source.ts`                     | where tiles come from (Roboflow)                       |
 | `lib/roboflow.ts`                          | URL parsing, slugs, asset URLs (shared client/server)  |
 | `lib/roboflow-api.ts`                      | the two Roboflow REST calls                            |
-| `lib/roboflow-ingest.ts`                   | tile sampling, thumbnail and signature build           |
-| `lib/roboflow-zip.ts`                      | the remote export, read over HTTP without a temp file  |
-| `lib/roboflow-sink.ts`                     | where a built library goes (Blob multipart, or a dir)  |
-| `lib/roboflow-store.ts`                    | local cache, status, job registry                      |
-| `lib/roboflow-blob.ts`                     | durable status and the published archive's CDN url     |
+| `lib/roboflow-ingest.ts`                   | export download, thumbnail and signature build         |
+| `lib/roboflow-store.ts`                    | local cache, scratch directories, status, job registry |
+| `lib/roboflow-blob.ts`                     | durable status and streamed archive publication        |
 | `lib/roboflow-control.ts`                  | distributed leases and public-ingest rate limits       |
 | `lib/roboflow-limits.ts`                   | shared server and browser resource ceilings            |
 | `lib/roboflow-pack.ts`                     | browser download, unzip, and IndexedDB cache           |
