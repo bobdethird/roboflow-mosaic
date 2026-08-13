@@ -594,6 +594,20 @@ export async function resolveDataset(
       `Version ${version} does not exist. Available versions: ${info.versions.join(", ") || "none"}.`
     )
   }
+  // Roboflow keeps versions whose generation never produced anything; they
+  // report zero images and export as a zip holding nothing but README files.
+  // Reaching one means it was asked for by name, or that the project has no
+  // other kind — either way, saying so beats failing on the empty export.
+  if (info.imagesByVersion.get(version) === 0) {
+    const usable = info.versions.filter(
+      (n) => info.imagesByVersion.get(n) !== 0
+    )
+    throw new IngestError(
+      usable.length
+        ? `Version ${version} of ${info.name} contains no images. Versions with images: ${usable.join(", ")}.`
+        : `${info.name} has no version containing images yet.`
+    )
+  }
   return {
     ref: { ...ref, version },
     name: info.name,

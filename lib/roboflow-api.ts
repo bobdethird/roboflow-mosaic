@@ -46,7 +46,10 @@ type ProjectVersion = {
 export type ProjectInfo = {
   name: string
   type?: string
-  // Newest version number, or null when the project has no generated versions.
+  // Newest version that holds images, or null when the project has no generated
+  // versions. A version whose generation never finished stays in the list
+  // reporting zero images, and its export is a zip of two README files, so it is
+  // never what a project URL without a version means.
   latestVersion: number | null
   versions: number[]
   imagesByVersion: Map<number, number>
@@ -157,13 +160,18 @@ export async function fetchProjectInfo(ref: RoboflowRef): Promise<ProjectInfo> {
     if (typeof entry.images === "number") imagesByVersion.set(n, entry.images)
   }
   versions.sort((a, b) => a - b)
+  // An unreported image count is not a claim of emptiness, so only a version
+  // that says zero is skipped. If every version says zero, the newest still
+  // stands in — `resolveDataset` has a better error for that than "no versions".
+  const withImages = versions.filter((n) => imagesByVersion.get(n) !== 0)
+  const newest = withImages.length ? withImages : versions
 
   return {
     name:
       (typeof project.name === "string" && project.name) ||
       `${ref.workspace}/${ref.project}`,
     type: typeof project.type === "string" ? project.type : undefined,
-    latestVersion: versions.length ? versions[versions.length - 1] : null,
+    latestVersion: newest.length ? newest[newest.length - 1] : null,
     versions,
     imagesByVersion,
     iconUrl: iconUrl(project.icon),

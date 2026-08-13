@@ -19,7 +19,11 @@ import { unzipSync } from "fflate"
 import sharp from "sharp"
 import { ZipFile, type EndOptions } from "yazl"
 
-import { buildLibraryFromExport, planTileSample } from "../lib/roboflow-ingest"
+import {
+  buildLibraryFromExport,
+  planTileSample,
+  resolveDataset,
+} from "../lib/roboflow-ingest"
 import { COARSE_SIG_BYTES } from "../lib/tile-library"
 import {
   PART_BYTES,
@@ -761,5 +765,75 @@ test("an export with no images fails with a message about the export", async () 
     })
   } finally {
     await host.close()
+  }
+})
+
+// ─── Choosing a version ──────────────────────────────────────────────────────
+
+// Roboflow keeps versions whose generation never produced anything. They sit at
+// the top of the list with the highest numbers, report zero images, and export
+// as a zip holding two README files and nothing else — which is how
+// "beverage-containers-3atxb", whose images all live in version 3, reached the
+// empty-export failure above from a URL that named no version at all.
+function stubProjectInfo(
+  versions: { version: number; images?: number }[]
+): () => void {
+  const original = globalThis.fetch
+  process.env.ROBOFLOW_API_KEY ??= "test-key"
+  globalThis.fetch = (async () =>
+    Response.json({
+      project: { name: "Beverage Containers", type: "object-detection" },
+      versions: versions.map((entry) => ({
+        id: `workspace/project/${entry.version}`,
+        images: entry.images,
+      })),
+    })) as typeof globalThis.fetch
+  return () => {
+    globalThis.fetch = original
+  }
+}
+
+const projectRef = { workspace: "workspace", project: "project" }
+
+test("an empty version is not what a project URL without a version means", async () => {
+  const restore = stubProjectInfo([
+    { version: 1, images: 6519 },
+    { version: 3, images: 15645 },
+    { version: 7, images: 0 },
+    { version: 8, images: 0 },
+  ])
+  try {
+    const resolved = await resolveDataset({ ...projectRef, version: null })
+    assert.equal(resolved.ref.version, 3)
+    assert.equal(resolved.images, 15645)
+  } finally {
+    restore()
+  }
+})
+
+test("a version asked for by name that holds nothing says so", async () => {
+  const restore = stubProjectInfo([
+    { version: 3, images: 15645 },
+    { version: 8, images: 0 },
+  ])
+  try {
+    await assert.rejects(
+      resolveDataset({ ...projectRef, version: 8 }),
+      /Version 8 .* contains no images\. Versions with images: 3\./
+    )
+  } finally {
+    restore()
+  }
+})
+
+// Only a reported zero means empty: a version Roboflow says nothing about is
+// still the newest one.
+test("a version with no reported image count is still the latest", async () => {
+  const restore = stubProjectInfo([{ version: 1, images: 10 }, { version: 2 }])
+  try {
+    const resolved = await resolveDataset({ ...projectRef, version: null })
+    assert.equal(resolved.ref.version, 2)
+  } finally {
+    restore()
   }
 })
