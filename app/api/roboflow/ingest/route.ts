@@ -36,7 +36,7 @@ export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 // An ingest can take a few minutes; the request itself returns immediately, but
 // the background job must be allowed to keep running.
-export const maxDuration = 800
+export const maxDuration = 300
 
 function errorMessage(error: unknown): string {
   if (
