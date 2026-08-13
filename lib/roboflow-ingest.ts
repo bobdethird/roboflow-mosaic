@@ -56,10 +56,7 @@ import {
 } from "./roboflow-store"
 import {
   MAX_EXPORT_WAIT_MS,
-  MAX_VERCEL_EXPORT_BYTES,
-  MAX_VERCEL_LIBRARY_BYTES,
   VERCEL_INGEST_DEADLINE_MS,
-  storageLimitMessage,
 } from "./roboflow-limits"
 
 export { VERCEL_INGEST_DEADLINE_MS } from "./roboflow-limits"
@@ -99,7 +96,6 @@ const IMAGE_EXTENSIONS = new Set([
 
 export class IngestError extends Error {}
 
-class IngestStorageLimitError extends IngestError {}
 class IngestDeadlineError extends IngestError {}
 
 function assertBeforeDeadline(deadline?: number): void {
@@ -133,7 +129,6 @@ async function downloadZip(
   link: string,
   destination: string,
   report: ProgressReporter,
-  maxBytes?: number,
   deadline?: number
 ): Promise<number> {
   let response: Response
@@ -149,10 +144,6 @@ async function downloadZip(
     )
   }
   const total = Number(response.headers.get("content-length") ?? 0)
-  if (maxBytes && total > maxBytes) {
-    await response.body.cancel()
-    throw new IngestStorageLimitError(storageLimitMessage("export", maxBytes))
-  }
   let received = 0
   const source = Readable.fromWeb(
     response.body as Parameters<typeof Readable.fromWeb>[0]
@@ -160,12 +151,6 @@ async function downloadZip(
   const meter = new Transform({
     transform(chunk: Buffer, _encoding, callback) {
       received += chunk.length
-      if (maxBytes && received > maxBytes) {
-        callback(
-          new IngestStorageLimitError(storageLimitMessage("export", maxBytes))
-        )
-        return
-      }
       report("Downloading export", received, total)
       callback(null, chunk)
     },
@@ -468,7 +453,6 @@ export type LibraryResult = {
 }
 
 export type BuildLimits = {
-  maxOutputBytes?: number
   deadline?: number
 }
 
@@ -490,7 +474,6 @@ export async function buildLibrary(
   const seen = new Set<string>()
   let processed = 0
   let skipped = 0
-  let thumbnailBytes = 0
 
   await pooled(files, CONCURRENCY, async (file, index) => {
     assertBeforeDeadline(limits.deadline)
@@ -505,12 +488,6 @@ export async function buildLibrary(
         bytes,
         path.join(thumbsDir, `${id}.jpg`)
       )
-      thumbnailBytes += decoded.thumbnailBytes
-      if (limits.maxOutputBytes && thumbnailBytes > limits.maxOutputBytes) {
-        throw new IngestStorageLimitError(
-          storageLimitMessage("library", limits.maxOutputBytes)
-        )
-      }
       photos[index] = {
         id,
         w: decoded.width,
@@ -518,8 +495,7 @@ export async function buildLibrary(
         file: path.basename(file),
       }
       signatures[index] = decoded.signature
-    } catch (error) {
-      if (error instanceof IngestStorageLimitError) throw error
+    } catch {
       skipped += 1
     } finally {
       processed += 1
@@ -545,9 +521,7 @@ export async function buildLibrary(
     outputDir,
     keptPhotos,
     keptSignatures,
-    thumbnailBytes,
-    report,
-    limits.maxOutputBytes
+    report
   )
 
   return { photoCount: keptPhotos.length, skipped, version }
@@ -557,21 +531,12 @@ async function writeLibrary(
   outputDir: string,
   photos: ManifestPhoto[],
   signatures: Buffer[],
-  thumbnailBytes: number,
-  report: ProgressReporter,
-  maxOutputBytes?: number
+  report: ProgressReporter
 ): Promise<string> {
   report("Writing library", 0, 0)
   const version = new Date().toISOString()
   const signatureBytes = Buffer.concat(signatures)
   const manifest = JSON.stringify({ version, photos }, null, 2)
-  const outputBytes =
-    thumbnailBytes + signatureBytes.byteLength + Buffer.byteLength(manifest)
-  if (maxOutputBytes && outputBytes > maxOutputBytes) {
-    throw new IngestStorageLimitError(
-      storageLimitMessage("library", maxOutputBytes)
-    )
-  }
   await writeFile(path.join(outputDir, COARSE_SIGNATURES_FILE), signatureBytes)
   await writeFile(path.join(outputDir, MANIFEST_FILE), manifest)
   return version
@@ -599,7 +564,6 @@ async function buildLibraryFromZip(
   const seen = new Set<string>()
   let processed = 0
   let skipped = 0
-  let thumbnailBytes = 0
 
   await forEachZipImage(zipPath, async (fileName, bytes) => {
     assertBeforeDeadline(limits.deadline)
@@ -613,12 +577,6 @@ async function buildLibraryFromZip(
         bytes,
         path.join(thumbsDir, `${id}.jpg`)
       )
-      thumbnailBytes += decoded.thumbnailBytes
-      if (limits.maxOutputBytes && thumbnailBytes > limits.maxOutputBytes) {
-        throw new IngestStorageLimitError(
-          storageLimitMessage("library", limits.maxOutputBytes)
-        )
-      }
       byName.set(fileName, {
         photo: {
           id,
@@ -628,8 +586,7 @@ async function buildLibraryFromZip(
         },
         signature: decoded.signature,
       })
-    } catch (error) {
-      if (error instanceof IngestStorageLimitError) throw error
+    } catch {
       skipped += 1
     } finally {
       processed += 1
@@ -653,9 +610,7 @@ async function buildLibraryFromZip(
     outputDir,
     keptPhotos,
     keptSignatures,
-    thumbnailBytes,
-    report,
-    limits.maxOutputBytes
+    report
   )
 
   return { photoCount: keptPhotos.length, skipped, version }
@@ -782,13 +737,7 @@ export async function ingestDataset(
     )
     assertBeforeDeadline(deadline)
 
-    await downloadZip(
-      link,
-      zipPath,
-      report,
-      IS_VERCEL ? MAX_VERCEL_EXPORT_BYTES : undefined,
-      deadline
-    )
+    await downloadZip(link, zipPath, report, deadline)
 
     let hasIcon = false
     if (resolved.iconUrl) {
@@ -805,15 +754,9 @@ export async function ingestDataset(
           await extractImages(zipPath, path.join(outputDir, "source"), report),
           outputDir,
           report,
-          {
-            maxOutputBytes: IS_VERCEL ? MAX_VERCEL_LIBRARY_BYTES : undefined,
-            deadline,
-          }
+          { deadline }
         )
-      : await buildLibraryFromZip(zipPath, outputDir, report, {
-          maxOutputBytes: IS_VERCEL ? MAX_VERCEL_LIBRARY_BYTES : undefined,
-          deadline,
-        })
+      : await buildLibraryFromZip(zipPath, outputDir, report, { deadline })
     if (blobEnabled()) {
       // The export is no longer needed once thumbnails and signatures exist.
       // Release it before upload so the two large allocations never overlap.

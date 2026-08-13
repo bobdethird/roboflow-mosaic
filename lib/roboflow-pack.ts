@@ -22,9 +22,7 @@ import {
   roboflowPackUrl,
   roboflowThumbPath,
 } from "./roboflow"
-import { MAX_EXPANDED_PACK_BYTES, MAX_PACK_BYTES, MIB } from "./roboflow-limits"
-
-export { MAX_PACK_BYTES } from "./roboflow-limits"
+import { MIB } from "./roboflow-limits"
 
 export type PackProgress = {
   // Bytes received so far, and the total when the server declared one.
@@ -269,7 +267,6 @@ export async function unpackArchive(
   }
   const pending: Promise<void>[] = []
   let streamError: unknown = null
-  let expanded = 0
 
   const unzipper = new Unzip((file) => {
     const wanted =
@@ -287,13 +284,9 @@ export async function unpackArchive(
     const chunks: Uint8Array[] = []
     let length = 0
     const task = readZipFile(file, (chunk) => {
-      expanded += chunk.length
       length += chunk.length
       if (length > entryLimit) {
         throw new Error("A dataset archive entry is unexpectedly large.")
-      }
-      if (expanded > MAX_EXPANDED_PACK_BYTES) {
-        throw new Error("The unpacked dataset is too large for this browser.")
       }
       chunks.push(chunk)
     })
@@ -327,11 +320,6 @@ export async function unpackArchive(
       const { done, value } = await reader.read()
       if (done) break
       loaded += value.length
-      if (loaded > MAX_PACK_BYTES) {
-        throw new Error(
-          `This dataset archive is too large for the browser (limit: ${MAX_PACK_BYTES / MIB} MB).`
-        )
-      }
       options.onArchiveChunk?.(value)
       unzipper.push(value)
       if (streamError) throw streamError
@@ -369,20 +357,9 @@ async function downloadPack(
     throw new Error(`Could not download the dataset (${response.status}).`)
   }
   const total = Number(response.headers.get("content-length") ?? 0)
-  if (total > MAX_PACK_BYTES) {
-    await response.body?.cancel()
-    throw new Error(
-      `This dataset archive is too large for the browser (limit: ${MAX_PACK_BYTES / MIB} MB).`
-    )
-  }
 
   if (!response.body) {
     const archive = await response.blob()
-    if (archive.size > MAX_PACK_BYTES) {
-      throw new Error(
-        `This dataset archive is too large for the browser (limit: ${MAX_PACK_BYTES / MIB} MB).`
-      )
-    }
     const pack = await unpackArchive(slug, archive.stream(), {
       expectedVersion,
       signal,
@@ -427,8 +404,7 @@ async function loadPack(
   if (stored && (!expectedVersion || stored.version === expectedVersion)) {
     const archive = storedArchive(stored)
     try {
-      if (!archive || archive.size > MAX_PACK_BYTES)
-        throw new Error("Bad cache")
+      if (!archive) throw new Error("Bad cache")
       onProgress({ loaded: 0, total: 0, step: "unpacking" })
       const pack = await unpackArchive(slug, archive.stream(), {
         expectedVersion,

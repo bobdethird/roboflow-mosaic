@@ -31,13 +31,13 @@ route requires both `ROBOFLOW_API_KEY` and the store-provided
 deleted after each finished or failed ingest. The completed library is streamed
 to Blob and the browser downloads it from the Blob CDN.
 
-To stay below the function's 500 MB scratch-space ceiling, deployments accept
-exports up to 320 MB and generated libraries up to 128 MB. Larger datasets fail
-with a size-limit message instead of filling the filesystem. Ingests use
-distributed per-dataset leases, same-origin checks, and a four-per-15-minute
-client rate window so one public caller cannot repeatedly trigger the same
-expensive export. A separate project-wide window caps aggregate work from
-distributed callers.
+Datasets of any size are accepted; a dataset that does not fit in the function's
+~500 MB `/tmp` scratch space (or exceeds the route's five-minute deadline) fails
+mid-ingest rather than with an up-front size message, so very large exports may
+be unreliable on Vercel. Ingests still use distributed per-dataset leases,
+same-origin checks, and a four-per-15-minute client rate window so one public
+caller cannot repeatedly trigger the same expensive export. A separate
+project-wide window caps aggregate work from distributed callers.
 
 ## How it works
 
@@ -68,8 +68,9 @@ contour.
 The browser downloads the dataset archive once, unpacks it into object URLs, and
 caches the archive in IndexedDB. The canvas, hover preview, zoom view, and
 reference picker then share that one in-browser copy instead of making one HTTP
-request per thumbnail. ZIP parsing is incremental and capped at 128 MB, so a
-malformed or unexpectedly large pack cannot grow browser memory without bound.
+request per thumbnail. ZIP parsing is incremental, and per-entry sanity limits
+still reject a single malformed thumbnail or manifest, but the archive's overall
+size is no longer capped.
 
 **Where the tiles come from** is a `MosaicSource` (`lib/mosaic-source.ts`) —
 how the library loads and how a tile's URL is built. Today the only

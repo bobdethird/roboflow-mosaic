@@ -12,10 +12,6 @@ import {
   GLOBAL_INGEST_RATE_LIMIT,
   nextRateRecord,
 } from "../lib/roboflow-control"
-import {
-  MAX_PACK_BYTES,
-  storageLimitMessage,
-} from "../lib/roboflow-limits"
 import { unpackArchive } from "../lib/roboflow-pack"
 import { MosaicEngine } from "../lib/mosaic-client"
 import { buildMosaicGeometry } from "../lib/mosaic-geometry"
@@ -61,12 +57,6 @@ test("the project-wide ingest window has a separate ceiling", () => {
   )
   assert.equal(next.result.allowed, false)
   assert.equal(next.result.limit, GLOBAL_INGEST_RATE_LIMIT)
-})
-
-test("deployment limits stay mutually compatible", () => {
-  assert.equal(MAX_PACK_BYTES, 128 * 1024 * 1024)
-  assert.match(storageLimitMessage("export", 320 * 1024 * 1024), /320 MB/)
-  assert.match(storageLimitMessage("library", 128 * 1024 * 1024), /128 MB/)
 })
 
 test("zoom geometry skips tiles whose image URL is not ready", () => {
