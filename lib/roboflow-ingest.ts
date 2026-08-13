@@ -54,6 +54,17 @@ import {
   datasetDir,
   type ProgressReporter,
 } from "./roboflow-store"
+import {
+  MAX_EXPORT_WAIT_MS,
+  MAX_VERCEL_EXPORT_BYTES,
+  MAX_VERCEL_IMAGES,
+  MAX_VERCEL_LIBRARY_BYTES,
+  VERCEL_INGEST_DEADLINE_MS,
+  imageLimitMessage,
+  storageLimitMessage,
+} from "./roboflow-limits"
+
+export { MAX_VERCEL_IMAGES, VERCEL_INGEST_DEADLINE_MS } from "./roboflow-limits"
 
 // Must match lib/mosaic.ts SIGNATURE_GRID and the worker's COARSE_GRID: the
 // browser compares tiles on 8×8×3 values stored as uint16 LE fixed-point, where
@@ -77,13 +88,6 @@ const ICON_MAX_EDGE = 1600
 // machines can keep more in flight.
 const CONCURRENCY = IS_VERCEL ? 3 : 8
 
-// Keep headroom below Vercel's 500 MB /tmp ceiling for Sharp's temporary work,
-// status files, and a few in-flight thumbnails. The archive upload itself is
-// streamed, so these are the only two material on-disk allocations.
-const MIB = 1024 * 1024
-const MAX_VERCEL_EXPORT_BYTES = 320 * MIB
-const MAX_VERCEL_LIBRARY_BYTES = 128 * MIB
-
 const IMAGE_EXTENSIONS = new Set([
   ".jpg",
   ".jpeg",
@@ -98,10 +102,27 @@ const IMAGE_EXTENSIONS = new Set([
 export class IngestError extends Error {}
 
 class IngestStorageLimitError extends IngestError {}
+class IngestDeadlineError extends IngestError {}
 
-function storageLimitMessage(kind: "export" | "library", maxBytes: number) {
-  const limit = Math.floor(maxBytes / MIB)
-  return `This dataset's ${kind} is too large for this deployment (limit: ${limit} MB). Try a smaller dataset.`
+function assertBeforeDeadline(deadline?: number): void {
+  if (deadline && Date.now() >= deadline) {
+    throw new IngestDeadlineError(
+      "This dataset could not be prepared within the deployment time limit. Try a smaller dataset."
+    )
+  }
+}
+
+function deadlineSignal(deadline?: number): AbortSignal | undefined {
+  if (!deadline) return undefined
+  assertBeforeDeadline(deadline)
+  return AbortSignal.timeout(Math.max(1, deadline - Date.now()))
+}
+
+function isTimeoutError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    (error.name === "AbortError" || error.name === "TimeoutError")
+  )
 }
 
 function isImagePath(name: string): boolean {
@@ -114,9 +135,16 @@ async function downloadZip(
   link: string,
   destination: string,
   report: ProgressReporter,
-  maxBytes?: number
+  maxBytes?: number,
+  deadline?: number
 ): Promise<number> {
-  const response = await fetch(link)
+  let response: Response
+  try {
+    response = await fetch(link, { signal: deadlineSignal(deadline) })
+  } catch (error) {
+    if (isTimeoutError(error)) assertBeforeDeadline(deadline)
+    throw error
+  }
   if (!response.ok || !response.body) {
     throw new IngestError(
       `Downloading the dataset export failed (${response.status} ${response.statusText}).`
@@ -144,7 +172,12 @@ async function downloadZip(
       callback(null, chunk)
     },
   })
-  await pipeline(source, meter, createWriteStream(destination))
+  try {
+    await pipeline(source, meter, createWriteStream(destination))
+  } catch (error) {
+    if (isTimeoutError(error)) assertBeforeDeadline(deadline)
+    throw error
+  }
   return received
 }
 
@@ -436,15 +469,24 @@ export type LibraryResult = {
   version: string
 }
 
+export type BuildLimits = {
+  maxOutputBytes?: number
+  maxImages?: number
+  deadline?: number
+}
+
 // Build the tile library from a directory of images and write it into
 // `outputDir` in the layout the browser engine expects.
 export async function buildLibrary(
   imageFiles: string[],
   outputDir: string,
   report: ProgressReporter,
-  maxOutputBytes?: number
+  limits: BuildLimits = {}
 ): Promise<LibraryResult> {
   const files = [...imageFiles].sort()
+  if (limits.maxImages && files.length > limits.maxImages) {
+    throw new IngestStorageLimitError(imageLimitMessage(limits.maxImages))
+  }
   const thumbsDir = path.join(outputDir, "thumbs")
   await rm(thumbsDir, { recursive: true, force: true })
   await mkdir(thumbsDir, { recursive: true })
@@ -457,6 +499,7 @@ export async function buildLibrary(
   let thumbnailBytes = 0
 
   await pooled(files, CONCURRENCY, async (file, index) => {
+    assertBeforeDeadline(limits.deadline)
     try {
       const bytes = await readFile(file)
       const id = createHash("sha1").update(bytes).digest("hex").slice(0, 16)
@@ -469,9 +512,9 @@ export async function buildLibrary(
         path.join(thumbsDir, `${id}.jpg`)
       )
       thumbnailBytes += decoded.thumbnailBytes
-      if (maxOutputBytes && thumbnailBytes > maxOutputBytes) {
+      if (limits.maxOutputBytes && thumbnailBytes > limits.maxOutputBytes) {
         throw new IngestStorageLimitError(
-          storageLimitMessage("library", maxOutputBytes)
+          storageLimitMessage("library", limits.maxOutputBytes)
         )
       }
       photos[index] = {
@@ -510,7 +553,7 @@ export async function buildLibrary(
     keptSignatures,
     thumbnailBytes,
     report,
-    maxOutputBytes
+    limits.maxOutputBytes
   )
 
   return { photoCount: keptPhotos.length, skipped, version }
@@ -546,12 +589,15 @@ async function buildLibraryFromZip(
   zipPath: string,
   outputDir: string,
   report: ProgressReporter,
-  maxOutputBytes?: number
+  limits: BuildLimits = {}
 ): Promise<LibraryResult> {
   report("Listing images", 0, 0)
   const names = (await zipImageNames(zipPath)).sort()
   if (!names.length) {
     throw new IngestError("The dataset export contained no images.")
+  }
+  if (limits.maxImages && names.length > limits.maxImages) {
+    throw new IngestStorageLimitError(imageLimitMessage(limits.maxImages))
   }
 
   const thumbsDir = path.join(outputDir, "thumbs")
@@ -565,6 +611,7 @@ async function buildLibraryFromZip(
   let thumbnailBytes = 0
 
   await forEachZipImage(zipPath, async (fileName, bytes) => {
+    assertBeforeDeadline(limits.deadline)
     try {
       const id = createHash("sha1").update(bytes).digest("hex").slice(0, 16)
       // A byte-identical duplicate already has its thumbnail and signature.
@@ -576,9 +623,9 @@ async function buildLibraryFromZip(
         path.join(thumbsDir, `${id}.jpg`)
       )
       thumbnailBytes += decoded.thumbnailBytes
-      if (maxOutputBytes && thumbnailBytes > maxOutputBytes) {
+      if (limits.maxOutputBytes && thumbnailBytes > limits.maxOutputBytes) {
         throw new IngestStorageLimitError(
-          storageLimitMessage("library", maxOutputBytes)
+          storageLimitMessage("library", limits.maxOutputBytes)
         )
       }
       byName.set(fileName, {
@@ -617,7 +664,7 @@ async function buildLibraryFromZip(
     keptSignatures,
     thumbnailBytes,
     report,
-    maxOutputBytes
+    limits.maxOutputBytes
   )
 
   return { photoCount: keptPhotos.length, skipped, version }
@@ -634,10 +681,14 @@ async function buildLibraryFromZip(
 // image out of the dataset.
 async function downloadIcon(
   url: string,
-  destination: string
+  destination: string,
+  deadline?: number
 ): Promise<boolean> {
   try {
-    const response = await fetch(url)
+    const remaining = deadline ? deadline - Date.now() : 10_000
+    const response = await fetch(url, {
+      signal: AbortSignal.timeout(Math.max(1, Math.min(10_000, remaining))),
+    })
     if (!response.ok) return false
     const bytes = Buffer.from(await response.arrayBuffer())
     await sharp(bytes, { failOn: "none" })
@@ -655,13 +706,17 @@ async function downloadIcon(
   }
 }
 
-export async function resolveDataset(ref: RoboflowRef): Promise<{
+export type ResolvedDataset = {
   ref: RoboflowRef & { version: number }
   name: string
   type?: string
   images: number
   iconUrl?: string
-}> {
+}
+
+export async function resolveDataset(
+  ref: RoboflowRef
+): Promise<ResolvedDataset> {
   const info = await fetchProjectInfo(ref)
   const version = ref.version ?? info.latestVersion
   if (version === null) {
@@ -688,6 +743,10 @@ export type IngestOptions = {
   // Also extract the original images under source/. Off by default: the
   // thumbnails are what the mosaic draws, and exports can be gigabytes.
   keepSource?: boolean
+  // The route already resolves this to check cache/limits. Supplying it avoids
+  // a second Roboflow project-info request inside the background job.
+  resolved?: ResolvedDataset
+  deadline?: number
 }
 
 export async function ingestDataset(
@@ -706,7 +765,14 @@ export async function ingestDataset(
     )
   }
   report("Resolving dataset", 0, 0)
-  const resolved = await resolveDataset(ref)
+  const resolved = options.resolved ?? (await resolveDataset(ref))
+  const deadline =
+    options.deadline ??
+    (IS_VERCEL ? Date.now() + VERCEL_INGEST_DEADLINE_MS : undefined)
+  assertBeforeDeadline(deadline)
+  if (IS_VERCEL && resolved.images > MAX_VERCEL_IMAGES) {
+    throw new IngestStorageLimitError(imageLimitMessage(MAX_VERCEL_IMAGES))
+  }
   const slug = datasetSlug(resolved.ref)
   const outputDir = await createIngestDirectory(slug)
   const zipPath = path.join(outputDir, "export.zip")
@@ -714,17 +780,26 @@ export async function ingestDataset(
 
   try {
     report("Requesting export", 0, 0)
+    const exportWait = deadline
+      ? Math.min(
+          MAX_EXPORT_WAIT_MS,
+          Math.max(1, deadline - Date.now() - 120_000)
+        )
+      : undefined
     const { link } = await fetchExportLink(
       resolved.ref,
       exportFormats(resolved.type),
-      (message) => report(message, 0, 0)
+      (message) => report(message, 0, 0),
+      exportWait
     )
+    assertBeforeDeadline(deadline)
 
     await downloadZip(
       link,
       zipPath,
       report,
-      IS_VERCEL ? MAX_VERCEL_EXPORT_BYTES : undefined
+      IS_VERCEL ? MAX_VERCEL_EXPORT_BYTES : undefined,
+      deadline
     )
 
     let hasIcon = false
@@ -732,7 +807,8 @@ export async function ingestDataset(
       report("Fetching project cover image", 0, 0)
       hasIcon = await downloadIcon(
         resolved.iconUrl,
-        path.join(outputDir, ICON_FILE)
+        path.join(outputDir, ICON_FILE),
+        deadline
       )
     }
 
@@ -741,19 +817,27 @@ export async function ingestDataset(
           await extractImages(zipPath, path.join(outputDir, "source"), report),
           outputDir,
           report,
-          IS_VERCEL ? MAX_VERCEL_LIBRARY_BYTES : undefined
+          {
+            maxOutputBytes: IS_VERCEL ? MAX_VERCEL_LIBRARY_BYTES : undefined,
+            maxImages: IS_VERCEL ? MAX_VERCEL_IMAGES : undefined,
+            deadline,
+          }
         )
-      : await buildLibraryFromZip(
-          zipPath,
-          outputDir,
-          report,
-          IS_VERCEL ? MAX_VERCEL_LIBRARY_BYTES : undefined
-        )
+      : await buildLibraryFromZip(zipPath, outputDir, report, {
+          maxOutputBytes: IS_VERCEL ? MAX_VERCEL_LIBRARY_BYTES : undefined,
+          maxImages: IS_VERCEL ? MAX_VERCEL_IMAGES : undefined,
+          deadline,
+        })
     if (blobEnabled()) {
       // The export is no longer needed once thumbnails and signatures exist.
       // Release it before upload so the two large allocations never overlap.
       await rm(zipPath, { force: true })
-      await publishDataset(slug, outputDir, report)
+      try {
+        await publishDataset(slug, outputDir, report, deadlineSignal(deadline))
+      } catch (error) {
+        if (isTimeoutError(error)) assertBeforeDeadline(deadline)
+        throw error
+      }
     }
 
     return {

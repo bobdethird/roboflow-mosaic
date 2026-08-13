@@ -43,7 +43,10 @@ export async function GET(
     const url = await blobUrl(slug, ARCHIVE_FILE)
     if (!url) return notFound()
     // 307 rather than a proxy: the browser pulls from the CDN directly.
-    return Response.redirect(url, 307)
+    return new Response(null, {
+      status: 307,
+      headers: { location: url, "cache-control": "no-store" },
+    })
   }
 
   const stream = await libraryArchiveStream(datasetDir(slug)).catch(() => null)

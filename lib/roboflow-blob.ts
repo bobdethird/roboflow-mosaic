@@ -187,7 +187,8 @@ export async function libraryArchiveStream(
 export async function publishFile(
   slug: string,
   directory: string,
-  relativePath: string
+  relativePath: string,
+  abortSignal?: AbortSignal
 ): Promise<void> {
   const body = await readFile(path.join(directory, relativePath))
   await put(blobKey(slug, relativePath), body, {
@@ -195,13 +196,15 @@ export async function publishFile(
     addRandomSuffix: false,
     allowOverwrite: true,
     cacheControlMaxAge: STORE_MAX_AGE,
+    abortSignal,
   })
 }
 
 export async function publishDataset(
   slug: string,
   directory: string,
-  report: ProgressReporter
+  report: ProgressReporter,
+  abortSignal?: AbortSignal
 ): Promise<void> {
   const files = await libraryFiles(directory)
   if (!files.length) {
@@ -219,6 +222,7 @@ export async function publishDataset(
       contentType: "application/zip",
       cacheControlMaxAge: STORE_MAX_AGE,
       multipart: true,
+      abortSignal,
       onUploadProgress: (event) => {
         report("Uploading library", event.loaded, event.total)
       },
@@ -228,7 +232,7 @@ export async function publishDataset(
   }
 
   const manifest = files.find((file) => file === MANIFEST_FILE)
-  if (manifest) await publishFile(slug, directory, manifest)
+  if (manifest) await publishFile(slug, directory, manifest, abortSignal)
   await put(
     blobKey(slug, META_FILE),
     JSON.stringify({ hasIcon: files.includes(ICON_FILE) }),
@@ -238,6 +242,7 @@ export async function publishDataset(
       allowOverwrite: true,
       contentType: "application/json",
       cacheControlMaxAge: STORE_MAX_AGE,
+      abortSignal,
     }
   )
 }

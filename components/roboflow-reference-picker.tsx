@@ -182,24 +182,28 @@ export function RoboflowReferencePicker({
               ) : (
                 <>
                   <div className="grid grid-cols-3 gap-2 sm:grid-cols-5 md:grid-cols-6">
-                    {ids.slice(0, shown).map((id) => (
-                      <button
-                        key={id}
-                        type="button"
-                        onClick={() => void pickFromDataset(id)}
-                        className="focus-visible:ring-ring overflow-hidden rounded-lg border transition hover:opacity-80 focus-visible:ring-2 focus-visible:outline-none"
-                      >
-                        {/* An object url into the downloaded archive; there is
-                            nothing for next/image's optimizer to do. */}
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img
-                          src={pack?.thumbUrl(id) ?? ""}
-                          alt=""
-                          loading="lazy"
-                          className="aspect-square w-full object-cover"
-                        />
-                      </button>
-                    ))}
+                    {ids.slice(0, shown).map((id) => {
+                      const src = pack?.thumbUrl(id)
+                      if (!src) return null
+                      return (
+                        <button
+                          key={id}
+                          type="button"
+                          onClick={() => void pickFromDataset(id)}
+                          className="focus-visible:ring-ring overflow-hidden rounded-lg border transition hover:opacity-80 focus-visible:ring-2 focus-visible:outline-none"
+                        >
+                          {/* An object url into the downloaded archive; there is
+                              nothing for next/image's optimizer to do. */}
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={src}
+                            alt=""
+                            loading="lazy"
+                            className="aspect-square w-full object-cover"
+                          />
+                        </button>
+                      )
+                    })}
                   </div>
                   {shown < ids.length && (
                     <div className="flex justify-center p-4">

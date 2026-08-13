@@ -10,7 +10,11 @@
 // them instantly instead of re-fetching.
 
 import { SIGNATURE_GRID, drawPolygonCell, type Grid } from "./mosaic"
-import type { HydrateItem, WorkerRequest, WorkerResponse } from "./mosaic-protocol"
+import type {
+  HydrateItem,
+  WorkerRequest,
+  WorkerResponse,
+} from "./mosaic-protocol"
 
 // Minimal view of the worker global so we don't need the conflicting
 // "webworker" TS lib alongside "dom".
@@ -172,7 +176,9 @@ function buildMeanBinOffsets(): MeanBinOffset[] {
   offsets.sort(
     (a, b) =>
       a.dist - b.dist ||
-      Math.abs(a.r) + Math.abs(a.g) + Math.abs(a.b) -
+      Math.abs(a.r) +
+        Math.abs(a.g) +
+        Math.abs(a.b) -
         (Math.abs(b.r) + Math.abs(b.g) + Math.abs(b.b))
   )
   return offsets
@@ -358,7 +364,7 @@ async function handleGenerate(
   // meanColorDistSq), so tiles too far in average color skip the inner loop.
   const library = getPreparedLibrary(ids)
   const nTiles = ids.length
-  if (nTiles === 0) return
+  if (nTiles === 0) throw new Error("The mosaic tile library is empty.")
   const tileCoarse = library.coarse
   const meanBins = library.meanBins
   const reuseCap =
@@ -387,14 +393,15 @@ async function handleGenerate(
     cellCy[cell] = sy / m
   }
   const pitch = Math.sqrt((width * height) / Math.max(1, cellCount))
-  const dupMinDist2 = DUP_MIN_DIST_PITCHES * pitch * (DUP_MIN_DIST_PITCHES * pitch)
+  const dupMinDist2 =
+    DUP_MIN_DIST_PITCHES * pitch * (DUP_MIN_DIST_PITCHES * pitch)
   // Per tile: x,y pairs of the cells it's already been placed in, so each new
   // use can be kept away from every previous one.
   const placements: (number[] | undefined)[] = new Array(nTiles)
 
   const canvas = new OffscreenCanvas(width, height)
   const ctx = canvas.getContext("2d")
-  if (!ctx) return
+  if (!ctx) throw new Error("This browser could not create the mosaic canvas.")
   // Transparent background — the main thread paints the reference's average color
   // (the grout) behind the tiles so the gaps and tile shadows sit on-palette.
 
@@ -598,6 +605,7 @@ async function handleGenerate(
   }
 
   let cursor = 0
+  let decodeFailures = 0
   const fetchWorker = async () => {
     for (;;) {
       if (activeGenerate !== reqId) return
@@ -607,6 +615,7 @@ async function handleGenerate(
       const bmp = await decodeTile(ids[tileIdx])
       if (activeGenerate !== reqId) return
       if (bmp) ready.set(tileIdx, bmp)
+      else decodeFailures++
       fetched++
       emitProgress(fetched === uniqueTiles.length)
       const now = performance.now()
@@ -626,6 +635,11 @@ async function handleGenerate(
     )
   )
   if (activeGenerate !== reqId) return
+  if (decodeFailures > 0) {
+    throw new Error(
+      `${decodeFailures} mosaic tile image${decodeFailures === 1 ? "" : "s"} could not be decoded. Reload the dataset and try again.`
+    )
+  }
 
   // ── Phase 3: final paint + hand the finished frame to the main thread ───────
   // One authoritative full repaint so the finished image's shadow layering is
@@ -659,7 +673,16 @@ scope.onmessage = (e: MessageEvent<WorkerRequest>) => {
         msg.polys,
         msg.offsets,
         msg.maxTileReuse
-      )
+      ).catch((error: unknown) => {
+        post({
+          type: "error",
+          reqId: msg.reqId,
+          message:
+            error instanceof Error
+              ? error.message
+              : "Mosaic generation failed.",
+        })
+      })
       break
     case "hydrate":
       // Restore library tiles into the store so they're usable immediately. The

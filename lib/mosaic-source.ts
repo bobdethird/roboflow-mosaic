@@ -29,9 +29,10 @@ export type MosaicSource = {
   // Current library version, for spotting a cached mosaic built from tiles that
   // no longer exist. Null when it can't be determined.
   fetchVersion: () => Promise<string | null>
-  // Tile url, once the library is loaded. Empty before that, and for an id the
-  // library does not contain.
-  thumbUrl: (id: string) => string
+  // Tile url, once the library is loaded. Null before that, and for an id the
+  // library does not contain. Returning null keeps an unavailable image from
+  // accidentally reaching an <img src="">.
+  thumbUrl: (id: string) => string | null
 }
 
 export function roboflowSource(dataset: RoboflowDataset): MosaicSource {
@@ -65,6 +66,6 @@ export function roboflowSource(dataset: RoboflowDataset): MosaicSource {
     },
     // The ingest stamps this into the dataset record, so no request is needed.
     fetchVersion: async () => dataset.libraryVersion ?? null,
-    thumbUrl: (id) => pack?.thumbUrl(id) ?? "",
+    thumbUrl: (id) => pack?.thumbUrl(id) ?? null,
   }
 }

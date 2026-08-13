@@ -34,7 +34,7 @@ export const IS_VERCEL = process.env.VERCEL === "1"
 
 const DEFAULT_CACHE_ROOT = IS_VERCEL
   ? "/tmp/roboflow-cache"
-  : path.join(process.cwd(), ".roboflow-cache")
+  : `${process.cwd()}${path.sep}.roboflow-cache`
 
 export const CACHE_ROOT = path.resolve(
   process.env.ROBOFLOW_CACHE_DIR?.trim() || DEFAULT_CACHE_ROOT

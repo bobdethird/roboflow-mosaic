@@ -12,6 +12,7 @@
 import type { RoboflowRef } from "./roboflow"
 
 const API_URL = "https://api.roboflow.com"
+const REQUEST_TIMEOUT_MS = 20_000
 
 export class RoboflowApiError extends Error {
   constructor(
@@ -88,7 +89,21 @@ export function exportFormats(type: string | undefined): string[] {
 }
 
 async function getJson(url: string): Promise<Record<string, unknown>> {
-  const response = await fetch(url, { cache: "no-store" })
+  let response: Response
+  try {
+    response = await fetch(url, {
+      cache: "no-store",
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    })
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      (error.name === "AbortError" || error.name === "TimeoutError")
+    ) {
+      throw new RoboflowApiError("The Roboflow API request timed out.")
+    }
+    throw error
+  }
   const text = await response.text()
   let body: Record<string, unknown> = {}
   try {
@@ -108,7 +123,10 @@ async function getJson(url: string): Promise<Record<string, unknown>> {
         response.status
       )
     }
-    throw new RoboflowApiError(`Roboflow API ${response.status}: ${detail}`, response.status)
+    throw new RoboflowApiError(
+      `Roboflow API ${response.status}: ${detail}`,
+      response.status
+    )
   }
   return body
 }

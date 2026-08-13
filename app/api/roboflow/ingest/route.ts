@@ -19,11 +19,20 @@ import {
 import { RoboflowApiError } from "@/lib/roboflow-api"
 import {
   IngestError,
+  MAX_VERCEL_IMAGES,
+  VERCEL_INGEST_DEADLINE_MS,
   hasIconFile,
   ingestDataset,
   isIngested,
   resolveDataset,
 } from "@/lib/roboflow-ingest"
+import {
+  acquireIngestLease,
+  consumeGlobalIngestRateLimit,
+  consumeIngestRateLimit,
+  releaseIngestLease,
+  type IngestLease,
+} from "@/lib/roboflow-control"
 import {
   blobEnabled,
   readBlobStatus,
@@ -62,11 +71,33 @@ function errorMessage(error: unknown): string {
   return "Ingest failed."
 }
 
-function json(body: unknown, status = 200): Response {
+function json(
+  body: unknown,
+  status = 200,
+  extraHeaders: HeadersInit = {}
+): Response {
   return Response.json(body, {
     status,
-    headers: { "cache-control": "no-store" },
+    headers: { "cache-control": "no-store", ...extraHeaders },
   })
+}
+
+function clientAddress(request: Request): string {
+  return (
+    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+    request.headers.get("x-real-ip")?.trim() ||
+    "unknown"
+  )
+}
+
+function isSameOrigin(request: Request): boolean {
+  const origin = request.headers.get("origin")
+  if (!origin) return true
+  try {
+    return new URL(origin).origin === new URL(request.url).origin
+  } catch {
+    return false
+  }
 }
 
 async function persistStatus(status: IngestStatus): Promise<void> {
@@ -159,6 +190,9 @@ export async function GET(request: Request): Promise<Response> {
 }
 
 export async function POST(request: Request): Promise<Response> {
+  const deadline = IS_VERCEL
+    ? Date.now() + VERCEL_INGEST_DEADLINE_MS
+    : undefined
   let body: { url?: string; refresh?: boolean }
   try {
     body = (await request.json()) as { url?: string; refresh?: boolean }
@@ -178,9 +212,13 @@ export async function POST(request: Request): Promise<Response> {
       503
     )
   }
+  if (IS_VERCEL && !isSameOrigin(request)) {
+    return json({ error: "Cross-origin ingest requests are not allowed." }, 403)
+  }
 
   let slug: string
   let reservedSlug: string | null = null
+  let distributedLease: IngestLease | null = null
   let started: IngestStatus
   try {
     const ref = parseRoboflowUrl(body.url ?? "")
@@ -196,8 +234,45 @@ export async function POST(request: Request): Promise<Response> {
       }
     }
 
+    if (IS_VERCEL) {
+      const rate = await consumeIngestRateLimit(clientAddress(request))
+      if (!rate.allowed) {
+        return json(
+          {
+            error: `Too many dataset ingests. Try again in ${rate.retryAfterSeconds} seconds.`,
+            retryAfter: rate.retryAfterSeconds,
+          },
+          429,
+          {
+            "retry-after": String(rate.retryAfterSeconds),
+            "x-ratelimit-limit": String(rate.limit),
+            "x-ratelimit-remaining": String(rate.remaining),
+          }
+        )
+      }
+      const globalRate = await consumeGlobalIngestRateLimit()
+      if (!globalRate.allowed) {
+        return json(
+          {
+            error: `Dataset ingestion is busy. Try again in ${globalRate.retryAfterSeconds} seconds.`,
+            retryAfter: globalRate.retryAfterSeconds,
+          },
+          429,
+          { "retry-after": String(globalRate.retryAfterSeconds) }
+        )
+      }
+    }
+
     const resolved = await resolveDataset(ref)
     slug = datasetSlug(resolved.ref)
+    if (IS_VERCEL && resolved.images > MAX_VERCEL_IMAGES) {
+      return json(
+        {
+          error: `This dataset has too many images for this deployment (limit: ${MAX_VERCEL_IMAGES.toLocaleString()}). Try a smaller dataset.`,
+        },
+        413
+      )
+    }
 
     if (isRunning(slug)) {
       const current = await loadStatus(slug)
@@ -227,6 +302,26 @@ export async function POST(request: Request): Promise<Response> {
     }
     reservedSlug = slug
 
+    if (IS_VERCEL) {
+      distributedLease = await acquireIngestLease(slug)
+      if (!distributedLease) {
+        releaseJobReservation(slug)
+        reservedSlug = null
+        const current = await loadStatus(slug)
+        return json(
+          current ?? {
+            slug,
+            state: "running",
+            step: "Starting on another server",
+            done: 0,
+            total: 0,
+            updatedAt: new Date().toISOString(),
+          },
+          202
+        )
+      }
+    }
+
     started = {
       slug,
       state: "running",
@@ -244,12 +339,17 @@ export async function POST(request: Request): Promise<Response> {
         ? (status) => writeBlobStatus(status.slug, status)
         : undefined,
     })
-    const job = ingestDataset(resolved.ref, report)
+    const lease = distributedLease
+    distributedLease = null
+    const job = ingestDataset(resolved.ref, report, { resolved, deadline })
       .then(async (dataset) => {
         await finish("ready", { dataset })
       })
       .catch(async (error: unknown) => {
         await finish("error", { error: errorMessage(error) })
+      })
+      .finally(async () => {
+        if (lease) await releaseIngestLease(lease).catch(() => undefined)
       })
     trackJob(slug, job)
     reservedSlug = null
@@ -260,6 +360,9 @@ export async function POST(request: Request): Promise<Response> {
     })
   } catch (error) {
     if (reservedSlug) releaseJobReservation(reservedSlug)
+    if (distributedLease) {
+      await releaseIngestLease(distributedLease).catch(() => undefined)
+    }
     return json({ error: errorMessage(error) }, 400)
   }
 

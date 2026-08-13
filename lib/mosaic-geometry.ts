@@ -35,7 +35,7 @@ export function buildMosaicGeometry(opts: {
   angles: Float32Array
   assignment: Int32Array
   tileIds: string[]
-  resolveTile: (id: string) => GalleryTile
+  resolveTile: (id: string) => GalleryTile | null
 }): MosaicGeometry {
   const { frameW, frameH, tileSize, centers, angles, assignment, tileIds } =
     opts
@@ -46,6 +46,7 @@ export function buildMosaicGeometry(opts: {
   const t = new Int32Array(count)
 
   const compact = new Map<number, number>()
+  const unavailable = new Set<number>()
   const tiles: GalleryTile[] = []
   for (let i = 0; i < count; i++) {
     cx[i] = centers[i * 2]
@@ -56,9 +57,19 @@ export function buildMosaicGeometry(opts: {
       t[i] = -1
       continue
     }
+    if (unavailable.has(a)) {
+      t[i] = -1
+      continue
+    }
     let ci = compact.get(a)
     if (ci === undefined) {
-      tiles.push(opts.resolveTile(tileIds[a]))
+      const tile = opts.resolveTile(tileIds[a])
+      if (!tile) {
+        unavailable.add(a)
+        t[i] = -1
+        continue
+      }
+      tiles.push(tile)
       ci = tiles.length - 1
       compact.set(a, ci)
     }
@@ -101,6 +112,7 @@ export class TileImageCache {
 
   // A decoded image if it's already loaded (marks it most-recently-used), else null.
   get(url: string): HTMLImageElement | null {
+    if (!url) return null
     const img = this.ready.get(url)
     if (img) this.touch(url)
     return img ?? null
@@ -108,6 +120,7 @@ export class TileImageCache {
 
   // Ensure `url` is loading or loaded. Safe to call every frame.
   request(url: string): void {
+    if (!url) return
     if (this.ready.has(url) || this.inflight.has(url)) return
     if (this.active >= this.concurrency) {
       if (!this.waiting.includes(url)) this.waiting.push(url)

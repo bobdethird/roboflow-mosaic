@@ -15,10 +15,7 @@ import {
   type ReferenceImage,
 } from "@/components/reference-image"
 import { Button } from "@/components/ui/button"
-import {
-  buildMosaicGeometry,
-  type MosaicGeometry,
-} from "@/lib/mosaic-geometry"
+import { buildMosaicGeometry, type MosaicGeometry } from "@/lib/mosaic-geometry"
 import { MosaicZoomViewer } from "@/components/mosaic-zoom-viewer"
 import type { GalleryTile } from "@/lib/gallery"
 import {
@@ -544,7 +541,9 @@ function LibraryStatus({
   error: string | null
 }) {
   if (error) {
-    return <p className="max-w-xs text-center text-xs text-destructive">{error}</p>
+    return (
+      <p className="max-w-xs text-center text-xs text-destructive">{error}</p>
+    )
   }
   if (!progress) return null
 
@@ -638,6 +637,9 @@ export function CanvasHero({
   const [libraryProgress, setLibraryProgress] =
     React.useState<PackProgress | null>(null)
   const [libraryError, setLibraryError] = React.useState<string | null>(null)
+  const [generationError, setGenerationError] = React.useState<string | null>(
+    null
+  )
   const [tileMap, setTileMap] = React.useState<MosaicTileMap | null>(null)
   const [hoveredTile, setHoveredTile] = React.useState<HoveredTile | null>(null)
   // Whether a mouse is currently over the mosaic. Drives the "click image to zoom
@@ -713,6 +715,7 @@ export function CanvasHero({
   React.useEffect(() => {
     let cancelled = false
     let release: (() => void) | null = null
+    const controller = new AbortController()
     const engine = new MosaicEngine()
     engineRef.current = engine
     void (async () => {
@@ -721,6 +724,7 @@ export function CanvasHero({
           onProgress: (progress) => {
             if (!cancelled) setLibraryProgress(progress)
           },
+          signal: controller.signal,
         })
         // The cleanup below has already run if we were cancelled while the
         // download was in flight, so let go of the pack here instead.
@@ -749,6 +753,7 @@ export function CanvasHero({
     })()
     return () => {
       cancelled = true
+      controller.abort()
       engine.terminate()
       engineRef.current = null
       // Frees the tiles' object urls; nothing on screen may reference them
@@ -832,13 +837,19 @@ export function CanvasHero({
 
   const showFullHoverImage =
     hoveredTileKey !== null && fullHoverTileKey === hoveredTileKey
+  const hoveredTileImageUrl = hoveredTile
+    ? (showFullHoverImage
+        ? hoveredTile.openUrl
+        : hoveredTile.previewUrl) || null
+    : null
 
   // Resolve a library id into the GalleryTile shown in hover/zoom. Shared by the
   // zoom geometry and the live zoom overlay so both point at identical urls.
   const resolveTile = React.useCallback(
-    (id: string): GalleryTile => {
+    (id: string): GalleryTile | null => {
       const item = libraryById.get(id)
       const url = item?.url ?? collection.thumbUrl(id)
+      if (!url) return null
       return { url, previewUrl: url, title: id }
     },
     [libraryById, collection]
@@ -887,6 +898,7 @@ export function CanvasHero({
         setHasMosaic(false)
         setTileMap(null)
         setHoveredTile(null)
+        setGenerationError(null)
         setIsGenerating(false)
         setGenerateProgress(null)
         setRestoredMosaicUrl(null)
@@ -909,6 +921,7 @@ export function CanvasHero({
     setHasMosaic(false)
     setTileMap(null)
     setHoveredTile(null)
+    setGenerationError(null)
     setIsGenerating(false)
     setGenerateProgress(null)
     setRestoredMosaicUrl(null)
@@ -931,6 +944,7 @@ export function CanvasHero({
     setRestoredMosaicUrl(null)
     setTileMap(null)
     setHoveredTile(null)
+    setGenerationError(null)
     // Paint the grout color then the worker frame on top; the frame is
     // transparent between tiles, so the grout shows in the gaps.
     const blit = (bitmap: ImageBitmap) => {
@@ -1032,8 +1046,14 @@ export function CanvasHero({
           }
         })()
       }
-    } catch {
-      // Generation failed — keep the prior canvas.
+    } catch (error) {
+      if (token === generateTokenRef.current) {
+        setGenerationError(
+          error instanceof Error
+            ? error.message
+            : "Mosaic generation failed. Try again."
+        )
+      }
     } finally {
       if (token === generateTokenRef.current) {
         setIsGenerating(false)
@@ -1052,7 +1072,8 @@ export function CanvasHero({
       const blob = await canvasToBlob(canvas)
       if (!blob) return
       const url = URL.createObjectURL(blob)
-      const base = reference?.name.replace(/\.[^./\\]+$/, "").trim() || collection.id
+      const base =
+        reference?.name.replace(/\.[^./\\]+$/, "").trim() || collection.id
       const a = document.createElement("a")
       a.href = url
       a.download = `${base}-mosaic.png`
@@ -1139,6 +1160,7 @@ export function CanvasHero({
       if (!id) return null
       const item = libraryById.get(id)
       const previewUrl = item?.url ?? collection.thumbUrl(id)
+      if (!previewUrl) return null
       return {
         cell,
         id,
@@ -1338,7 +1360,7 @@ export function CanvasHero({
                   height={frame.h}
                   className="absolute inset-0 block size-full"
                 />
-                {hoveredTile && hasMosaic && (
+                {hoveredTile && hoveredTileImageUrl && hasMosaic && (
                   <div
                     aria-hidden="true"
                     className="pointer-events-none absolute z-10 w-56 overflow-hidden rounded-2xl border bg-popover p-2 shadow-lg"
@@ -1359,11 +1381,7 @@ export function CanvasHero({
                     <div className="relative aspect-square w-full overflow-hidden rounded-xl bg-card">
                       {/* eslint-disable-next-line @next/next/no-img-element -- public library URL, shown only as a hover preview */}
                       <img
-                        src={
-                          showFullHoverImage
-                            ? hoveredTile.openUrl
-                            : hoveredTile.previewUrl
-                        }
+                        src={hoveredTileImageUrl}
                         alt={hoveredTile.title}
                         draggable={false}
                         className="size-full object-contain"
@@ -1399,6 +1417,14 @@ export function CanvasHero({
                     <span>press generate</span>
                   </div>
                 )}
+                {generationError && !isGenerating && (
+                  <div
+                    role="alert"
+                    className="pointer-events-none absolute inset-x-4 bottom-4 z-20 rounded-lg border border-destructive/30 bg-background/95 px-3 py-2 text-center text-xs text-destructive shadow-sm backdrop-blur"
+                  >
+                    {generationError}
+                  </div>
+                )}
               </div>
             ) : (
               <div className="flex flex-col items-center gap-3">
@@ -1418,7 +1444,6 @@ export function CanvasHero({
             )}
           </div>
         </div>
-
       </section>
 
       <Sidebar side="right" mobileSide="bottom" collapsible="offcanvas">
@@ -1465,15 +1490,13 @@ export function CanvasHero({
                     ) : undefined
                   }
                 />
+              ) : ReferencePicker ? (
+                <ReferencePicker
+                  onSelect={handleSetReference}
+                  variant="panel"
+                />
               ) : (
-                ReferencePicker ? (
-                  <ReferencePicker
-                    onSelect={handleSetReference}
-                    variant="panel"
-                  />
-                ) : (
-                  <ReferencePanelEmpty onSelect={handleSetReference} />
-                )
+                <ReferencePanelEmpty onSelect={handleSetReference} />
               )}
             </SidebarGroupContent>
           </SidebarGroup>

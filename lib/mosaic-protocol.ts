@@ -61,3 +61,8 @@ export type WorkerResponse =
       assignment: Int32Array
       base: ImageBitmap
     }
+  | {
+      type: "error"
+      reqId: number
+      message: string
+    }

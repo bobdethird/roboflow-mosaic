@@ -32,8 +32,12 @@ deleted after each finished or failed ingest. The completed library is streamed
 to Blob and the browser downloads it from the Blob CDN.
 
 To stay below the function's 500 MB scratch-space ceiling, deployments accept
-exports up to 320 MB and generated libraries up to 128 MB. Larger datasets fail
-with a size-limit message instead of filling the filesystem.
+exports up to 320 MB, generated libraries up to 128 MB, and up to 5,000 images.
+Larger datasets fail with a size-limit message instead of filling the filesystem
+or running into the function deadline. Ingests use distributed per-dataset
+leases, same-origin checks, and a four-per-15-minute client rate window so one
+public caller cannot repeatedly trigger the same expensive export. A separate
+project-wide window caps aggregate work from distributed callers.
 
 ## How it works
 
@@ -64,7 +68,8 @@ contour.
 The browser downloads the dataset archive once, unpacks it into object URLs, and
 caches the archive in IndexedDB. The canvas, hover preview, zoom view, and
 reference picker then share that one in-browser copy instead of making one HTTP
-request per thumbnail.
+request per thumbnail. ZIP parsing is incremental and capped at 128 MB, so a
+malformed or unexpectedly large pack cannot grow browser memory without bound.
 
 **Where the tiles come from** is a `MosaicSource` (`lib/mosaic-source.ts`) —
 how the library loads and how a tile's URL is built. Today the only
@@ -97,6 +102,8 @@ scratch, POST `{"url": …, "refresh": true}` to the ingest route.
 | `lib/roboflow-ingest.ts`                   | export download, thumbnail and signature build         |
 | `lib/roboflow-store.ts`                    | local cache, scratch directories, status, job registry |
 | `lib/roboflow-blob.ts`                     | durable status and streamed archive publication        |
+| `lib/roboflow-control.ts`                  | distributed leases and public-ingest rate limits       |
+| `lib/roboflow-limits.ts`                   | shared server and browser resource ceilings            |
 | `lib/roboflow-pack.ts`                     | browser download, unzip, and IndexedDB cache           |
 | `app/api/roboflow/ingest/`                 | start (POST) / poll (GET) an ingest                    |
 | `app/api/roboflow/pack/[slug]/`            | Blob redirect or local streamed archive                |

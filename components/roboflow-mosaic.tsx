@@ -112,6 +112,11 @@ export function RoboflowMosaic() {
   }, [dataset])
 
   const handleLoad = React.useCallback(async () => {
+    // Capture the submitted value. The field intentionally remains editable
+    // while the current dataset is displayed (and while a new one loads), so
+    // later keystrokes must not change the request already in flight.
+    const requestedUrl = url.trim()
+
     abortRef.current?.abort()
     const controller = new AbortController()
     abortRef.current = controller
@@ -119,7 +124,7 @@ export function RoboflowMosaic() {
     setStatus(null)
 
     try {
-      parseRoboflowUrl(url)
+      parseRoboflowUrl(requestedUrl)
     } catch (parseError) {
       setError(parseError instanceof Error ? parseError.message : "Bad URL.")
       return
@@ -127,7 +132,7 @@ export function RoboflowMosaic() {
 
     setIngesting(true)
     try {
-      const started = await startIngest(url)
+      const started = await startIngest(requestedUrl)
       setStatus(started)
       const resolved =
         started.state === "ready" && started.dataset
@@ -157,17 +162,26 @@ export function RoboflowMosaic() {
       <div className="relative w-full min-w-0">
         <Input
           value={url}
-          onChange={(event) => setUrl(event.target.value)}
+          onChange={(event) => {
+            setUrl(event.target.value)
+            if (error) setError(null)
+          }}
           onKeyDown={(event) => {
             if (event.key === "Enter" && !ingesting) void handleLoad()
           }}
           placeholder={EXAMPLE_URL}
           spellCheck={false}
+          autoCapitalize="none"
+          autoCorrect="off"
+          inputMode="url"
           // The base Input is a low-contrast chip; as a standalone search bar it
           // needs a visible edge, especially floating over the mosaic. Height,
           // corners and left padding stay at the base Input's defaults, which
           // is also what lines it up with the sidebar toggle beside it.
-          className="h-8 w-full border-border/60 bg-input/60 pr-32 shadow-sm backdrop-blur"
+          // CanvasHero disables selection across its image workspace. Override
+          // that here so the loaded-state search bar keeps normal caret and
+          // text-selection behavior when someone pastes or edits another URL.
+          className="h-8 w-full select-text border-border/60 bg-input/60 pr-32 shadow-sm backdrop-blur"
           aria-label="Roboflow Universe dataset URL"
         />
         <Button
@@ -194,19 +208,30 @@ export function RoboflowMosaic() {
   )
 
   return (
-    <div className="flex min-h-svh flex-col">
+    <div className="relative flex min-h-svh flex-col">
       {collection && dataset ? (
-        // Remounted per dataset so every piece of CanvasHero's state — library,
-        // reference, cached mosaic — resets with the collection.
-        <CanvasHero
-          key={collection.id}
-          collection={collection}
-          maxTileReuse={MAX_TILE_REUSE}
-          minCellSize={MIN_CELL_SIZE}
-          hideCollectionLabel
-          referencePicker={ReferencePicker}
-          topBarSlot={datasetBar}
-        />
+        <>
+          {/* Keep the editable dataset field outside CanvasHero's select-none
+              image workspace and pointer handlers. It remains visually over
+              the canvas, but is an independent interaction layer so generating
+              or hovering a mosaic cannot intercept its focus. */}
+          <div className="pointer-events-none absolute inset-x-0 top-[calc(env(safe-area-inset-top,0px)+1rem)] z-40 flex justify-center px-4 md:top-6 md:px-16 xl:top-8">
+            <div className="pointer-events-auto w-full max-w-xl md:max-w-2xl">
+              {datasetBar}
+            </div>
+          </div>
+
+          {/* Remounted per dataset so every piece of CanvasHero's state —
+              library, reference, cached mosaic — resets with the collection. */}
+          <CanvasHero
+            key={collection.id}
+            collection={collection}
+            maxTileReuse={MAX_TILE_REUSE}
+            minCellSize={MIN_CELL_SIZE}
+            hideCollectionLabel
+            referencePicker={ReferencePicker}
+          />
+        </>
       ) : (
         // Before a dataset is loaded there is no CanvasHero to host the bar, so
         // it gets its own centered landing state.
