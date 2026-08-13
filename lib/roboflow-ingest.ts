@@ -3,8 +3,8 @@
 //
 // Pipeline:
 //   1. resolve the dataset version and ask Roboflow for a zip export link
-//   2. stream the zip down and extract just its images
-//   3. one pass per image → content-addressed id, 16×16 colour signature,
+//   2. stream the zip down
+//   3. one decode per image → content-addressed id, 16×16 colour signature,
 //      thumbnail, and a contribution to the dataset's median image
 //   4. write manifest.json + signatures-coarse.bin + thumbs/ + reference.jpg
 //
@@ -78,7 +78,9 @@ const MEDIAN_SAMPLE_MAX = 4000
 // Long edge the project cover image is stored at. Matches the mosaic frame in
 // lib/mosaic-bake.ts — the engine never draws the reference bigger than this.
 const ICON_MAX_EDGE = 1600
-const CONCURRENCY = 8
+// Hobby functions are 1 vCPU; eight Sharp pipelines just contend. Local
+// machines can keep more in flight.
+const CONCURRENCY = process.env.VERCEL ? 3 : 8
 
 const IMAGE_EXTENSIONS = new Set([
   ".jpg",
@@ -181,18 +183,116 @@ async function extractImages(
   return written
 }
 
+function streamToBuffer(stream: NodeJS.ReadableStream): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = []
+    stream.on("data", (chunk: Buffer) => chunks.push(chunk))
+    stream.on("end", () => resolve(Buffer.concat(chunks)))
+    stream.on("error", reject)
+  })
+}
+
+function readZipEntry(zip: yauzl.ZipFile, entry: yauzl.Entry): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    zip.openReadStream(entry, (error, stream) => {
+      if (error || !stream) {
+        reject(error ?? new IngestError(`Could not read ${entry.fileName}`))
+        return
+      }
+      streamToBuffer(stream).then(resolve, reject)
+    })
+  })
+}
+
+// Names of image entries, without decompressing them. Used to pick the median
+// sample and the dimension probe before the (expensive) pixel pass.
+async function zipImageNames(zipPath: string): Promise<string[]> {
+  const zip = await openZip(zipPath)
+  const names: string[] = []
+  await new Promise<void>((resolve, reject) => {
+    zip.on("entry", (entry: yauzl.Entry) => {
+      if (!entry.fileName.endsWith("/") && isImagePath(entry.fileName)) {
+        names.push(entry.fileName)
+      }
+      zip.readEntry()
+    })
+    zip.on("end", resolve)
+    zip.on("error", reject)
+    zip.readEntry()
+  })
+  return names
+}
+
+// Walk image entries in zip order. `visit` runs with a bounded number in
+// flight; the next entry is not decompressed until a slot is free, so a large
+// export cannot pile up in memory.
+async function forEachZipImage(
+  zipPath: string,
+  visit: (fileName: string, bytes: Buffer) => Promise<void>,
+  shouldRead: (fileName: string) => boolean = () => true
+): Promise<void> {
+  const zip = await openZip(zipPath)
+  let chain = Promise.resolve()
+  let active = 0
+  const waiting: Array<() => void> = []
+  const tasks: Promise<void>[] = []
+
+  const acquire = () =>
+    new Promise<void>((resolve) => {
+      if (active < CONCURRENCY) {
+        active += 1
+        resolve()
+        return
+      }
+      waiting.push(resolve)
+    })
+
+  const release = () => {
+    const next = waiting.shift()
+    if (next) next()
+    else active -= 1
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    zip.on("entry", (entry: yauzl.Entry) => {
+      chain = chain
+        .then(async () => {
+          if (entry.fileName.endsWith("/") || !isImagePath(entry.fileName)) {
+            zip.readEntry()
+            return
+          }
+          if (!shouldRead(entry.fileName)) {
+            zip.readEntry()
+            return
+          }
+          const bytes = await readZipEntry(zip, entry)
+          await acquire()
+          tasks.push(visit(entry.fileName, bytes).catch(reject).finally(release))
+          zip.readEntry()
+        })
+        .catch(reject)
+    })
+    zip.on("end", () => {
+      chain.then(() => Promise.all(tasks)).then(() => resolve()).catch(reject)
+    })
+    zip.on("error", reject)
+    zip.readEntry()
+  })
+}
+
 // ─── Per-image work ──────────────────────────────────────────────────────────
 
-// Cover-fit `bytes` into w×h and return raw RGB. Transparency is flattened onto
-// white and everything is forced to 3-channel sRGB so greyscale and CMYK
-// sources produce the same layout as ordinary RGB photos.
-async function rawCover(
-  bytes: Buffer,
+async function rawRgb(
+  pipeline: sharp.Sharp,
   width: number,
-  height: number
+  height: number,
+  fit: "cover" | "fill"
 ): Promise<Buffer> {
-  const { data, info } = await sharp(bytes, { failOn: "none" })
-    .resize(width, height, { fit: "cover", position: "centre" })
+  const { data, info } = await pipeline
+    .resize(width, height, {
+      fit,
+      ...(fit === "cover" ? { position: "centre" as const } : {}),
+    })
     .flatten({ background: "#ffffff" })
     .toColourspace("srgb")
     .raw()
@@ -203,28 +303,53 @@ async function rawCover(
   return data
 }
 
-// Same, but `fit: "fill"` — the WHOLE image is resampled into w×h, so nothing is
-// cropped away. Used for the median reference, which must see every image edge
-// to edge. The target is the dataset's own native frame (see `referenceDims`),
-// so for the usual uniformly-sized export this is a 1:1 map and no resampling
-// happens at all; only an image whose aspect differs from the dataset's is
-// stretched. The alternative for those would be letterboxing, and padding bars
-// would contaminate the median with a colour no image actually contains.
-async function rawFill(
+// One decode of `bytes`, then clones for whichever outputs we need. Signature,
+// thumbnail, and median contribution used to each construct their own Sharp
+// pipeline — four JPEG decodes of the same file.
+async function decodeOutputs(
   bytes: Buffer,
-  width: number,
-  height: number
-): Promise<Buffer> {
-  const { data, info } = await sharp(bytes, { failOn: "none" })
-    .resize(width, height, { fit: "fill" })
-    .flatten({ background: "#ffffff" })
-    .toColourspace("srgb")
-    .raw()
-    .toBuffer({ resolveWithObject: true })
-  if (info.channels !== 3) {
-    throw new IngestError(`Unexpected channel count ${info.channels}`)
+  need: {
+    signature: boolean
+    thumbPath: string | null
+    median: MedianAccumulator | null
   }
-  return data
+): Promise<{ width: number; height: number; signature?: Buffer }> {
+  const image = sharp(bytes, { failOn: "none" })
+  const metadata = await image.metadata()
+  const tasks: Promise<unknown>[] = []
+  let signature: Buffer | undefined
+
+  if (need.signature) {
+    tasks.push(
+      rawRgb(image.clone(), SIG_GRID, SIG_GRID, "cover").then((data) => {
+        signature = coarseSignature(data)
+      })
+    )
+  }
+  if (need.thumbPath) {
+    tasks.push(
+      image
+        .clone()
+        .resize(THUMB_LONG_EDGE, THUMB_LONG_EDGE, {
+          fit: "inside",
+          withoutEnlargement: true,
+        })
+        .flatten({ background: "#ffffff" })
+        .jpeg({ quality: THUMB_QUALITY })
+        .toFile(need.thumbPath)
+    )
+  }
+  if (need.median) {
+    const acc = need.median
+    tasks.push(rawRgb(image.clone(), acc.width, acc.height, "fill").then((data) => acc.add(data)))
+  }
+
+  await Promise.all(tasks)
+  return {
+    width: metadata.width ?? 0,
+    height: metadata.height ?? 0,
+    signature,
+  }
 }
 
 // Pack a 16×16×3 uint8 signature into the worker's coarse uint16 LE format.
@@ -326,6 +451,42 @@ function medianOf(values: number[]): number {
   return sorted[Math.floor(sorted.length / 2)]
 }
 
+function frameFromSizes(
+  sizes: { width: number; height: number }[]
+): { width: number; height: number } {
+  if (!sizes.length) {
+    return { width: MEDIAN_FALLBACK_EDGE, height: MEDIAN_FALLBACK_EDGE }
+  }
+
+  const exact = new Map<string, number>()
+  for (const { width, height } of sizes) {
+    const key = `${width}x${height}`
+    exact.set(key, (exact.get(key) ?? 0) + 1)
+  }
+
+  // A size most of the sample shares is the dataset's real frame — use it
+  // verbatim rather than a median that could land between two common sizes.
+  const [dominantKey, dominantCount] = [...exact.entries()].reduce((a, b) =>
+    b[1] > a[1] ? b : a
+  )
+  let width: number
+  let height: number
+  if (dominantCount >= sizes.length / 2) {
+    ;[width, height] = dominantKey.split("x").map(Number)
+  } else {
+    width = medianOf(sizes.map((s) => s.width))
+    height = medianOf(sizes.map((s) => s.height))
+  }
+
+  const pixels = width * height
+  if (pixels > MEDIAN_MAX_PIXELS) {
+    const scale = Math.sqrt(MEDIAN_MAX_PIXELS / pixels)
+    width = Math.max(2, Math.round(width * scale))
+    height = Math.max(2, Math.round(height * scale))
+  }
+  return { width, height }
+}
+
 // The frame the median reference is computed in, from a cheap header-only pass
 // over the sample. It is the dataset's OWN native size, so images go in whole
 // rather than being cropped to fit: a Roboflow export is normally one uniform
@@ -337,46 +498,17 @@ function medianOf(values: number[]): number {
 async function referenceDims(
   files: string[]
 ): Promise<{ width: number; height: number }> {
-  const widths: number[] = []
-  const heights: number[] = []
-  const exact = new Map<string, number>()
+  const sizes: { width: number; height: number }[] = []
   await pooled(files.slice(0, 200), CONCURRENCY, async (file) => {
     try {
       const { width, height } = await sharp(file).metadata()
       if (!width || !height) return
-      widths.push(width)
-      heights.push(height)
-      const key = `${width}x${height}`
-      exact.set(key, (exact.get(key) ?? 0) + 1)
+      sizes.push({ width, height })
     } catch {
       // Unreadable images are skipped here and again in the main pass.
     }
   })
-  if (!widths.length) {
-    return { width: MEDIAN_FALLBACK_EDGE, height: MEDIAN_FALLBACK_EDGE }
-  }
-
-  // A size most of the sample shares is the dataset's real frame — use it
-  // verbatim rather than a median that could land between two common sizes.
-  const [dominantKey, dominantCount] = [...exact.entries()].reduce((a, b) =>
-    b[1] > a[1] ? b : a
-  )
-  let width: number
-  let height: number
-  if (dominantCount >= widths.length / 2) {
-    ;[width, height] = dominantKey.split("x").map(Number)
-  } else {
-    width = medianOf(widths)
-    height = medianOf(heights)
-  }
-
-  const pixels = width * height
-  if (pixels > MEDIAN_MAX_PIXELS) {
-    const scale = Math.sqrt(MEDIAN_MAX_PIXELS / pixels)
-    width = Math.max(2, Math.round(width * scale))
-    height = Math.max(2, Math.round(height * scale))
-  }
-  return { width, height }
+  return frameFromSizes(sizes)
 }
 
 // Deterministic, evenly strided subsample so the median doesn't depend on which
@@ -416,33 +548,24 @@ export async function buildLibrary(
     try {
       const bytes = await readFile(file)
       const id = createHash("sha1").update(bytes).digest("hex").slice(0, 16)
+      const isNew = !seen.has(id)
+      if (isNew) seen.add(id)
+      const inSample = sample.has(file)
+      if (!isNew && !inSample) return
 
-      // Duplicate images are common in Roboflow exports (augmented copies land
-      // in more than one split). Keep one tile per distinct image.
-      if (!seen.has(id)) {
-        seen.add(id)
-        const metadata = await sharp(bytes, { failOn: "none" }).metadata()
-        const sig = await rawCover(bytes, SIG_GRID, SIG_GRID)
-        await sharp(bytes, { failOn: "none" })
-          .resize(THUMB_LONG_EDGE, THUMB_LONG_EDGE, {
-            fit: "inside",
-            withoutEnlargement: true,
-          })
-          .flatten({ background: "#ffffff" })
-          .jpeg({ quality: THUMB_QUALITY, mozjpeg: true })
-          .toFile(path.join(thumbsDir, `${id}.jpg`))
-
+      const decoded = await decodeOutputs(bytes, {
+        signature: isNew,
+        thumbPath: isNew ? path.join(thumbsDir, `${id}.jpg`) : null,
+        median: inSample ? accumulator : null,
+      })
+      if (isNew && decoded.signature) {
         photos[index] = {
           id,
-          w: metadata.width ?? 0,
-          h: metadata.height ?? 0,
+          w: decoded.width,
+          h: decoded.height,
           file: path.basename(file),
         }
-        signatures[index] = coarseSignature(sig)
-      }
-
-      if (sample.has(file)) {
-        accumulator.add(await rawFill(bytes, dims.width, dims.height))
+        signatures[index] = decoded.signature
       }
     } catch {
       skipped += 1
@@ -466,6 +589,23 @@ export async function buildLibrary(
     throw new IngestError("None of the dataset's images could be read.")
   }
 
+  await writeLibrary(outputDir, keptPhotos, keptSignatures, accumulator, dims, report)
+
+  return {
+    photoCount: keptPhotos.length,
+    skipped,
+    reference: { ...dims, samples: accumulator.count },
+  }
+}
+
+async function writeLibrary(
+  outputDir: string,
+  photos: ManifestPhoto[],
+  signatures: Buffer[],
+  accumulator: MedianAccumulator,
+  dims: { width: number; height: number },
+  report: ProgressReporter
+): Promise<void> {
   report("Computing median reference", 0, 0)
   const medianRgb = accumulator.median()
   await sharp(medianRgb, {
@@ -477,16 +617,111 @@ export async function buildLibrary(
   report("Writing library", 0, 0)
   await writeFile(
     path.join(outputDir, COARSE_SIGNATURES_FILE),
-    Buffer.concat(keptSignatures)
+    Buffer.concat(signatures)
   )
   await writeFile(
     path.join(outputDir, MANIFEST_FILE),
     JSON.stringify(
-      { version: new Date().toISOString(), photos: keptPhotos },
+      { version: new Date().toISOString(), photos },
       null,
       2
     )
   )
+}
+
+async function sizesFromZip(
+  zipPath: string,
+  names: string[]
+): Promise<{ width: number; height: number }[]> {
+  const wanted = new Set(names)
+  const sizes: { width: number; height: number }[] = []
+  await forEachZipImage(
+    zipPath,
+    async (_name, bytes) => {
+      try {
+        const { width, height } = await sharp(bytes, { failOn: "none" }).metadata()
+        if (width && height) sizes.push({ width, height })
+      } catch {
+        // Same as the file probe: unreadable images are skipped here and again
+        // in the main pass.
+      }
+    },
+    (name) => wanted.has(name)
+  )
+  return sizes
+}
+
+// Same outputs as `buildLibrary`, but images are decoded straight from the
+// export zip so the full-resolution originals never land on disk.
+async function buildLibraryFromZip(
+  zipPath: string,
+  outputDir: string,
+  report: ProgressReporter
+): Promise<LibraryResult> {
+  report("Listing images", 0, 0)
+  const names = (await zipImageNames(zipPath)).sort()
+  if (!names.length) {
+    throw new IngestError("The dataset export contained no images.")
+  }
+
+  const thumbsDir = path.join(outputDir, "thumbs")
+  await mkdir(thumbsDir, { recursive: true })
+
+  report("Measuring images", 0, names.length)
+  const dims = frameFromSizes(await sizesFromZip(zipPath, names.slice(0, 200)))
+  const accumulator = new MedianAccumulator(dims.width, dims.height)
+  const sample = new Set(medianSample(names))
+
+  const byName = new Map<string, { photo: ManifestPhoto; signature: Buffer }>()
+  const seen = new Set<string>()
+  let processed = 0
+  let skipped = 0
+
+  await forEachZipImage(zipPath, async (fileName, bytes) => {
+    try {
+      const id = createHash("sha1").update(bytes).digest("hex").slice(0, 16)
+      const isNew = !seen.has(id)
+      if (isNew) seen.add(id)
+      const inSample = sample.has(fileName)
+      if (!isNew && !inSample) return
+
+      const decoded = await decodeOutputs(bytes, {
+        signature: isNew,
+        thumbPath: isNew ? path.join(thumbsDir, `${id}.jpg`) : null,
+        median: inSample ? accumulator : null,
+      })
+      if (isNew && decoded.signature) {
+        byName.set(fileName, {
+          photo: {
+            id,
+            w: decoded.width,
+            h: decoded.height,
+            file: path.basename(fileName),
+          },
+          signature: decoded.signature,
+        })
+      }
+    } catch {
+      skipped += 1
+    } finally {
+      processed += 1
+      report("Building tiles", processed, names.length)
+    }
+  })
+
+  const keptPhotos: ManifestPhoto[] = []
+  const keptSignatures: Buffer[] = []
+  for (const name of names) {
+    const kept = byName.get(name)
+    if (!kept) continue
+    keptPhotos.push(kept.photo)
+    keptSignatures.push(kept.signature)
+  }
+  if (!keptPhotos.length) {
+    throw new IngestError("None of the dataset's images could be read.")
+  }
+
+  await writeLibrary(outputDir, keptPhotos, keptSignatures, accumulator, dims, report)
 
   return {
     photoCount: keptPhotos.length,
@@ -554,8 +789,8 @@ export async function resolveDataset(ref: RoboflowRef): Promise<{
 }
 
 export type IngestOptions = {
-  // Keep the extracted source images after the library is built. Off by default:
-  // the thumbnails are what the mosaic draws, and exports can be gigabytes.
+  // Also extract the original images under source/. Off by default: the
+  // thumbnails are what the mosaic draws, and exports can be gigabytes.
   keepSource?: boolean
 }
 
@@ -568,7 +803,6 @@ export async function ingestDataset(
   const resolved = await resolveDataset(ref)
   const slug = datasetSlug(resolved.ref)
   const outputDir = datasetDir(slug)
-  const sourceDir = path.join(outputDir, "source")
   const zipPath = path.join(outputDir, "export.zip")
   await mkdir(outputDir, { recursive: true })
 
@@ -581,7 +815,6 @@ export async function ingestDataset(
     )
 
     await downloadZip(link, zipPath, report)
-    const files = await extractImages(zipPath, sourceDir, report)
 
     let hasIcon = false
     if (resolved.iconUrl) {
@@ -592,7 +825,13 @@ export async function ingestDataset(
       )
     }
 
-    const result = await buildLibrary(files, outputDir, report)
+    const result = options.keepSource
+      ? await buildLibrary(
+          await extractImages(zipPath, path.join(outputDir, "source"), report),
+          outputDir,
+          report
+        )
+      : await buildLibraryFromZip(zipPath, outputDir, report)
     if (blobEnabled()) await publishDataset(slug, outputDir, report)
 
     return {
@@ -606,7 +845,6 @@ export async function ingestDataset(
     }
   } finally {
     await rm(zipPath, { force: true })
-    if (!options.keepSource) await rm(sourceDir, { recursive: true, force: true })
   }
 }
 

@@ -155,7 +155,9 @@ export async function fetchProjectInfo(ref: RoboflowRef): Promise<ProjectInfo> {
 export type ExportLink = { link: string; format: string }
 
 // Ask for a version export and wait for the zip link. Roboflow generates the
-// export on demand, so a not-ready response is normal on the first call.
+// export on demand, so a not-ready response is normal on the first call. An
+// already-generated export is reused — forcing a rebuild (`nocache`) made every
+// ingest wait on Roboflow's zip job before the download even started.
 export async function fetchExportLink(
   ref: RoboflowRef & { version: number },
   formats: string[],
@@ -169,7 +171,7 @@ export async function fetchExportLink(
   for (const format of formats) {
     const url =
       `${API_URL}/${encodeURIComponent(ref.workspace)}/${encodeURIComponent(ref.project)}` +
-      `/${ref.version}/${encodeURIComponent(format)}?api_key=${encodeURIComponent(key)}&nocache=true`
+      `/${ref.version}/${encodeURIComponent(format)}?api_key=${encodeURIComponent(key)}`
     try {
       while (Date.now() < deadline) {
         const body = await getJson(url)
