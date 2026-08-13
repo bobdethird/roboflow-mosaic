@@ -16,6 +16,7 @@ import { RoboflowReferencePicker } from "@/components/roboflow-reference-picker"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Spinner } from "@/components/ui/spinner"
+import { ingestExportInBrowser } from "@/lib/roboflow-client-ingest"
 import { roboflowSource } from "@/lib/mosaic-source"
 import {
   ROBOFLOW_INGEST_PATH,
@@ -132,12 +133,48 @@ export function RoboflowMosaic() {
 
     setIngesting(true)
     try {
+      setStatus({
+        slug: "",
+        state: "running",
+        step: "Requesting export",
+        done: 0,
+        total: 0,
+        updatedAt: new Date().toISOString(),
+      })
       const started = await startIngest(requestedUrl)
       setStatus(started)
-      const resolved =
-        started.state === "ready" && started.dataset
-          ? started.dataset
-          : await pollIngest(started.slug, setStatus, controller.signal)
+      if (started.state === "ready" && started.dataset) {
+        setDataset(started.dataset)
+        return
+      }
+      if (started.exportUrl && started.dataset) {
+        const built = await ingestExportInBrowser(
+          {
+            dataset: started.dataset,
+            exportUrl: started.exportUrl,
+            iconUrl: started.iconUrl,
+          },
+          (progress) => {
+            if (controller.signal.aborted) return
+            setStatus({
+              slug: started.slug,
+              state: "running",
+              step: progress.step,
+              done: progress.done,
+              total: progress.total,
+              updatedAt: new Date().toISOString(),
+            })
+          },
+          controller.signal
+        )
+        setDataset(built.dataset)
+        return
+      }
+      const resolved = await pollIngest(
+        started.slug,
+        setStatus,
+        controller.signal
+      )
       setDataset(resolved)
     } catch (runError) {
       if (controller.signal.aborted) return

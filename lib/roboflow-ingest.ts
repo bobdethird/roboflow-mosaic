@@ -60,18 +60,16 @@ import {
   MIN_PARTIAL_TILES,
   PUBLISH_RESERVE_MS,
   TILE_BUDGET,
-  TILE_DECODE_MS,
-  TILE_FETCH_BYTES_PER_MS,
   VERCEL_INGEST_DEADLINE_MS,
 } from "./roboflow-limits"
+import { planTileSample } from "./roboflow-sample"
 import {
   readZipEntries,
   readZipIndex,
   streamZipEntries,
-  type ZipEntry,
-  type ZipIndex,
 } from "./roboflow-zip"
 
+export { planTileSample } from "./roboflow-sample"
 export { VERCEL_INGEST_DEADLINE_MS } from "./roboflow-limits"
 
 // Must match lib/mosaic.ts SIGNATURE_GRID and the worker's COARSE_GRID: the
@@ -357,41 +355,6 @@ export async function buildLibrary(
   const { version } = await builder.write()
   await sink.finish()
   return { photoCount: builder.count, skipped: builder.skipped, version }
-}
-
-// ─── Choosing what to build tiles from ───────────────────────────────────────
-
-// How many tiles this run can afford, and which entries they come from.
-//
-// A dataset with more images than the tile budget is sampled across the whole
-// set rather than cut off partway, so the mosaic still draws from all of it. When
-// there is a deadline, the sample also shrinks to what can plausibly be fetched
-// and decoded before it — a 40 GB export cannot be read in five minutes at any
-// tile size, and a mosaic of 8,000 tiles out of it beats an error message.
-export function planTileSample(
-  index: ZipIndex,
-  options: { budget: number; msAvailable?: number }
-): ZipEntry[] {
-  const entries = index.entries
-  if (!entries.length) return []
-
-  let count = Math.min(entries.length, options.budget)
-  if (options.msAvailable !== undefined) {
-    let bytes = 0
-    for (const entry of entries) bytes += entry.compressedSize
-    const averageBytes = bytes / entries.length
-    const msPerTile = averageBytes / TILE_FETCH_BYTES_PER_MS + TILE_DECODE_MS
-    const affordable = Math.floor(Math.max(0, options.msAvailable) / msPerTile)
-    count = Math.max(1, Math.min(count, affordable))
-  }
-  if (count >= entries.length) return entries
-
-  // Even stride across the index, which is itself an even sample of the export.
-  const sampled: ZipEntry[] = new Array(count)
-  for (let i = 0; i < count; i++) {
-    sampled[i] = entries[Math.floor((i * entries.length) / count)]
-  }
-  return sampled
 }
 
 type CollectResult = {

@@ -139,6 +139,14 @@ export function universeUrl(ref: RoboflowRef & { version: number }): string {
 export const ROBOFLOW_ASSET_BASE = "/api/roboflow/asset"
 export const ROBOFLOW_INGEST_PATH = "/api/roboflow/ingest"
 
+// POST /ingest answers with this when the tab should build the tiles itself.
+export type PreparedExport = {
+  slug: string
+  exportUrl: string
+  iconUrl?: string
+  dataset: RoboflowDataset
+}
+
 export const MANIFEST_FILE = "manifest.json"
 export const COARSE_SIGNATURES_FILE = "signatures-coarse.bin"
 // The project's cover image, downloaded from Roboflow during the ingest.
@@ -188,7 +196,7 @@ export async function readJsonBody<T>(response: Response): Promise<T> {
 
 // ─── Ingest job status (shared by the route and the page) ────────────────────
 
-export type IngestState = "pending" | "running" | "ready" | "error"
+export type IngestState = "pending" | "running" | "prepared" | "ready" | "error"
 
 export type IngestStatus = {
   slug: string
@@ -200,6 +208,9 @@ export type IngestStatus = {
   updatedAt: string
   error?: string
   dataset?: RoboflowDataset
+  // Same-origin proxy URL for the export zip. Present when the tab builds tiles.
+  exportUrl?: string
+  iconUrl?: string
 }
 
 // Two records of the same ingest — one instance's local file and the durable

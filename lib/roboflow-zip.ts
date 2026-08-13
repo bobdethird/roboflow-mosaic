@@ -26,6 +26,7 @@
 
 import { Unzip, UnzipInflate, type UnzipFile } from "fflate"
 
+import { EvenSample, isImageEntryName } from "./roboflow-sample"
 import {
   EOCD_SEARCH_BYTES,
   LOCAL_HEADER_FIXED,
@@ -38,6 +39,7 @@ import {
 } from "./zip-format"
 
 export { ZipReadError, type ZipEntry } from "./zip-format"
+export { EvenSample, isImageEntryName } from "./roboflow-sample"
 
 // Central-directory records are read in windows rather than in one buffer: the
 // directory of a million-entry export is tens of megabytes.
@@ -59,26 +61,9 @@ const LOCAL_EXTRA_SLACK = 512
 // than inflate a zip bomb into the function's memory.
 const MAX_ENTRY_BYTES = 64 * 1024 * 1024
 
-const IMAGE_EXTENSIONS = new Set([
-  ".jpg",
-  ".jpeg",
-  ".png",
-  ".webp",
-  ".bmp",
-  ".tif",
-  ".tiff",
-  ".avif",
-])
-
 // The host answered a ranged request with the whole body. Random access is off
 // the table for this URL; the caller falls back to a sequential read.
 class RangeUnsupportedError extends ZipReadError {}
-
-export function isImageEntryName(name: string): boolean {
-  const dot = name.lastIndexOf(".")
-  if (dot < 0) return false
-  return IMAGE_EXTENSIONS.has(name.slice(dot).toLowerCase())
-}
 
 export type ZipIndex = {
   // Image entries, in central-directory order. Evenly thinned when the export
@@ -91,48 +76,6 @@ export type ZipIndex = {
 }
 
 export type ZipVisitor = (entry: ZipEntry, bytes: Buffer) => Promise<void>
-
-// Keeps at most `cap` items, spread evenly across an unknown-length sequence:
-// once full it drops every other item it kept and doubles its stride, so the
-// survivors stay evenly spaced no matter how much more arrives. Used while
-// parsing a central directory, whose image count is only known once it has been
-// read — and which is too large to keep whole for a million-image export.
-export class EvenSample<T> {
-  private kept: T[] = []
-  private seen = 0
-  private step = 1
-
-  constructor(private readonly cap: number) {
-    if (cap < 1) throw new ZipReadError("Sample cap must be at least one.")
-  }
-
-  push(item: T): void {
-    const index = this.seen++
-    if (index % this.step !== 0) return
-    this.kept.push(item)
-    if (this.kept.length <= this.cap) return
-    // Halve in place: indices 0, 2, 4 … of the kept list are still multiples of
-    // the doubled stride in the original sequence.
-    let write = 0
-    for (let read = 0; read < this.kept.length; read += 2) {
-      this.kept[write++] = this.kept[read]
-    }
-    this.kept.length = write
-    this.step *= 2
-  }
-
-  get items(): T[] {
-    return this.kept
-  }
-
-  get total(): number {
-    return this.seen
-  }
-
-  get stride(): number {
-    return this.step
-  }
-}
 
 // ─── Ranged reads ────────────────────────────────────────────────────────────
 

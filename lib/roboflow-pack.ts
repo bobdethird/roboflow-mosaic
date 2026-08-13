@@ -284,10 +284,33 @@ type LivePack = {
 
 const live = new Map<string, LivePack>()
 
+// A library built in this tab, so CanvasHero can load it the same way it loads
+// a published one. register before handing the dataset to the mosaic.
+const localPacks = new Map<string, RoboflowPack>()
+
+export function registerPack(pack: RoboflowPack): void {
+  for (const [slug, existing] of localPacks) {
+    if (slug === pack.slug && existing === pack) continue
+    existing.release()
+    localPacks.delete(slug)
+  }
+  localPacks.set(pack.slug, pack)
+}
+
 export function acquirePack(
   slug: string,
   options: LoadPackOptions = {}
 ): Promise<RoboflowPack> {
+  const local = localPacks.get(slug)
+  if (local) {
+    options.onProgress?.({
+      loaded: 1,
+      total: 1,
+      step: "preparing",
+    })
+    return Promise.resolve(local)
+  }
+
   const { onProgress, ...rest } = options
   let entry = live.get(slug)
 

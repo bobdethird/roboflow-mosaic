@@ -45,6 +45,7 @@ import {
   readZipIndex as readLibraryIndex,
   type RangeReader,
 } from "../lib/zip-index"
+import { isAllowedProxyUrl } from "../lib/roboflow-proxy"
 import {
   EvenSample,
   READ_WINDOW,
@@ -53,6 +54,10 @@ import {
   streamZipEntries,
   type ZipEntry,
 } from "../lib/roboflow-zip"
+import {
+  readZipIndex as readZipIndexWeb,
+  readZipEntries as readZipEntriesWeb,
+} from "../lib/roboflow-zip-web"
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -828,6 +833,50 @@ test("a version asked for by name that holds nothing says so", async () => {
 
 // Only a reported zero means empty: a version Roboflow says nothing about is
 // still the newest one.
+test("the browser zip reader indexes the same export as the server reader", async () => {
+  const fixture = await exportZip(6)
+  const host = await serve(fixture.zip)
+  try {
+    const index = await readZipIndexWeb(host.url, { maxEntries: 100 })
+    assert.ok(index)
+    assert.equal(index.imageCount, 6)
+    const names = index.entries.map((entry) => entry.name).sort()
+    assert.deepEqual(names, [...fixture.images.keys()].sort())
+
+    const recovered = new Map<string, Uint8Array>()
+    await readZipEntriesWeb(
+      host.url,
+      index.entries,
+      async (entry, bytes) => {
+        recovered.set(entry.name, bytes)
+      },
+      { concurrency: 2 }
+    )
+    assert.equal(recovered.size, 6)
+    for (const [name, bytes] of fixture.images) {
+      assert.deepEqual(Buffer.from(recovered.get(name) ?? []), bytes)
+    }
+  } finally {
+    await host.close()
+  }
+})
+
+test("the export proxy only forwards Roboflow export and cover URLs", () => {
+  assert.equal(
+    isAllowedProxyUrl("https://app.roboflow.com/ds/BR0q3xji5s?key=abc"),
+    true
+  )
+  assert.equal(
+    isAllowedProxyUrl(
+      "https://source.roboflow.com/workspace/project/original.jpg"
+    ),
+    true
+  )
+  assert.equal(isAllowedProxyUrl("https://app.roboflow.com/other/path"), false)
+  assert.equal(isAllowedProxyUrl("https://evil.example/ds/nope"), false)
+  assert.equal(isAllowedProxyUrl("http://app.roboflow.com/ds/open"), false)
+})
+
 test("a version with no reported image count is still the latest", async () => {
   const restore = stubProjectInfo([{ version: 1, images: 10 }, { version: 2 }])
   try {
