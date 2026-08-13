@@ -28,8 +28,8 @@ datasets still need one.
 Connect a public Vercel Blob store to the project before deploying. The ingest
 route requires both `ROBOFLOW_API_KEY` and the store-provided
 `BLOB_READ_WRITE_TOKEN`: a serverless instance keeps nothing of its own, so the
-library it builds is streamed to Blob and the browser downloads it from the Blob
-CDN.
+library it builds is streamed to Blob, and later instances read single files back
+out of it to serve the browser.
 
 Datasets of any size are accepted, and the size of one does not decide whether it
 works. Nothing is staged on the function's ~500 MB `/tmp`: the export is read
@@ -68,12 +68,15 @@ cells pushed out of edges so cell borders settle along contours, one colour
 signature per cell, and a min-error tile per cell drawn rotated along the local
 contour.
 
-The browser downloads the dataset archive once, unpacks it into object URLs, and
-caches the archive in IndexedDB. The canvas, hover preview, zoom view, and
-reference picker then share that one in-browser copy instead of making one HTTP
-request per thumbnail. ZIP parsing is incremental, and per-entry sanity limits
-still reject a single malformed thumbnail or manifest, but the archive's overall
-size is no longer capped.
+The browser fetches two files up front — the manifest and the coarse signature
+blob — and nothing else. Those are all the generator needs to choose tiles, and
+they are small enough to arrive in well under a second even for a 100,000-image
+dataset. Thumbnails are then requested one at a time, by the canvas, hover
+preview, zoom view and reference picker, only for tiles actually drawn: a mosaic
+paints a few thousand of them, so a dataset an order of magnitude larger costs
+nothing extra to open. Each thumbnail is named for the hash of its bytes and
+served `immutable`, so it is fetched once and thereafter comes from the HTTP
+cache.
 
 **Where the tiles come from** is a `MosaicSource` (`lib/mosaic-source.ts`) —
 how the library loads and how a tile's URL is built. Today the only
@@ -107,11 +110,16 @@ reads — instead of the whole archive. A host that ignores `Range` falls back t
 one sequential pass that keeps what it needs and discards the rest as it goes
 past. Either way the peak is one read window, not one export.
 
-**Writing the library.** The library is the zip the browser downloads, and it is
-produced as a stream: each thumbnail is added to a zip as it is encoded and the
-resulting bytes are uploaded to Blob as 8 MB multipart parts, two in flight
-(`lib/roboflow-sink.ts`). Nothing waits for the finished archive, so a 2 GB
-library costs the same memory as a 20 MB one.
+**Writing the library.** The library is produced as a stream: each thumbnail is
+added to a zip as it is encoded and the resulting bytes are uploaded to Blob as
+8 MB multipart parts, two in flight (`lib/roboflow-sink.ts`). Nothing waits for
+the finished archive, so a 2 GB library costs the same memory as a 20 MB one.
+
+**Reading it back.** That archive is never downloaded either, on either side. The
+asset route indexes it with the same trick used on the export — read the central
+directory once, then pull single entries by byte range (`lib/zip-format.ts`, and
+`lib/roboflow-archive.ts`, which keeps the parsed index per instance) — so
+serving one thumbnail out of a 600 MB library costs one small ranged read.
 
 Measured on a 2 GB export (3,600 images), read from a local range-serving host:
 23s, zero bytes written to disk, and a steady state of ~440 MB RSS that does not
@@ -119,7 +127,7 @@ move when the same process ingests it three times over.
 
 **Choosing tiles.** What caps a build is what the mosaic can draw, not what the
 host can hold: the frame is 1600px and the finest cell is 8px, so past ~20,000
-tiles the extra ones are bytes the browser downloads to draw nothing. A dataset
+tiles the extra ones are images the ingest re-encodes for nothing. A dataset
 with more images than that is sampled evenly across the whole export rather than
 truncated at the front, and when the deadline is the tighter constraint the sample
 shrinks to what can be fetched and decoded in the time left. A build that runs out
@@ -138,15 +146,18 @@ from a sample.
 | `lib/roboflow.ts`                          | URL parsing, slugs, asset URLs (shared client/server)  |
 | `lib/roboflow-api.ts`                      | the two Roboflow REST calls                            |
 | `lib/roboflow-ingest.ts`                   | tile sampling, thumbnail and signature build           |
+| `lib/zip-format.ts`                        | the zip format itself, shared by both readers below    |
 | `lib/roboflow-zip.ts`                      | the remote export, read over HTTP without a temp file  |
+| `lib/zip-index.ts`                         | a published archive, read one named entry at a time    |
+| `lib/roboflow-archive.ts`                  | that reader over Blob, index cached per instance       |
 | `lib/roboflow-sink.ts`                     | where a built library goes (Blob multipart, or a dir)  |
 | `lib/roboflow-store.ts`                    | local cache, status, job registry                      |
-| `lib/roboflow-blob.ts`                     | durable status and the published archive's CDN url     |
+| `lib/roboflow-blob.ts`                     | durable status and the published archive's keys        |
 | `lib/roboflow-control.ts`                  | distributed leases and public-ingest rate limits       |
 | `lib/roboflow-limits.ts`                   | shared server and browser resource ceilings            |
-| `lib/roboflow-pack.ts`                     | browser download, unzip, and IndexedDB cache           |
+| `lib/roboflow-pack.ts`                     | the browser's manifest and signature load              |
 | `app/api/roboflow/ingest/`                 | start (POST) / poll (GET) an ingest                    |
-| `app/api/roboflow/pack/[slug]/`            | Blob redirect or local streamed archive                |
+| `app/api/roboflow/asset/[slug]/[...path]/` | one file: from the cache dir, or ranged out of Blob    |
 | `lib/mosaic*.ts`, `lib/contour-mosaic.ts`  | the inherited engine, untouched                        |
 | `components/canvas-hero.tsx`               | the inherited UI, now source-agnostic                  |
 | `lib/tile-library.ts`                      | the shared tile/signature shapes                       |

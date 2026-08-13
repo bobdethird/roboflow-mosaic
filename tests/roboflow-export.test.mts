@@ -9,7 +9,7 @@
 import assert from "node:assert/strict"
 import { randomBytes } from "node:crypto"
 import { createServer, type Server } from "node:http"
-import { mkdtemp, readdir, rm } from "node:fs/promises"
+import { mkdtemp, readFile, readdir, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import test from "node:test"
@@ -17,7 +17,7 @@ import test from "node:test"
 import type { Part } from "@vercel/blob"
 import { unzipSync } from "fflate"
 import sharp from "sharp"
-import { ZipFile } from "yazl"
+import { ZipFile, type EndOptions } from "yazl"
 
 import { buildLibraryFromExport, planTileSample } from "../lib/roboflow-ingest"
 import { COARSE_SIG_BYTES } from "../lib/tile-library"
@@ -27,8 +27,20 @@ import {
   multipartArchiveSink,
   type PartUploader,
 } from "../lib/roboflow-sink"
-import { libraryArchiveStream } from "../lib/roboflow-blob"
-import { unpackArchive } from "../lib/roboflow-pack"
+import {
+  COARSE_SIGNATURES_FILE,
+  ICON_FILE,
+  MANIFEST_FILE,
+  roboflowThumbPath,
+} from "../lib/roboflow"
+import type { PackManifest } from "../lib/roboflow-pack"
+// The library reader, as distinct from the export reader below: one indexes the
+// archive an ingest produces, the other the export it consumes.
+import {
+  readZipEntry as readLibraryEntry,
+  readZipIndex as readLibraryIndex,
+  type RangeReader,
+} from "../lib/zip-index"
 import {
   EvenSample,
   READ_WINDOW,
@@ -62,7 +74,11 @@ type Fixture = { zip: Buffer; images: Map<string, Buffer> }
 // A Roboflow-shaped export: images nested under splits, annotation sidecars
 // alongside them, and both stored and deflated entries so the reader has to
 // handle each.
-async function exportZip(count: number): Promise<Fixture> {
+async function exportZip(
+  count: number,
+  options: { zip64?: boolean } = {}
+): Promise<Fixture> {
+  const zip64 = options.zip64 ?? false
   const zipfile = new ZipFile()
   const images = new Map<string, Buffer>()
   const chunks: Buffer[] = []
@@ -72,17 +88,25 @@ async function exportZip(count: number): Promise<Fixture> {
     zipfile.outputStream.on("error", reject)
   })
 
-  zipfile.addBuffer(Buffer.from("{}"), "train/_annotations.coco.json")
+  zipfile.addBuffer(Buffer.from("{}"), "train/_annotations.coco.json", {
+    forceZip64Format: zip64,
+  })
   for (let index = 0; index < count; index++) {
     const split = index % 3 === 0 ? "valid" : "train"
     const name = `${split}/image-${String(index).padStart(4, "0")}.jpg`
     const bytes = await image(index)
     images.set(name, bytes)
     // Half the entries stored, half deflated.
-    zipfile.addBuffer(bytes, name, { compress: index % 2 === 0 })
+    zipfile.addBuffer(bytes, name, {
+      compress: index % 2 === 0,
+      forceZip64Format: zip64,
+    })
   }
-  zipfile.addBuffer(Buffer.from("names: []\n"), "data.yaml")
-  zipfile.end()
+  zipfile.addBuffer(Buffer.from("names: []\n"), "data.yaml", {
+    forceZip64Format: zip64,
+  })
+  // @types/yazl requires every EndOptions field; only this one matters here.
+  zipfile.end({ forceZip64Format: zip64 } as EndOptions)
   await done
   return { zip: Buffer.concat(chunks), images }
 }
@@ -177,6 +201,39 @@ test("the export index lists image entries without downloading the export", asyn
     )
     assert.ok(fetched > 0)
     assert.ok(host.requests() <= 3, `took ${host.requests()} requests`)
+  } finally {
+    await host.close()
+  }
+})
+
+test("a zip64 export is indexed by range rather than streamed whole", async () => {
+  // Past 65,535 entries a writer has to emit zip64, and the real directory
+  // offset moves out of the classic record into one reached through a locator.
+  // Failing to follow it is invisible from the outside: the index just comes
+  // back null and the ingest quietly falls back to pulling the whole export —
+  // on precisely the datasets that are too big for that to be acceptable.
+  const fixture = await exportZip(6, { zip64: true })
+  const host = await serve(fixture.zip)
+  try {
+    const index = await readZipIndex(host.url, { maxEntries: 100 })
+    assert.ok(index, "expected an index from a zip64 export")
+    assert.deepEqual(
+      index.entries.map((entry) => entry.name).sort(),
+      [...fixture.images.keys()].sort()
+    )
+
+    const seen = new Map<string, Buffer>()
+    await readZipEntries(
+      host.url,
+      index.entries,
+      async (entry, bytes) => {
+        seen.set(entry.name, bytes)
+      },
+      { concurrency: 2 }
+    )
+    for (const [name, bytes] of fixture.images) {
+      assert.deepEqual(seen.get(name), bytes, `${name} read back wrong`)
+    }
   } finally {
     await host.close()
   }
@@ -368,15 +425,65 @@ test("the tile plan strides across the whole export, and shrinks for a deadline"
 
 // ─── The library a build produces ────────────────────────────────────────────
 
-// Unpack a built library with the browser's own parser, which is the only
-// consumer that matters: it has to find the manifest, the signature blob and one
-// thumbnail per photo no matter what order the ingest wrote them in.
-async function unpackBuiltLibrary(directory: string, version: string) {
-  const stream = await libraryArchiveStream(directory)
-  assert.ok(stream, "expected an archive for the built library")
-  return unpackArchive("workspace--dataset--v1", stream, {
-    expectedVersion: version,
-  })
+// A built library, read the way it is actually served: the manifest and the
+// signature blob up front, and single thumbnails by id. Nothing downloads a
+// library whole any more, so nothing here does either.
+type Library = {
+  manifest: PackManifest
+  signatures: Uint8Array
+  thumb: (id: string) => Promise<Uint8Array | null>
+  has: (name: string) => Promise<boolean>
+}
+
+// A local build, which the asset route serves straight off the cache directory.
+async function readBuiltLibrary(
+  directory: string,
+  version: string
+): Promise<Library> {
+  const file = (name: string) => path.join(directory, name)
+  const library: Library = {
+    manifest: JSON.parse(
+      await readFile(file(MANIFEST_FILE), "utf8")
+    ) as PackManifest,
+    signatures: await readFile(file(COARSE_SIGNATURES_FILE)),
+    thumb: (id) => readFile(file(roboflowThumbPath(id))).catch(() => null),
+    has: (name) =>
+      readFile(file(name)).then(
+        () => true,
+        () => false
+      ),
+  }
+  assert.equal(library.manifest.version, version)
+  return library
+}
+
+// A serverless build, which lands in Blob as one archive the asset route reads
+// with range requests — so read it here with the very same index.
+async function readUploadedLibrary(
+  archive: Buffer,
+  version: string
+): Promise<Library> {
+  const read: RangeReader = async (start, end) =>
+    archive.subarray(start, Math.min(end, archive.length - 1) + 1)
+  const index = await readLibraryIndex(read, archive.length)
+  const entry = async (name: string) => {
+    const found = index.get(name)
+    return found ? await readLibraryEntry(read, found) : null
+  }
+
+  const manifest = await entry(MANIFEST_FILE)
+  const signatures = await entry(COARSE_SIGNATURES_FILE)
+  assert.ok(manifest, "expected a manifest in the archive")
+  assert.ok(signatures, "expected a signature blob in the archive")
+
+  const library: Library = {
+    manifest: JSON.parse(manifest.toString("utf8")) as PackManifest,
+    signatures,
+    thumb: (id) => entry(roboflowThumbPath(id)),
+    has: async (name) => index.has(name),
+  }
+  assert.equal(library.manifest.version, version)
+  return library
 }
 
 test("a build turns a remote export into a library the browser can unpack", async () => {
@@ -401,11 +508,11 @@ test("a build turns a remote export into a library the browser can unpack", asyn
         "thumbs",
       ])
 
-      const pack = await unpackBuiltLibrary(dir, built.version)
-      assert.equal(pack.manifest.photos.length, 9)
-      assert.equal(pack.signatures.length, 9 * COARSE_SIG_BYTES)
-      for (const photo of pack.manifest.photos) {
-        assert.match(pack.thumbUrl(photo.id) ?? "", /^blob:/)
+      const library = await readBuiltLibrary(dir, built.version)
+      assert.equal(library.manifest.photos.length, 9)
+      assert.equal(library.signatures.length, 9 * COARSE_SIG_BYTES)
+      for (const photo of library.manifest.photos) {
+        assert.ok(await library.thumb(photo.id), `no thumbnail for ${photo.id}`)
         assert.ok(photo.w > 0 && photo.h > 0)
       }
       // Manifest order follows the entry paths inside the export, not the order
@@ -415,10 +522,9 @@ test("a build turns a remote export into a library the browser can unpack", asyn
         .sort()
         .map((name) => path.basename(name))
       assert.deepEqual(
-        pack.manifest.photos.map((photo) => photo.file),
+        library.manifest.photos.map((photo) => photo.file),
         expected
       )
-      pack.release()
     })
   } finally {
     await host.close()
@@ -440,15 +546,14 @@ test("a dataset larger than the tile budget is sampled, not truncated", async ()
       assert.equal(built.sampled, true)
       assert.equal(built.sourceImages, 12)
 
-      const pack = await unpackBuiltLibrary(dir, built.version)
-      assert.equal(pack.manifest.photos.length, 4)
-      assert.equal(pack.signatures.length, 4 * COARSE_SIG_BYTES)
+      const library = await readBuiltLibrary(dir, built.version)
+      assert.equal(library.manifest.photos.length, 4)
+      assert.equal(library.signatures.length, 4 * COARSE_SIG_BYTES)
       // Spread across the export rather than taken off the front of it.
-      const indices = pack.manifest.photos.map((photo) =>
+      const indices = library.manifest.photos.map((photo) =>
         Number(/image-(\d+)/.exec(photo.file ?? "")?.[1] ?? -1)
       )
       assert.ok(Math.max(...indices) >= 8, `sampled ${indices.join(", ")}`)
-      pack.release()
     })
   } finally {
     await host.close()
@@ -464,9 +569,8 @@ test("a build works against a host that will not serve ranges", async () => {
       const built = await buildLibraryFromExport(host.url, sink, silent)
       await sink.finish()
       assert.equal(built.photoCount, 7)
-      const pack = await unpackBuiltLibrary(dir, built.version)
-      assert.equal(pack.manifest.photos.length, 7)
-      pack.release()
+      const library = await readBuiltLibrary(dir, built.version)
+      assert.equal(library.manifest.photos.length, 7)
     })
   } finally {
     await host.close()
@@ -567,18 +671,13 @@ test("the archive a serverless build uploads is one the browser can unpack", asy
     assert.ok(published.has("manifest.json"))
     assert.ok(published.has("icon.jpg"))
 
-    const pack = await unpackArchive(
-      "workspace--dataset--v1",
-      new Blob([store.archive()]).stream() as ReadableStream<Uint8Array>,
-      { expectedVersion: built.version }
-    )
-    assert.equal(pack.manifest.photos.length, 9)
-    assert.equal(pack.signatures.length, 9 * COARSE_SIG_BYTES)
-    assert.ok(pack.iconUrl, "expected the cover image in the archive")
-    for (const photo of pack.manifest.photos) {
-      assert.match(pack.thumbUrl(photo.id) ?? "", /^blob:/)
+    const library = await readUploadedLibrary(store.archive(), built.version)
+    assert.equal(library.manifest.photos.length, 9)
+    assert.equal(library.signatures.length, 9 * COARSE_SIG_BYTES)
+    assert.ok(await library.has(ICON_FILE), "expected the cover in the archive")
+    for (const photo of library.manifest.photos) {
+      assert.ok(await library.thumb(photo.id), `no thumbnail for ${photo.id}`)
     }
-    pack.release()
   } finally {
     await host.close()
   }

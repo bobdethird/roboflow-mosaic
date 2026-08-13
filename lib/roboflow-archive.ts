@@ -41,7 +41,7 @@ function rangeReader(url: string): RangeReader {
         `Range request failed (${response.status} ${response.statusText}).`
       )
     }
-    return new Uint8Array(await response.arrayBuffer())
+    return Buffer.from(await response.arrayBuffer())
   }
 }
 
@@ -74,7 +74,7 @@ function archiveFor(slug: string): Promise<Archive | null> {
 export async function readArchiveFile(
   slug: string,
   relativePath: string
-): Promise<Uint8Array | null> {
+): Promise<Buffer | null> {
   const archive = await archiveFor(slug)
   if (!archive) return null
   const entry = archive.index.get(relativePath)

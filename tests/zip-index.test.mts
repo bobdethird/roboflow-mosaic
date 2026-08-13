@@ -1,6 +1,6 @@
 // The library archive is read with range requests rather than downloaded, so
 // these exercise the index against archives written by yazl — the same writer
-// `publishDataset` uses — including the Zip64 layout a large dataset forces.
+// `blobArchiveSink` uses — including the Zip64 layout a large dataset forces.
 
 import assert from "node:assert/strict"
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
@@ -19,7 +19,7 @@ type Entry = { name: string; body: Uint8Array }
 async function buildArchive(
   entries: Entry[],
   options: { forceZip64?: boolean; compress?: boolean } = {}
-): Promise<Uint8Array> {
+): Promise<Buffer> {
   const zip = new ZipFile()
   for (const entry of entries) {
     zip.addBuffer(Buffer.from(entry.body), entry.name, {
@@ -32,12 +32,12 @@ async function buildArchive(
 
   const chunks: Buffer[] = []
   for await (const chunk of zip.outputStream) chunks.push(chunk as Buffer)
-  return new Uint8Array(Buffer.concat(chunks))
+  return Buffer.concat(chunks)
 }
 
 // A reader over an in-memory archive that records every span it was asked for,
 // so a test can assert the whole file is never pulled.
-function readerFor(archive: Uint8Array): {
+function readerFor(archive: Buffer): {
   read: RangeReader
   bytesRead: () => number
 } {
@@ -74,7 +74,10 @@ test("reads a single stored entry without downloading the archive", async () => 
   assert.equal(entry.method, 0)
   assert.equal(entry.uncompressedSize, thumb.length)
 
-  assert.deepEqual(Array.from(await readZipEntry(read, entry)), Array.from(thumb))
+  assert.deepEqual(
+    Array.from(await readZipEntry(read, entry)),
+    Array.from(thumb)
+  )
 
   // The point of the exercise: one small entry costs far less than the archive.
   assert.ok(
@@ -98,7 +101,10 @@ test("resolves Zip64 offsets, which a large dataset's archive requires", async (
 
   const entry = index.get("thumbs/abcdefabcdef0123.jpg")
   assert.ok(entry)
-  assert.deepEqual(Array.from(await readZipEntry(read, entry)), Array.from(thumb))
+  assert.deepEqual(
+    Array.from(await readZipEntry(read, entry)),
+    Array.from(thumb)
+  )
 
   const signatures = index.get("signatures-coarse.bin")
   assert.ok(signatures)
@@ -116,7 +122,10 @@ test("inflates a deflated entry rather than returning compressed bytes", async (
   const entry = index.get("manifest.json")
   assert.ok(entry)
   assert.equal(entry.method, 8)
-  assert.deepEqual(Array.from(await readZipEntry(read, entry)), Array.from(body))
+  assert.deepEqual(
+    Array.from(await readZipEntry(read, entry)),
+    Array.from(body)
+  )
 })
 
 test("reads entries from an archive on disk through a file-backed reader", async () => {
@@ -130,7 +139,7 @@ test("reads entries from an archive on disk through a file-backed reader", async
     const file = path.join(root, "library.zip")
     await writeFile(file, archive)
 
-    const contents = new Uint8Array(await readFile(file))
+    const contents = await readFile(file)
     const read: RangeReader = async (start, end) =>
       contents.subarray(start, Math.min(end, contents.length - 1) + 1)
 

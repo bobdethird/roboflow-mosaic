@@ -18,26 +18,27 @@
 //
 // Both paths cap what they hold: one window of compressed bytes per in-flight
 // read.
-
-import { promisify } from "node:util"
-import { inflateRaw as inflateRawCallback } from "node:zlib"
+//
+// Parsing the format itself — the end-of-central-directory record, Zip64, the
+// central directory's records, local headers — lives in lib/zip-format.ts and
+// is shared with the reader for the published library archive. What is here is
+// everything specific to reading a large export over HTTP.
 
 import { Unzip, UnzipInflate, type UnzipFile } from "fflate"
 
-const inflateRaw = promisify(inflateRawCallback)
+import {
+  EOCD_SEARCH_BYTES,
+  LOCAL_HEADER_FIXED,
+  ZipReadError,
+  expandEntry,
+  localDataOffset,
+  locateCentralDirectory,
+  parseDirectoryWindow,
+  type ZipEntry,
+} from "./zip-format"
 
-const LOCAL_SIG = 0x04034b50
-const CENTRAL_SIG = 0x02014b50
-const EOCD_SIG = 0x06054b50
-const EOCD64_SIG = 0x06064b50
-const EOCD64_LOCATOR_SIG = 0x07064b58
+export { ZipReadError, type ZipEntry } from "./zip-format"
 
-const LOCAL_HEADER_FIXED = 30
-const CENTRAL_HEADER_FIXED = 46
-const EOCD_FIXED = 22
-// A zip comment can be 64 KB, and the end-of-central-directory record sits
-// before it, so this is the largest tail worth scanning for the record.
-const EOCD_SEARCH_BYTES = 64 * 1024 + EOCD_FIXED + 20
 // Central-directory records are read in windows rather than in one buffer: the
 // directory of a million-entry export is tens of megabytes.
 const DIRECTORY_WINDOW = 4 * 1024 * 1024
@@ -69,8 +70,6 @@ const IMAGE_EXTENSIONS = new Set([
   ".avif",
 ])
 
-export class ZipReadError extends Error {}
-
 // The host answered a ranged request with the whole body. Random access is off
 // the table for this URL; the caller falls back to a sequential read.
 class RangeUnsupportedError extends ZipReadError {}
@@ -79,16 +78,6 @@ export function isImageEntryName(name: string): boolean {
   const dot = name.lastIndexOf(".")
   if (dot < 0) return false
   return IMAGE_EXTENSIONS.has(name.slice(dot).toLowerCase())
-}
-
-export type ZipEntry = {
-  name: string
-  // Offset of the entry's local file header in the archive.
-  offset: number
-  compressedSize: number
-  uncompressedSize: number
-  // 0 stored, 8 deflate. Anything else is skipped while indexing.
-  method: number
 }
 
 export type ZipIndex = {
@@ -249,26 +238,7 @@ function fetchSpan(
 
 // ─── Central directory ───────────────────────────────────────────────────────
 
-function readU64(bytes: Buffer, at: number): number {
-  const value = bytes.readBigUInt64LE(at)
-  if (value > BigInt(Number.MAX_SAFE_INTEGER)) {
-    throw new ZipReadError("The export zip declares an implausible size.")
-  }
-  return Number(value)
-}
-
 type Eocd = { directoryOffset: number; directorySize: number }
-
-function findEocd(tail: Buffer): number {
-  for (let at = tail.length - EOCD_FIXED; at >= 0; at--) {
-    if (tail.readUInt32LE(at) !== EOCD_SIG) continue
-    const commentLength = tail.readUInt16LE(at + 20)
-    if (at + EOCD_FIXED + commentLength === tail.length) return at
-  }
-  throw new ZipReadError(
-    "The export zip has no end-of-central-directory record."
-  )
-}
 
 async function readEocd(
   url: string,
@@ -281,118 +251,25 @@ async function readEocd(
     EOCD_SEARCH_BYTES,
     signal
   )
-  const at = findEocd(tail)
-  let directorySize = tail.readUInt32LE(at + 12)
-  let directoryOffset = tail.readUInt32LE(at + 16)
-
-  // Zip64: the 32-bit fields saturate and the real values live in a separate
-  // record, located by a fixed-size locator right before the classic one.
-  if (directoryOffset === 0xffffffff || directorySize === 0xffffffff) {
-    const locator = at - 20
-    if (locator < 0 || tail.readUInt32LE(locator) !== EOCD64_LOCATOR_SIG) {
-      throw new ZipReadError("The export zip is missing its zip64 locator.")
-    }
-    const eocd64Offset = readU64(tail, locator + 8)
-    const { bytes: record } = await fetchSpan(url, eocd64Offset, 56, signal)
-    if (record.readUInt32LE(0) !== EOCD64_SIG) {
-      throw new ZipReadError("The export zip has a malformed zip64 record.")
-    }
-    directorySize = readU64(record, 40)
-    directoryOffset = readU64(record, 48)
-  }
-
-  return { eocd: { directoryOffset, directorySize }, totalSize }
-}
-
-// Zip64 extra field: the 8-byte values that replace whichever 32-bit fields
-// saturated, in a fixed order.
-function applyZip64Extra(
-  extra: Buffer,
-  entry: { compressedSize: number; uncompressedSize: number; offset: number },
-  saturated: { compressed: boolean; uncompressed: boolean; offset: boolean }
-): void {
-  let at = 0
-  while (at + 4 <= extra.length) {
-    const id = extra.readUInt16LE(at)
-    const size = extra.readUInt16LE(at + 2)
-    const body = extra.subarray(at + 4, at + 4 + size)
-    at += 4 + size
-    if (id !== 0x0001) continue
-    let read = 0
-    if (saturated.uncompressed && read + 8 <= body.length) {
-      entry.uncompressedSize = readU64(body, read)
-      read += 8
-    }
-    if (saturated.compressed && read + 8 <= body.length) {
-      entry.compressedSize = readU64(body, read)
-      read += 8
-    }
-    if (saturated.offset && read + 8 <= body.length) {
-      entry.offset = readU64(body, read)
-    }
-    return
+  const { offset, size } = await locateCentralDirectory(
+    tail,
+    Math.max(0, totalSize - tail.length),
+    async (start, end) =>
+      (await fetchSpan(url, start, end - start + 1, signal)).bytes
+  )
+  return {
+    eocd: { directoryOffset: offset, directorySize: size },
+    totalSize,
   }
 }
 
-// Parse as many whole central-directory records as `buffer` holds. Returns how
-// many bytes were consumed, so the caller can carry the remainder into the next
-// window, and whether the records ran out (a record that is not a record ends
-// the directory).
-function parseDirectoryWindow(
-  buffer: Buffer,
-  onEntry: (entry: ZipEntry) => void
-): { consumed: number; done: boolean } {
-  let at = 0
-  for (;;) {
-    if (at + CENTRAL_HEADER_FIXED > buffer.length) {
-      return { consumed: at, done: false }
-    }
-    const signature = buffer.readUInt32LE(at)
-    if (signature !== CENTRAL_SIG) return { consumed: at, done: true }
-    const nameLength = buffer.readUInt16LE(at + 28)
-    const extraLength = buffer.readUInt16LE(at + 30)
-    const commentLength = buffer.readUInt16LE(at + 32)
-    const total =
-      CENTRAL_HEADER_FIXED + nameLength + extraLength + commentLength
-    if (at + total > buffer.length) return { consumed: at, done: false }
-
-    const method = buffer.readUInt16LE(at + 10)
-    const compressedSize = buffer.readUInt32LE(at + 20)
-    const uncompressedSize = buffer.readUInt32LE(at + 24)
-    const offset = buffer.readUInt32LE(at + 42)
-    const nameStart = at + CENTRAL_HEADER_FIXED
-    const name = buffer
-      .subarray(nameStart, nameStart + nameLength)
-      .toString("utf8")
-    const entry: ZipEntry = {
-      name,
-      offset,
-      compressedSize,
-      uncompressedSize,
-      method,
-    }
-    if (
-      compressedSize === 0xffffffff ||
-      uncompressedSize === 0xffffffff ||
-      offset === 0xffffffff
-    ) {
-      applyZip64Extra(
-        buffer.subarray(
-          nameStart + nameLength,
-          nameStart + nameLength + extraLength
-        ),
-        entry,
-        {
-          compressed: compressedSize === 0xffffffff,
-          uncompressed: uncompressedSize === 0xffffffff,
-          offset: offset === 0xffffffff,
-        }
-      )
-    }
-    at += total
-    if (name.endsWith("/") || !isImageEntryName(name)) continue
-    if (entry.method !== 0 && entry.method !== 8) continue
-    onEntry(entry)
+// The images in a directory window, in order. Directories, sidecar labels and
+// anything stored with a compression method we cannot expand are not tiles.
+function onImageEntry(sample: EvenSample<ZipEntry>): (entry: ZipEntry) => void {
+  return (entry) => {
+    if (entry.name.endsWith("/") || !isImageEntryName(entry.name)) return
+    if (entry.method !== 0 && entry.method !== 8) return
+    sample.push(entry)
   }
 }
 
@@ -423,6 +300,7 @@ export async function readZipIndex(
     }
 
     const sample = new EvenSample<ZipEntry>(options.maxEntries)
+    const keep = onImageEntry(sample)
     let carry: Buffer<ArrayBufferLike> = Buffer.alloc(0)
     let read = 0
     while (read < eocd.directorySize) {
@@ -436,7 +314,7 @@ export async function readZipIndex(
       if (!bytes.length) break
       read += bytes.length
       const buffer = carry.length ? Buffer.concat([carry, bytes]) : bytes
-      const window = parseDirectoryWindow(buffer, (entry) => sample.push(entry))
+      const window = parseDirectoryWindow(buffer, keep)
       if (window.done) break
       carry = buffer.subarray(window.consumed)
     }
@@ -495,16 +373,6 @@ export function planReadGroups(entries: ZipEntry[]): ReadGroup[] {
   return groups
 }
 
-async function expand(entry: ZipEntry, compressed: Buffer): Promise<Buffer> {
-  if (entry.method === 0) return compressed
-  const limit = Math.min(
-    MAX_ENTRY_BYTES,
-    Math.max(entry.uncompressedSize + 64 * 1024, 1024 * 1024)
-  )
-  const expanded = await inflateRaw(compressed, { maxOutputLength: limit })
-  return Buffer.from(expanded)
-}
-
 // Slice one entry's compressed bytes out of a window that covers it, re-reading
 // precisely when its local header turned out to be longer than the slack the
 // window allowed for.
@@ -515,15 +383,8 @@ async function entryBytes(
   signal?: AbortSignal
 ): Promise<Buffer> {
   const at = entry.offset - window.start
-  if (at < 0 || at + LOCAL_HEADER_FIXED > window.bytes.length) {
-    throw new ZipReadError(`Short read for ${entry.name}.`)
-  }
-  if (window.bytes.readUInt32LE(at) !== LOCAL_SIG) {
-    throw new ZipReadError(`${entry.name} is not where the export said it was.`)
-  }
-  const nameLength = window.bytes.readUInt16LE(at + 26)
-  const extraLength = window.bytes.readUInt16LE(at + 28)
-  const dataStart = at + LOCAL_HEADER_FIXED + nameLength + extraLength
+  if (at < 0) throw new ZipReadError(`Short read for ${entry.name}.`)
+  const dataStart = at + localDataOffset(window.bytes, at, entry.name)
   const dataEnd = dataStart + entry.compressedSize
   if (dataEnd <= window.bytes.length) {
     return window.bytes.subarray(dataStart, dataEnd)
@@ -614,7 +475,10 @@ export async function readZipEntries(
               read,
               options.signal
             )
-            await visit(entry, await expand(entry, compressed))
+            await visit(
+              entry,
+              await expandEntry(entry, compressed, MAX_ENTRY_BYTES)
+            )
           } catch (error) {
             if (!options.onEntryError || options.signal?.aborted) throw error
             options.onEntryError(entry, error)
