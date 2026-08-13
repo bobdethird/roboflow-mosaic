@@ -8,6 +8,9 @@
 //
 // Either way the result is handed back as a `File`, which is exactly what
 // CanvasHero's upload card produces, so nothing downstream changes.
+//
+// Both come out of the downloaded library archive, which the canvas is loading
+// anyway — this takes a reference on the same copy rather than fetching again.
 
 import * as React from "react"
 
@@ -21,18 +24,12 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog"
 import { cn } from "@/lib/utils"
-import {
-  ICON_FILE,
-  ROBOFLOW_COVER_PATH,
-  readJsonBody,
-  roboflowAssetUrl,
-  roboflowThumbPath,
-  type RoboflowDataset,
-} from "@/lib/roboflow"
-import { loadRoboflowManifest } from "@/lib/roboflow-library"
+import { type RoboflowDataset } from "@/lib/roboflow"
+import { acquirePack, releasePack, type RoboflowPack } from "@/lib/roboflow-pack"
 
-// How many thumbnails to put in the grid at once. Datasets run to thousands of
-// images, and every tile is a separate request, so they come in pages.
+// How many thumbnails to put in the grid at once. The images are local by now,
+// but a dataset runs to thousands of them and mounting every <img> at once
+// still costs layout and decode work.
 const PAGE_SIZE = 120
 
 async function urlToFile(url: string, name: string): Promise<File> {
@@ -58,35 +55,47 @@ export function RoboflowReferencePicker({
   const [busy, setBusy] = React.useState<null | "cover" | "dataset">(null)
   const [error, setError] = React.useState<string | null>(null)
   const [open, setOpen] = React.useState(false)
-  const [ids, setIds] = React.useState<string[] | null>(null)
+  const [pack, setPack] = React.useState<RoboflowPack | null>(null)
   const [shown, setShown] = React.useState(PAGE_SIZE)
+
+  const { slug, libraryVersion } = dataset
+
+  React.useEffect(() => {
+    let cancelled = false
+    void acquirePack(slug, { expectedVersion: libraryVersion ?? null }).then(
+      (loaded) => {
+        if (!cancelled) setPack(loaded)
+      },
+      (loadError: unknown) => {
+        if (cancelled) return
+        setError(
+          loadError instanceof Error
+            ? loadError.message
+            : "Could not load the dataset's images."
+        )
+      }
+    )
+    return () => {
+      cancelled = true
+      releasePack(slug)
+    }
+  }, [slug, libraryVersion])
+
+  const ids = React.useMemo(
+    () => pack?.manifest.photos.map((photo) => photo.id) ?? null,
+    [pack]
+  )
 
   const chooseCover = React.useCallback(async () => {
     setError(null)
     setBusy("cover")
     try {
-      // A dataset ingested before covers were saved has everything else on
-      // disk; pull just the cover rather than re-ingesting.
-      if (!dataset.hasIcon) {
-        const response = await fetch(ROBOFLOW_COVER_PATH, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ slug: dataset.slug }),
-        })
-        const body = await readJsonBody<{
-          hasIcon?: boolean
-          error?: string
-        }>(response)
-        if (!response.ok || !body.hasIcon) {
-          throw new Error(body.error ?? "Could not fetch the cover image.")
-        }
-      }
-      onSelect(
-        await urlToFile(
-          roboflowAssetUrl(dataset.slug, ICON_FILE),
-          `${dataset.project}-cover.jpg`
+      if (!pack?.iconUrl) {
+        throw new Error(
+          "This dataset has no cover image. Pick an image from the dataset instead."
         )
-      )
+      }
+      onSelect(await urlToFile(pack.iconUrl, `${dataset.project}-cover.jpg`))
     } catch (coverError) {
       setError(
         coverError instanceof Error
@@ -96,38 +105,21 @@ export function RoboflowReferencePicker({
     } finally {
       setBusy(null)
     }
-  }, [dataset, onSelect])
+  }, [dataset.project, onSelect, pack])
 
-  const openGrid = React.useCallback(async () => {
+  const openGrid = React.useCallback(() => {
     setError(null)
     setOpen(true)
-    if (ids) return
-    setBusy("dataset")
-    try {
-      const manifest = await loadRoboflowManifest(dataset.slug)
-      setIds(manifest.photos.map((photo) => photo.id))
-    } catch (gridError) {
-      setError(
-        gridError instanceof Error
-          ? gridError.message
-          : "Could not list the dataset's images."
-      )
-    } finally {
-      setBusy(null)
-    }
-  }, [dataset.slug, ids])
+  }, [])
 
   const pickFromDataset = React.useCallback(
     async (id: string) => {
       setError(null)
       setOpen(false)
       try {
-        onSelect(
-          await urlToFile(
-            roboflowAssetUrl(dataset.slug, roboflowThumbPath(id)),
-            `${dataset.project}-${id}.jpg`
-          )
-        )
+        const url = pack?.thumbUrl(id)
+        if (!url) throw new Error("That image is not in the dataset archive.")
+        onSelect(await urlToFile(url, `${dataset.project}-${id}.jpg`))
       } catch (pickError) {
         setError(
           pickError instanceof Error
@@ -136,7 +128,7 @@ export function RoboflowReferencePicker({
         )
       }
     },
-    [dataset.project, dataset.slug, onSelect]
+    [dataset.project, onSelect, pack]
   )
 
   const hero = variant === "hero"
@@ -168,7 +160,7 @@ export function RoboflowReferencePicker({
             <Button
               variant="outline"
               size={hero ? "default" : "sm"}
-              onClick={() => void openGrid()}
+              onClick={openGrid}
               disabled={busy !== null}
             >
               From dataset
@@ -197,14 +189,11 @@ export function RoboflowReferencePicker({
                         onClick={() => void pickFromDataset(id)}
                         className="focus-visible:ring-ring overflow-hidden rounded-lg border transition hover:opacity-80 focus-visible:ring-2 focus-visible:outline-none"
                       >
-                        {/* Dataset tiles are served from the local ingest cache,
-                            so next/image's optimizer adds nothing here. */}
+                        {/* An object url into the downloaded archive; there is
+                            nothing for next/image's optimizer to do. */}
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img
-                          src={roboflowAssetUrl(
-                            dataset.slug,
-                            roboflowThumbPath(id)
-                          )}
+                          src={pack?.thumbUrl(id) ?? ""}
                           alt=""
                           loading="lazy"
                           className="aspect-square w-full object-cover"

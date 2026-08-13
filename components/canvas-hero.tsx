@@ -6,6 +6,7 @@ import { Download, Maximize2, PanelRight } from "lucide-react"
 
 import { type LibraryItem } from "@/lib/tile-library"
 import { type MosaicSource } from "@/lib/mosaic-source"
+import { type PackProgress } from "@/lib/roboflow-pack"
 import {
   ReferenceCard,
   ReferenceEmptyCard,
@@ -529,6 +530,50 @@ function canvasToBlob(canvas: HTMLCanvasElement): Promise<Blob | null> {
   return new Promise((resolve) => canvas.toBlob(resolve, "image/png"))
 }
 
+function megabytes(bytes: number): string {
+  return `${(bytes / 1_048_576).toFixed(1)} MB`
+}
+
+// The library arrives as one archive, so there is a real download to report
+// before anything can be generated. Silent once the tiles are in memory.
+function LibraryStatus({
+  progress,
+  error,
+}: {
+  progress: PackProgress | null
+  error: string | null
+}) {
+  if (error) {
+    return <p className="max-w-xs text-center text-xs text-destructive">{error}</p>
+  }
+  if (!progress) return null
+
+  const pct =
+    progress.total > 0
+      ? Math.min(100, Math.round((progress.loaded / progress.total) * 100))
+      : null
+
+  return (
+    <div className="flex w-56 flex-col items-center gap-1.5">
+      <div className="h-1 w-full overflow-hidden rounded-full bg-muted">
+        <div
+          className="h-full rounded-full bg-foreground/70 transition-[width] duration-200"
+          // An unknown total (no content-length) still gets a filled bar rather
+          // than a stuck-at-zero one; the byte count carries the real progress.
+          style={{ width: pct === null ? "100%" : `${pct}%` }}
+        />
+      </div>
+      <p className="text-xs text-muted-foreground tabular-nums">
+        {progress.step === "unpacking"
+          ? "Unpacking the dataset…"
+          : pct === null
+            ? `Downloading the dataset — ${megabytes(progress.loaded)}`
+            : `Downloading the dataset — ${pct}%`}
+      </p>
+    </div>
+  )
+}
+
 type CanvasHeroProps = {
   // Where the tiles come from — an ingested Roboflow dataset, wrapped as a
   // MosaicSource. The parent remounts CanvasHero (via `key={collection.id}`)
@@ -589,6 +634,10 @@ export function CanvasHero({
   const [displayedProgressPct, setDisplayedProgressPct] = React.useState(0)
   // How many tile photos are available in the (cached) library.
   const [tileCount, setTileCount] = React.useState(0)
+  // Progress of the one-off library download, and whatever stopped it.
+  const [libraryProgress, setLibraryProgress] =
+    React.useState<PackProgress | null>(null)
+  const [libraryError, setLibraryError] = React.useState<string | null>(null)
   const [tileMap, setTileMap] = React.useState<MosaicTileMap | null>(null)
   const [hoveredTile, setHoveredTile] = React.useState<HoveredTile | null>(null)
   // Whether a mouse is currently over the mosaic. Drives the "click image to zoom
@@ -663,21 +712,48 @@ export function CanvasHero({
   // rendering off the main thread, fetching thumbnails lazily for placed tiles.
   React.useEffect(() => {
     let cancelled = false
+    let release: (() => void) | null = null
     const engine = new MosaicEngine()
     engineRef.current = engine
     void (async () => {
-      const { version, items } = await collection.loadLibrary()
-      if (cancelled || items.length === 0) return
-      libraryVersionRef.current = version
-      engine.hydrate(items)
-      tileIdsRef.current = items.map((it) => it.id)
-      setLibraryById(new Map(items.map((it) => [it.id, it])))
-      setTileCount(items.length)
+      try {
+        const library = await collection.loadLibrary({
+          onProgress: (progress) => {
+            if (!cancelled) setLibraryProgress(progress)
+          },
+        })
+        // The cleanup below has already run if we were cancelled while the
+        // download was in flight, so let go of the pack here instead.
+        if (cancelled) {
+          library.release()
+          return
+        }
+        release = library.release
+        if (library.items.length === 0) return
+        libraryVersionRef.current = library.version
+        engine.hydrate(library.items)
+        tileIdsRef.current = library.items.map((it) => it.id)
+        setLibraryById(new Map(library.items.map((it) => [it.id, it])))
+        setTileCount(library.items.length)
+      } catch (loadError) {
+        if (!cancelled) {
+          setLibraryError(
+            loadError instanceof Error
+              ? loadError.message
+              : "Could not load this dataset."
+          )
+        }
+      } finally {
+        if (!cancelled) setLibraryProgress(null)
+      }
     })()
     return () => {
       cancelled = true
       engine.terminate()
       engineRef.current = null
+      // Frees the tiles' object urls; nothing on screen may reference them
+      // after this, which is why it runs with the engine teardown.
+      release?.()
     }
   }, [collection, maxTileReuse])
 
@@ -1325,14 +1401,20 @@ export function CanvasHero({
                 )}
               </div>
             ) : (
-              ReferencePicker ? (
-                <ReferencePicker
-                  onSelect={handleSetReference}
-                  variant="hero"
+              <div className="flex flex-col items-center gap-3">
+                {ReferencePicker ? (
+                  <ReferencePicker
+                    onSelect={handleSetReference}
+                    variant="hero"
+                  />
+                ) : (
+                  <ReferenceEmptyCard onSelect={handleSetReference} />
+                )}
+                <LibraryStatus
+                  progress={libraryProgress}
+                  error={libraryError}
                 />
-              ) : (
-                <ReferenceEmptyCard onSelect={handleSetReference} />
-              )
+              </div>
             )}
           </div>
         </div>

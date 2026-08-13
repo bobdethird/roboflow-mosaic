@@ -13,6 +13,10 @@
 // What the mosaic reproduces is chosen in the browser afterwards — the project
 // cover, or any single image out of the dataset — so the ingest does not build
 // a reference image of its own.
+//
+// Everything written here ends up in one zip that the browser downloads whole
+// (lib/roboflow-pack.ts), which is why the thumbnails are sized for the client
+// rather than for an image CDN.
 
 import { createHash } from "node:crypto"
 import { createWriteStream } from "node:fs"
@@ -29,13 +33,11 @@ import {
   ICON_FILE,
   MANIFEST_FILE,
   datasetSlug,
-  parseDatasetSlug,
   universeUrl,
   type RoboflowDataset,
   type RoboflowRef,
 } from "./roboflow"
 import {
-  RoboflowApiError,
   exportFormats,
   fetchExportLink,
   fetchProjectInfo,
@@ -45,7 +47,6 @@ import {
   blobHasDataset,
   blobHasIcon,
   publishDataset,
-  publishFile,
 } from "./roboflow-blob"
 import { datasetDir, type ProgressReporter } from "./roboflow-store"
 
@@ -57,8 +58,13 @@ const SIG_GRID = 16
 const COARSE_GRID = SIG_GRID >> 1
 const COARSE_VALUES = COARSE_GRID * COARSE_GRID * 3
 
-const THUMB_LONG_EDGE = 384
-const THUMB_QUALITY = 82
+// Thumbnails are the only image the browser ever gets: the whole library ships
+// as one zip and every consumer reads it locally. 192px covers all of them —
+// the mosaic canvas downsamples to 128, and the hover popup shows ~224 CSS px.
+// Going higher multiplies the download for pixels only a retina hover would
+// notice (a 3,995-image dataset: 15 MB at 128, 30 MB at 192, 81 MB at 384).
+const THUMB_LONG_EDGE = 192
+const THUMB_QUALITY = 80
 // Long edge the project cover image is stored at. Matches the mosaic frame in
 // lib/mosaic-bake.ts — the engine never draws the reference bigger than this.
 const ICON_MAX_EDGE = 1600
@@ -352,6 +358,9 @@ export type ManifestPhoto = { id: string; w: number; h: number; file: string }
 export type LibraryResult = {
   photoCount: number
   skipped: number
+  // Manifest version this build stamped. The browser keys its cached copy of
+  // the library on it, so a re-ingest invalidates that copy without a fetch.
+  version: string
 }
 
 // Build the tile library from a directory of images and write it into
@@ -412,9 +421,9 @@ export async function buildLibrary(
     throw new IngestError("None of the dataset's images could be read.")
   }
 
-  await writeLibrary(outputDir, keptPhotos, keptSignatures, report)
+  const version = await writeLibrary(outputDir, keptPhotos, keptSignatures, report)
 
-  return { photoCount: keptPhotos.length, skipped }
+  return { photoCount: keptPhotos.length, skipped, version }
 }
 
 async function writeLibrary(
@@ -422,20 +431,18 @@ async function writeLibrary(
   photos: ManifestPhoto[],
   signatures: Buffer[],
   report: ProgressReporter
-): Promise<void> {
+): Promise<string> {
   report("Writing library", 0, 0)
+  const version = new Date().toISOString()
   await writeFile(
     path.join(outputDir, COARSE_SIGNATURES_FILE),
     Buffer.concat(signatures)
   )
   await writeFile(
     path.join(outputDir, MANIFEST_FILE),
-    JSON.stringify(
-      { version: new Date().toISOString(), photos },
-      null,
-      2
-    )
+    JSON.stringify({ version, photos }, null, 2)
   )
+  return version
 }
 
 // Same outputs as `buildLibrary`, but images are decoded straight from the
@@ -499,9 +506,9 @@ async function buildLibraryFromZip(
     throw new IngestError("None of the dataset's images could be read.")
   }
 
-  await writeLibrary(outputDir, keptPhotos, keptSignatures, report)
+  const version = await writeLibrary(outputDir, keptPhotos, keptSignatures, report)
 
-  return { photoCount: keptPhotos.length, skipped }
+  return { photoCount: keptPhotos.length, skipped, version }
 }
 
 // ─── Orchestration ───────────────────────────────────────────────────────────
@@ -616,52 +623,11 @@ export async function ingestDataset(
       imageCount: result.photoCount,
       universeUrl: universeUrl(resolved.ref),
       hasIcon,
+      libraryVersion: result.version,
     }
   } finally {
     await rm(zipPath, { force: true })
   }
-}
-
-// Fetch just the project's cover image into an already-ingested dataset.
-//
-// Cheap next to a re-ingest — one project-info call and one image download, no
-// export and no zip — so a dataset ingested before covers existed can pick one
-// up on demand instead of being re-downloaded wholesale.
-export async function ensureCover(slug: string): Promise<boolean> {
-  if (await hasIconFile(slug)) return true
-
-  const ref = parseDatasetSlug(slug)
-  if (!ref) throw new IngestError(`Malformed dataset slug: ${slug}`)
-  if (!(await isIngested(slug))) {
-    throw new IngestError("That dataset has not been ingested yet.")
-  }
-
-  let info
-  try {
-    info = await fetchProjectInfo(ref)
-  } catch (error) {
-    // A locally-ingested folder has a slug that looks like a project but is not
-    // one; say so plainly instead of relaying Roboflow's 404 text.
-    if (error instanceof RoboflowApiError && error.status === 404) {
-      throw new IngestError(
-        `${ref.workspace}/${ref.project} is not a Roboflow project, so it has no ` +
-          "cover image. Pick an image from the dataset instead."
-      )
-    }
-    throw error
-  }
-  if (!info.iconUrl) {
-    throw new IngestError(`${info.name} has no cover image on Roboflow.`)
-  }
-  const saved = await downloadIcon(
-    info.iconUrl,
-    path.join(datasetDir(slug), ICON_FILE)
-  )
-  if (!saved) {
-    throw new IngestError("Roboflow's cover image could not be downloaded.")
-  }
-  if (blobEnabled()) await publishFile(slug, datasetDir(slug), ICON_FILE)
-  return true
 }
 
 // Did this ingest save a project cover image?

@@ -22,8 +22,11 @@ export type RoboflowDataset = RoboflowRef & {
   universeUrl: string
   // Whether the project's cover image was fetched during the ingest. Local
   // folder ingests and projects without a cover leave this false, and then the
-  // median is the only reference available.
+  // reference has to come from the dataset's own images.
   hasIcon?: boolean
+  // Manifest version of the built library. The browser caches the downloaded
+  // library archive under it, so a re-ingest is spotted without a fetch.
+  libraryVersion?: string
 }
 
 const ROBOFLOW_HOSTS = new Set([
@@ -128,23 +131,21 @@ export function universeUrl(ref: RoboflowRef & { version: number }): string {
 
 // ─── Client-side URLs for an ingested dataset ────────────────────────────────
 
-export const ROBOFLOW_ASSET_BASE = "/api/roboflow/asset"
+export const ROBOFLOW_PACK_BASE = "/api/roboflow/pack"
 export const ROBOFLOW_INGEST_PATH = "/api/roboflow/ingest"
-export const ROBOFLOW_COVER_PATH = "/api/roboflow/cover"
 
 export const MANIFEST_FILE = "manifest.json"
 export const COARSE_SIGNATURES_FILE = "signatures-coarse.bin"
 // The project's cover image, downloaded from Roboflow during the ingest.
 export const ICON_FILE = "icon.jpg"
 
-export function roboflowAssetUrl(slug: string, path: string): string {
-  const encoded = path
-    .split("/")
-    .map((segment) => encodeURIComponent(segment))
-    .join("/")
-  return `${ROBOFLOW_ASSET_BASE}/${encodeURIComponent(slug)}/${encoded}`
+// The dataset's whole library as one zip. Everything the browser draws comes
+// out of this; see lib/roboflow-pack.ts.
+export function roboflowPackUrl(slug: string): string {
+  return `${ROBOFLOW_PACK_BASE}/${encodeURIComponent(slug)}`
 }
 
+// Path of a thumbnail inside the archive.
 export function roboflowThumbPath(id: string): string {
   return `thumbs/${id}.jpg`
 }

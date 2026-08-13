@@ -87,6 +87,7 @@ async function loadStatus(slug: string): Promise<IngestStatus | null> {
 async function statusFromDisk(slug: string): Promise<IngestStatus | null> {
   if (!(await isIngested(slug))) return null
   let imageCount = 0
+  let libraryVersion: string | undefined
   let name = slug
   try {
     const raw = await readFile(
@@ -99,8 +100,9 @@ async function statusFromDisk(slug: string): Promise<IngestStatus | null> {
       if (published === null) throw error
       return published
     })
-    const manifest = JSON.parse(raw) as { photos?: unknown[] }
+    const manifest = JSON.parse(raw) as { photos?: unknown[]; version?: string }
     imageCount = manifest.photos?.length ?? 0
+    libraryVersion = manifest.version
   } catch {
     // Leave the count at zero; the library load will surface a real failure.
   }
@@ -116,6 +118,7 @@ async function statusFromDisk(slug: string): Promise<IngestStatus | null> {
     imageCount,
     universeUrl: universeUrl({ workspace, project, version }),
     hasIcon: await hasIconFile(slug),
+    libraryVersion,
   }
   return {
     slug,
@@ -126,16 +129,6 @@ async function statusFromDisk(slug: string): Promise<IngestStatus | null> {
     updatedAt: new Date().toISOString(),
     dataset,
   }
-}
-
-// The dataset record in a status.json can predate a feature — an ingest from
-// before cover images were fetched has no `hasIcon` at all. The filesystem is
-// the truth, so re-derive it rather than trusting a stale record.
-async function withIconState(status: IngestStatus): Promise<IngestStatus> {
-  if (status.state !== "ready" || !status.dataset) return status
-  const hasIcon = await hasIconFile(status.slug)
-  if (status.dataset.hasIcon === hasIcon) return status
-  return { ...status, dataset: { ...status.dataset, hasIcon } }
 }
 
 export async function GET(request: Request): Promise<Response> {
@@ -149,7 +142,7 @@ export async function GET(request: Request): Promise<Response> {
   // any other instance should prefer the published copy once it exists.
   if (raw.state === "running" && !isRunning(slug)) {
     const published = await statusFromDisk(slug)
-    if (published) return json(await withIconState(published))
+    if (published) return json(published)
     const stale = Date.now() - Date.parse(raw.updatedAt) > 60_000
     if (stale) {
       return json({
@@ -159,7 +152,7 @@ export async function GET(request: Request): Promise<Response> {
       })
     }
   }
-  return json(await withIconState(raw))
+  return json(raw)
 }
 
 export async function POST(request: Request): Promise<Response> {
@@ -182,7 +175,7 @@ export async function POST(request: Request): Promise<Response> {
       const known = datasetSlug({ ...ref, version: ref.version })
       if (await isIngested(known)) {
         const cached = await loadStatus(known)
-        if (cached?.state === "ready") return json(await withIconState(cached))
+        if (cached?.state === "ready") return json(cached)
       }
     }
 
@@ -195,7 +188,7 @@ export async function POST(request: Request): Promise<Response> {
     }
     if (!body.refresh && (await isIngested(slug))) {
       const cached = await loadStatus(slug)
-      if (cached?.state === "ready") return json(await withIconState(cached))
+      if (cached?.state === "ready") return json(cached)
     }
 
     started = {

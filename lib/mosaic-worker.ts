@@ -26,8 +26,8 @@ const PROGRESS_FRAME_MS = 120
 // Minimum gap between lightweight progress messages. These do not carry a
 // rendered bitmap, so they can be much more frequent than visual snapshots.
 const PROGRESS_EVENT_MS = 33
-// Thumbnail fetches in flight at once. A high fan-out hides per-request latency
-// against the local asset route — the main lever that keeps generation fast.
+// Tile reads in flight at once. These resolve against object urls into the
+// already-downloaded library, so this is really a decode fan-out.
 const FETCH_CONCURRENCY = 48
 // Cap on the cross-generate decoded-tile cache. Bitmaps are ~BASE_TILE_MAX, so
 // ~50 KB each; this bounds worst-case memory while comfortably covering a single
@@ -310,12 +310,11 @@ function pruneTileCache() {
   }
 }
 
-// Fetch + decode one tile's thumbnail at cell resolution, returning a cached
-// bitmap when available. Thumbnails come through the app's mosaic proxy route,
-// which now marks them immutable, so `cache: "force-cache"` serves repeat fetches
-// straight from the browser HTTP cache with no network round-trip — no separate
-// Cache Storage layer (whose per-tile reads/writes serialized on a shared lock
-// and grew slower as the backlog built up) is needed.
+// Decode one tile's thumbnail at cell resolution, returning a cached bitmap
+// when available. `entry.url` is an object url into the library archive the
+// page already downloaded, so this never touches the network and the only real
+// cost is the JPEG decode — which is why the decoded bitmaps get their own
+// cross-generate cache below.
 async function decodeTile(id: string): Promise<ImageBitmap | undefined> {
   const hit = cacheGet(id)
   if (hit) return hit
@@ -325,7 +324,7 @@ async function decodeTile(id: string): Promise<ImageBitmap | undefined> {
   const rw = Math.max(1, Math.round(entry.w * scale))
   const rh = Math.max(1, Math.round(entry.h * scale))
   try {
-    const res = await fetch(entry.url, { cache: "force-cache" })
+    const res = await fetch(entry.url)
     if (!res.ok) return undefined
     const blob = await res.blob()
     const bmp = await createImageBitmap(blob, {

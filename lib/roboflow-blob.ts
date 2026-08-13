@@ -2,27 +2,28 @@
 //
 // The library is built on local disk the same way it always was. A Vercel
 // instance cannot keep that directory, so the finished library is packed into
-// one zip and uploaded once. The next instance that needs a file downloads
-// that zip into its own cache directory and serves from there — ingest stays
-// a single upload instead of one HTTP PUT per thumbnail.
+// one zip and uploaded once — a single PUT, not one per thumbnail.
+//
+// Nothing downloads that zip back onto a server. The browser fetches it whole
+// from the Blob CDN and reads every tile out of it locally (lib/roboflow-pack.ts),
+// so no instance ever needs the dataset on disk except the one that built it.
 
 import { head, put } from "@vercel/blob"
 import { createReadStream, createWriteStream } from "node:fs"
-import { mkdir, readdir, readFile, rm, stat } from "node:fs/promises"
+import { readdir, readFile, rm } from "node:fs/promises"
 import path from "node:path"
 import { Readable } from "node:stream"
-import { pipeline } from "node:stream/promises"
-import yauzl from "yauzl"
 import { ZipFile } from "yazl"
 
 import { ICON_FILE, MANIFEST_FILE, type IngestStatus } from "./roboflow"
-import { STATUS_FILE, datasetDir, type ProgressReporter } from "./roboflow-store"
+import { STATUS_FILE, type ProgressReporter } from "./roboflow-store"
 
 const PREFIX = "roboflow"
 export const ARCHIVE_FILE = "library.zip"
 const META_FILE = "published.json"
 
-// Thumbnails are already JPEG; deflating them only burns CPU.
+// Short: a re-ingest overwrites these keys in place, and the browser keeps its
+// own copy of the archive keyed by library version anyway.
 const STORE_MAX_AGE = 60
 
 const SKIP_DIRS = new Set(["source"])
@@ -55,6 +56,20 @@ export async function blobHasFile(
 
 export function blobHasDataset(slug: string): Promise<boolean> {
   return blobHasFile(slug, ARCHIVE_FILE)
+}
+
+// Public CDN url of a published file, or null if it was never published. The
+// pack route hands this straight to the browser as a redirect, so the bytes
+// never pass through a function.
+export async function blobUrl(
+  slug: string,
+  relativePath: string
+): Promise<string | null> {
+  try {
+    return (await head(blobKey(slug, relativePath))).url
+  } catch {
+    return null
+  }
 }
 
 export async function blobHasIcon(slug: string): Promise<boolean> {
@@ -127,6 +142,17 @@ async function libraryFiles(directory: string): Promise<string[]> {
   return files
 }
 
+// Thumbnails are already JPEG; deflating them only burns CPU, so entries go in
+// stored. That also makes the archive cheap for the browser to unpack.
+function addAll(zipfile: ZipFile, directory: string, files: string[]): void {
+  for (const relative of files) {
+    zipfile.addFile(path.join(directory, relative), relative, {
+      compress: false,
+    })
+  }
+  zipfile.end()
+}
+
 function packZip(
   directory: string,
   files: string[],
@@ -140,115 +166,26 @@ function packZip(
     output.on("close", resolve)
     output.on("error", reject)
     zipfile.outputStream.on("error", reject)
-
-    for (let i = 0; i < files.length; i++) {
-      zipfile.addFile(path.join(directory, files[i]), files[i], {
-        compress: false,
-      })
-      report("Packing library", i + 1, files.length)
-    }
-    zipfile.end()
+    report("Packing library", 0, files.length)
+    addAll(zipfile, directory, files)
   })
 }
 
-function openZip(file: string): Promise<yauzl.ZipFile> {
-  return new Promise((resolve, reject) => {
-    yauzl.open(file, { lazyEntries: true, autoClose: true }, (error, zip) => {
-      if (error || !zip) {
-        reject(error ?? new Error("Could not open the library archive."))
-      } else resolve(zip)
-    })
-  })
-}
-
-async function extractZip(zipPath: string, destination: string): Promise<void> {
-  await mkdir(destination, { recursive: true })
-  const zip = await openZip(zipPath)
-
-  await new Promise<void>((resolve, reject) => {
-    zip.on("entry", (entry: yauzl.Entry) => {
-      const relative = entry.fileName.replace(/\\/g, "/")
-      if (
-        entry.fileName.endsWith("/") ||
-        relative.includes("..") ||
-        path.isAbsolute(relative)
-      ) {
-        zip.readEntry()
-        return
-      }
-      zip.openReadStream(entry, (error, stream) => {
-        if (error || !stream) {
-          reject(error ?? new Error(`Could not read ${entry.fileName}`))
-          return
-        }
-        const target = path.join(destination, ...relative.split("/"))
-        void mkdir(path.dirname(target), { recursive: true })
-          .then(() => pipeline(stream, createWriteStream(target)))
-          .then(() => zip.readEntry())
-          .catch(reject)
-      })
-    })
-    zip.on("end", resolve)
-    zip.on("error", reject)
-    zip.readEntry()
-  })
-}
-
-async function downloadBlob(slug: string, relativePath: string, destination: string) {
-  const meta = await head(blobKey(slug, relativePath))
-  const response = await fetch(meta.url, { cache: "no-store" })
-  if (!response.ok || !response.body) {
-    throw new Error(`Downloading ${relativePath} failed (${response.status}).`)
-  }
-  await pipeline(
-    Readable.fromWeb(response.body as Parameters<typeof Readable.fromWeb>[0]),
-    createWriteStream(destination)
-  )
-}
-
-async function hasLocalLibrary(slug: string): Promise<boolean> {
-  try {
-    const dir = datasetDir(slug)
-    await stat(path.join(dir, MANIFEST_FILE))
-    const thumbs = await readdir(path.join(dir, "thumbs"))
-    return thumbs.length > 0
-  } catch {
-    return false
-  }
-}
-
-const hydrating = new Map<string, Promise<void>>()
-
-async function hydrate(slug: string): Promise<void> {
-  const dir = datasetDir(slug)
-  await mkdir(dir, { recursive: true })
-  const zipPath = path.join(dir, ARCHIVE_FILE)
-  try {
-    await downloadBlob(slug, ARCHIVE_FILE, zipPath)
-    await extractZip(zipPath, dir)
-  } finally {
-    await rm(zipPath, { force: true })
-  }
-  if (await blobHasFile(slug, ICON_FILE)) {
-    await downloadBlob(slug, ICON_FILE, path.join(dir, ICON_FILE))
-  }
-}
-
-// Make sure this instance has the dataset on disk, downloading the published
-// archive if this process did not run the ingest.
-export async function ensureLocalDataset(slug: string): Promise<void> {
-  if (!blobEnabled()) return
-  if (await hasLocalLibrary(slug)) return
-  const pending = hydrating.get(slug)
-  if (pending) {
-    await pending
-    return
-  }
-  const job = hydrate(slug).finally(() => {
-    if (hydrating.get(slug) === job) hydrating.delete(slug)
-  })
-  hydrating.set(slug, job)
-  await job
+// The archive as a stream, built on the fly from a dataset directory. Used by
+// the pack route when there is no Blob store to redirect the browser to, which
+// is the normal case in local development.
+export async function libraryArchiveStream(
+  directory: string
+): Promise<ReadableStream<Uint8Array> | null> {
+  const files = await libraryFiles(directory)
+  if (!files.length) return null
+  const zipfile = new ZipFile()
+  addAll(zipfile, directory, files)
+  // @types/yazl declares outputStream as the minimal NodeJS.ReadableStream; it
+  // is a stream.PassThrough at runtime, which is what toWeb needs.
+  return Readable.toWeb(
+    zipfile.outputStream as Readable
+  ) as ReadableStream<Uint8Array>
 }
 
 export async function publishFile(
