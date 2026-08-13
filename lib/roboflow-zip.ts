@@ -48,7 +48,7 @@ const DIRECTORY_WINDOW = 4 * 1024 * 1024
 // held while the entries inside it are decoded: this times the read concurrency,
 // and nothing to do with how large the export is. Bigger windows mean fewer
 // requests for the same bytes, which stops mattering well below this size.
-const READ_WINDOW = 4 * 1024 * 1024
+export const READ_WINDOW = 4 * 1024 * 1024
 const MERGE_GAP = 128 * 1024
 // The local header repeats the entry name and may carry a different extra
 // field than the central directory did, so a coalesced read leaves this much

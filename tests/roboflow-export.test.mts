@@ -31,6 +31,7 @@ import { libraryArchiveStream } from "../lib/roboflow-blob"
 import { unpackArchive } from "../lib/roboflow-pack"
 import {
   EvenSample,
+  READ_WINDOW,
   readZipEntries,
   readZipIndex,
   streamZipEntries,
@@ -86,12 +87,19 @@ async function exportZip(count: number): Promise<Fixture> {
   return { zip: Buffer.concat(chunks), images }
 }
 
-type Host = { url: string; requests: () => number; close: () => Promise<void> }
+type Host = {
+  url: string
+  requests: () => number
+  // Length of every ranged read, in request order.
+  reads: () => number[]
+  close: () => Promise<void>
+}
 
 // Serves one buffer. `ranges: false` is a host that answers every request with
 // the whole body, which is what the sequential fallback exists for.
 async function serve(body: Buffer, ranges = true): Promise<Host> {
   let requests = 0
+  const reads: number[] = []
   const server: Server = createServer((request, response) => {
     requests += 1
     const header = ranges ? request.headers.range : undefined
@@ -115,6 +123,7 @@ async function serve(body: Buffer, ranges = true): Promise<Host> {
       ? Math.min(body.length - 1, rawEnd ? Number(rawEnd) : body.length - 1)
       : body.length - 1
     const slice = body.subarray(start, end + 1)
+    reads.push(slice.length)
     response.writeHead(206, {
       "content-type": "application/zip",
       "content-length": String(slice.length),
@@ -128,6 +137,7 @@ async function serve(body: Buffer, ranges = true): Promise<Host> {
   return {
     url: `http://127.0.0.1:${address.port}/export.zip`,
     requests: () => requests,
+    reads: () => reads,
     close: () =>
       new Promise<void>((resolve, reject) =>
         server.close((error) => (error ? reject(error) : resolve()))
@@ -201,6 +211,70 @@ test("indexed entries read back byte for byte, stored or deflated", async () => 
     for (const [name, bytes] of fixture.images) {
       assert.ok(seen.get(name)?.equals(bytes), `${name} did not round-trip`)
     }
+  } finally {
+    await host.close()
+  }
+})
+
+// An export several read windows long, out of images too noisy to compress. The
+// point is the total size, so these are bigger and fewer than the other fixture.
+async function bulkyExportZip(count: number, edge: number): Promise<Fixture> {
+  const zipfile = new ZipFile()
+  const images = new Map<string, Buffer>()
+  const chunks: Buffer[] = []
+  const done = new Promise<void>((resolve, reject) => {
+    zipfile.outputStream.on("data", (chunk: Buffer) => chunks.push(chunk))
+    zipfile.outputStream.on("end", resolve)
+    zipfile.outputStream.on("error", reject)
+  })
+  for (let index = 0; index < count; index++) {
+    const name = `train/bulky-${String(index).padStart(4, "0")}.jpg`
+    const bytes = await sharp(randomBytes(edge * edge * 3), {
+      raw: { width: edge, height: edge, channels: 3 },
+    })
+      .jpeg({ quality: 92 })
+      .toBuffer()
+    images.set(name, bytes)
+    zipfile.addBuffer(bytes, name, { compress: false })
+  }
+  zipfile.end()
+  await done
+  return { zip: Buffer.concat(chunks), images }
+}
+
+test("an export many times a read window long is still read one window at a time", async () => {
+  // ~12 MB of images, so several windows' worth however they are grouped.
+  const fixture = await bulkyExportZip(24, 800)
+  assert.ok(
+    fixture.zip.length > 2 * READ_WINDOW,
+    `fixture was only ${fixture.zip.length} bytes`
+  )
+  const host = await serve(fixture.zip)
+  try {
+    const index = await readZipIndex(host.url, { maxEntries: 1000 })
+    assert.ok(index)
+    let seen = 0
+    await readZipEntries(
+      host.url,
+      index.entries,
+      async (entry, bytes) => {
+        assert.ok(fixture.images.get(entry.name)?.equals(bytes))
+        seen += 1
+      },
+      { concurrency: 3 }
+    )
+    assert.equal(seen, fixture.images.size)
+
+    // What the reader holds is a window per worker, so no single read may exceed
+    // one — that, and not the export's size, is the ingest's memory footprint.
+    // A dense export is read in several windows rather than one large range.
+    const reads = host.reads()
+    const biggest = Math.max(...reads)
+    assert.ok(biggest <= READ_WINDOW, `one read was ${biggest} bytes`)
+    assert.ok(
+      reads.filter((length) => length > READ_WINDOW / 2).length >= 2,
+      `reads were ${reads.join(", ")}`
+    )
   } finally {
     await host.close()
   }
