@@ -1,19 +1,8 @@
 "use client"
 
 import * as React from "react"
-import Link from "next/link"
 import { track } from "@vercel/analytics"
-import {
-  ArrowRight,
-  Check,
-  Copy,
-  Download,
-  Lock,
-  Maximize2,
-  PanelRight,
-  Share2,
-  X,
-} from "lucide-react"
+import { Download, Maximize2, PanelRight } from "lucide-react"
 
 import { type LibraryItem } from "@/lib/tile-library"
 import { type MosaicSource } from "@/lib/mosaic-source"
@@ -24,15 +13,9 @@ import {
   makeReferenceFromFile,
   type ReferenceImage,
 } from "@/components/reference-image"
-// The NYC-mosaic invites (mobile shortcut + sidebar "contribute…") now link to
-// the /newyork-mosaic page's in-page upload flow instead of the Google Form.
-// import { NewYorkMosaicFormLink } from "@/components/new-york-mosaic-form-link"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { buildMosaicHitMap } from "@/lib/mosaic-hitmap"
 import {
   buildMosaicGeometry,
-  encodeGeometry,
   type MosaicGeometry,
 } from "@/lib/mosaic-geometry"
 import { MosaicZoomViewer } from "@/components/mosaic-zoom-viewer"
@@ -50,7 +33,6 @@ import {
 } from "@/components/ui/sidebar"
 import { Slider } from "@/components/ui/slider"
 import { MosaicEngine } from "@/lib/mosaic-client"
-import type { TileWeighting } from "@/lib/mosaic-protocol"
 import {
   averageColor,
   edgeVectorField,
@@ -84,7 +66,6 @@ type ResolutionMode = keyof typeof RESOLUTION_MODES
 
 const RESOLUTION_MODE_ORDER: ResolutionMode[] = ["low", "medium", "high"]
 const MOSAIC_GENERATE_BUTTON_EVENT = "Mosaic Generate Button Clicked"
-const MOSAIC_SHARE_BUTTON_EVENT = "Mosaic Share Button Clicked"
 
 type MosaicActionSource = "desktop-sidebar" | "mobile-bottom-bar"
 
@@ -163,9 +144,6 @@ function MosaicActionControls({
   generateDisabled,
   onDownload,
   showSave = true,
-  showPublish = false,
-  onPublish,
-  isPublishing = false,
   className,
 }: {
   collection: string
@@ -179,11 +157,6 @@ function MosaicActionControls({
   generateDisabled: boolean
   onDownload: () => void
   showSave?: boolean
-  // Whether to surface the "Publish & share" action (shown once a mosaic
-  // exists). Open to everyone; the share route enforces the rate limits.
-  showPublish?: boolean
-  onPublish?: (source: MosaicActionSource) => void
-  isPublishing?: boolean
   className?: string
 }) {
   return (
@@ -236,16 +209,6 @@ function MosaicActionControls({
           Save image
         </Button>
       )}
-      {showPublish && hasMosaic && (
-        <Button
-          variant="outline"
-          onClick={() => void onPublish?.(source)}
-          disabled={isGenerating || isPublishing}
-        >
-          <Share2 />
-          {isPublishing ? "Publishing…" : "Publish & share"}
-        </Button>
-      )}
     </div>
   )
 }
@@ -287,42 +250,20 @@ function MobileActionBar({
     )
   }
 
-  // "Publish & share" rides in the mobile bottom bar too. When it's shown,
-  // Save collapses to a compact icon button to make room beside it. The stacked
-  // controls above suppress their own publish button so it isn't duplicated.
-  const showPublish =
-    Boolean(controls.showPublish) && Boolean(controls.hasMosaic)
-
   return (
     <div className="fixed inset-x-3 bottom-[calc(env(safe-area-inset-bottom,0px)+0.75rem)] z-30 flex flex-col gap-2 rounded-2xl border bg-background/95 p-3 shadow-lg backdrop-blur sm:inset-x-4">
-      <MosaicActionControls
-        {...controls}
-        showSave={false}
-        showPublish={false}
-      />
+      <MosaicActionControls {...controls} showSave={false} />
       <div className="flex gap-2">
         {controls.hasMosaic && (
           <Button
             variant="outline"
-            size={showPublish ? "icon" : "default"}
             aria-label="Save image"
-            className={showPublish ? "shrink-0" : "flex-1"}
+            className="flex-1"
             onClick={() => void controls.onDownload()}
             disabled={controls.isGenerating}
           >
             <Download />
-            {!showPublish && "Save"}
-          </Button>
-        )}
-        {showPublish && (
-          <Button
-            variant="outline"
-            className="flex-1"
-            onClick={() => void controls.onPublish?.("mobile-bottom-bar")}
-            disabled={controls.isGenerating || controls.isPublishing}
-          >
-            <Share2 />
-            {controls.isPublishing ? "Publishing…" : "Publish"}
+            Save
           </Button>
         )}
         <Button
@@ -389,19 +330,6 @@ function SidebarExpandableControls({
   )
 }
 
-// Era-emphasis controls (opt-in via the `eraEmphasis` prop, used by the knicks
-// collection whose tiles carry a `takenAt` date). The matcher divides color
-// error by a per-tile weight = 1 + recency·2^(-ageMonths/halfLife) + playoff,
-// so these tilt selection toward recent / playoff photos without overriding a
-// genuinely good color match. Both at 0 ⇒ unbiased (original) matching.
-const RECENCY_STRENGTH_MAX = 3
-const RECENCY_STRENGTH_DEFAULT = 1
-const PLAYOFF_BOOST_MAX = 4
-const PLAYOFF_BOOST_DEFAULT = 1.5
-const RECENCY_HALF_LIFE_MONTHS = 18
-// Years whose April–June window counts as "playoffs" for the playoff boost.
-const PLAYOFF_YEARS = [2025, 2026]
-
 // Largest the displayed mosaic may grow vertically (portrait refs). On desktop,
 // landscape refs are usually limited by MOSAIC_CENTER_COLUMN_MAX instead.
 const MOSAIC_VIEWPORT_HEIGHT_PCT = 85
@@ -442,10 +370,6 @@ type CachedMosaicBase = {
   // Per-generated-mosaic source-photo reuse cap used for this render. A changed
   // cap means the baked image and assignment map should regenerate.
   maxTileReuse?: number
-  // Era-emphasis slider positions this render was generated with, so a restored
-  // mosaic shows the controls in the state that produced it.
-  recencyStrength?: number
-  playoffBoost?: number
 }
 
 type CachedMosaic =
@@ -605,196 +529,15 @@ function canvasToBlob(canvas: HTMLCanvasElement): Promise<Blob | null> {
   return new Promise((resolve) => canvas.toBlob(resolve, "image/png"))
 }
 
-// Sharing: the published composite is a JPEG (no alpha — the canvas already has
-// the grout painted, so it's opaque), downscaled so links stay light. The hover
-// hit-map is resolution-independent, so the image scale and the map are decoupled.
-const SHARE_LONG_EDGE = 1200
-const SHARE_JPEG_QUALITY = 0.85
-const SHARE_HIT_CELL_PX = 22
-
-function canvasToShareImage(
-  canvas: HTMLCanvasElement
-): Promise<{ blob: Blob; w: number; h: number } | null> {
-  const scale = Math.min(
-    1,
-    SHARE_LONG_EDGE / Math.max(canvas.width, canvas.height)
-  )
-  const w = Math.max(1, Math.round(canvas.width * scale))
-  const h = Math.max(1, Math.round(canvas.height * scale))
-  let source: HTMLCanvasElement = canvas
-  if (scale < 1) {
-    const off = document.createElement("canvas")
-    off.width = w
-    off.height = h
-    const ctx = off.getContext("2d")
-    if (!ctx) return Promise.resolve(null)
-    ctx.drawImage(canvas, 0, 0, w, h)
-    source = off
-  }
-  return new Promise((resolve) =>
-    source.toBlob(
-      (b) => resolve(b ? { blob: b, w, h } : null),
-      "image/jpeg",
-      SHARE_JPEG_QUALITY
-    )
-  )
-}
-
-// Result dialog for the admin Publish action: the live share link with copy /
-// open / native-share, or the error if publishing failed.
-function ShareResultDialog({
-  url,
-  error,
-  onClose,
-}: {
-  url: string | null
-  error: string | null
-  onClose: () => void
-}) {
-  const [copied, setCopied] = React.useState(false)
-  const canNativeShare =
-    typeof navigator !== "undefined" && typeof navigator.share === "function"
-
-  const copy = React.useCallback(async () => {
-    if (!url) return
-    try {
-      await navigator.clipboard.writeText(url)
-      setCopied(true)
-      window.setTimeout(() => setCopied(false), 1500)
-    } catch {
-      // Clipboard can be blocked; the user can still select the field manually.
-    }
-  }, [url])
-
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
-      onClick={onClose}
-    >
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-label="Share mosaic"
-        className="w-full max-w-md rounded-2xl border bg-background p-5 shadow-xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="mb-3 flex items-start justify-between gap-3">
-          <h2 className="text-base font-semibold">
-            {error ? "Couldn’t publish" : "Mosaic published"}
-          </h2>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            aria-label="Close"
-            onClick={onClose}
-          >
-            <X />
-          </Button>
-        </div>
-
-        {error ? (
-          <p className="text-sm text-destructive">{error}</p>
-        ) : (
-          <div className="flex flex-col gap-3">
-            <p className="text-sm text-muted-foreground">
-              Anyone with this link can view your mosaic.
-            </p>
-            <div className="flex gap-2">
-              <Input
-                readOnly
-                value={url ?? ""}
-                onFocus={(e) => e.currentTarget.select()}
-                className="font-mono text-xs"
-                aria-label="Share link"
-              />
-              <Button type="button" onClick={() => void copy()}>
-                {copied ? <Check /> : <Copy />}
-                {copied ? "Copied" : "Copy"}
-              </Button>
-            </div>
-            <div className="flex gap-2">
-              <Button asChild variant="outline" className="flex-1">
-                <a href={url ?? "#"} target="_blank" rel="noopener noreferrer">
-                  Open
-                </a>
-              </Button>
-              {canNativeShare && (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  className="flex-1"
-                  onClick={() => {
-                    track(MOSAIC_SHARE_BUTTON_EVENT, {
-                      button: "native-share",
-                    })
-                    void navigator.share?.({ url: url ?? "" })
-                  }}
-                >
-                  <Share2 />
-                  Share…
-                </Button>
-              )}
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  )
-}
-
-// Shown when publishing is temporarily unavailable — the per-IP or global
-// hourly cap tripped, or sharing isn't configured on this deployment. A soft
-// "try again shortly" notice rather than a hard error.
-function ShareCapacityDialog({ onClose }: { onClose: () => void }) {
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
-      onClick={onClose}
-    >
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-label="Sharing temporarily unavailable"
-        className="w-full max-w-md rounded-2xl border bg-background p-5 shadow-xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="mb-3 flex items-start justify-between gap-3">
-          <h2 className="text-base font-semibold">High demand</h2>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            aria-label="Close"
-            onClick={onClose}
-          >
-            <X />
-          </Button>
-        </div>
-        <p className="text-sm text-muted-foreground">
-          sorry we are experiencing high demand at this moment, this feature is
-          currently disabled. please try again shortly!
-        </p>
-      </div>
-    </div>
-  )
-}
-
 type CanvasHeroProps = {
-  // Where the tiles come from — a Supabase collection or an ingested Roboflow
-  // dataset. The parent remounts CanvasHero (via `key={collection.id}`) when
-  // this changes, so all state resets per collection.
+  // Where the tiles come from — an ingested Roboflow dataset, wrapped as a
+  // MosaicSource. The parent remounts CanvasHero (via `key={collection.id}`)
+  // when this changes, so all state resets per collection.
   //
   // Must be referentially stable: it is an effect dependency, so a client
   // component building one inline has to `useMemo` it or the library will
   // reload on every render.
   collection: MosaicSource
-  // Switch to the other collection. Optional: when omitted (e.g. a standalone
-  // single-collection page), the "switch to …" control is hidden entirely.
-  onSwitchBucket?: () => void
-  // Label of the collection `onSwitchBucket` moves to. Only used when that
-  // callback is supplied.
-  switchLabel?: string
   // Rendered in the top row, beside the controls-sidebar toggle. The Roboflow
   // page puts its dataset input here so there is one header, not two.
   topBarSlot?: React.ReactNode
@@ -807,17 +550,11 @@ type CanvasHeroProps = {
     onSelect: (file: File) => void
     variant: "hero" | "panel"
   }>
-  // True when the collection the switch points to is password-gated and not yet
-  // unlocked, so the link shows a lock hint (the parent prompts on click).
-  switchLocked?: boolean
   // Optional cap on how many cells a single library photo may occupy in one
   // generated mosaic.
   maxTileReuse?: number
   // Smaller cells create a higher-resolution mosaic at a higher generation cost.
   minCellSize?: number
-  // Enable the recency/playoff emphasis controls + match bias. Only meaningful
-  // for collections whose tiles carry a `takenAt` date (the knicks library).
-  eraEmphasis?: boolean
   // Hide the intro heading and description for standalone pages that only need
   // the controls and mosaic canvas.
   hideIntroCopy?: boolean
@@ -827,14 +564,10 @@ type CanvasHeroProps = {
 
 export function CanvasHero({
   collection,
-  onSwitchBucket,
-  switchLabel,
   referencePicker: ReferencePicker,
   topBarSlot,
-  switchLocked = false,
   maxTileReuse,
   minCellSize = DENSITY_MIN,
-  eraEmphasis = false,
   hideIntroCopy = false,
   hideCollectionLabel = false,
 }: CanvasHeroProps) {
@@ -848,12 +581,6 @@ export function CanvasHero({
   const [density, setDensity] = React.useState(() =>
     densityForResolution(RESOLUTION_MODES.medium, densityMin)
   )
-  // Era-emphasis strengths (knicks only). Default to a gentle tilt so the bias
-  // is visible out of the box; the user can drag either to 0 to compare.
-  const [recencyStrength, setRecencyStrength] = React.useState(
-    RECENCY_STRENGTH_DEFAULT
-  )
-  const [playoffBoost, setPlayoffBoost] = React.useState(PLAYOFF_BOOST_DEFAULT)
   const [showAdvanced, setShowAdvanced] = React.useState(false)
   const [generateProgress, setGenerateProgress] = React.useState<{
     done: number
@@ -872,13 +599,6 @@ export function CanvasHero({
   const [fullHoverTileKey, setFullHoverTileKey] = React.useState<string | null>(
     null
   )
-  // "Publish & share" state.
-  const [isPublishing, setIsPublishing] = React.useState(false)
-  const [shareUrl, setShareUrl] = React.useState<string | null>(null)
-  const [shareError, setShareError] = React.useState<string | null>(null)
-  // Shown when publishing is temporarily unavailable (per-IP / global hourly
-  // cap tripped, or sharing not configured) — a soft "try again" notice.
-  const [shareCapacityNotice, setShareCapacityNotice] = React.useState(false)
 
   const mosaicCanvasRef = React.useRef<HTMLCanvasElement | null>(null)
   const bgColorRef = React.useRef<string>("#ffffff")
@@ -910,15 +630,6 @@ export function CanvasHero({
   React.useEffect(() => {
     densityRef.current = density
   }, [density])
-  // Mirror the emphasis sliders into refs for the same reason.
-  const recencyStrengthRef = React.useRef(recencyStrength)
-  const playoffBoostRef = React.useRef(playoffBoost)
-  React.useEffect(() => {
-    recencyStrengthRef.current = recencyStrength
-  }, [recencyStrength])
-  React.useEffect(() => {
-    playoffBoostRef.current = playoffBoost
-  }, [playoffBoost])
 
   const targetProgressPct =
     generateProgress && generateProgress.total > 0
@@ -947,10 +658,9 @@ export function CanvasHero({
   // Monotonic token so a superseded generate is discarded.
   const generateTokenRef = React.useRef(0)
 
-  // Spin up the mosaic worker once on mount and hydrate it with the shared photo
-  // library from Supabase (signatures + thumbnail URLs). The worker owns tile
-  // matching and base-canvas rendering off the main thread, fetching thumbnails
-  // lazily for placed tiles.
+  // Spin up the mosaic worker once on mount and hydrate it with the tile library
+  // (signatures + thumbnail URLs). The worker owns matching and base-canvas
+  // rendering off the main thread, fetching thumbnails lazily for placed tiles.
   React.useEffect(() => {
     let cancelled = false
     const engine = new MosaicEngine()
@@ -998,14 +708,6 @@ export function CanvasHero({
             densityMin
           )
         )
-        if (eraEmphasis) {
-          if (typeof cached.recencyStrength === "number") {
-            setRecencyStrength(cached.recencyStrength)
-          }
-          if (typeof cached.playoffBoost === "number") {
-            setPlayoffBoost(cached.playoffBoost)
-          }
-        }
         setHoveredTile(null)
 
         if (stale) {
@@ -1027,7 +729,7 @@ export function CanvasHero({
     return () => {
       cancelled = true
     }
-  }, [collection, maxTileReuse, densityMin, eraEmphasis])
+  }, [collection, maxTileReuse, densityMin])
 
   const referenceRef = React.useRef<ReferenceImage | null>(null)
   React.useEffect(() => {
@@ -1056,16 +758,12 @@ export function CanvasHero({
     hoveredTileKey !== null && fullHoverTileKey === hoveredTileKey
 
   // Resolve a library id into the GalleryTile shown in hover/zoom. Shared by the
-  // publish hit-map, the published zoom geometry, and the live zoom overlay so
-  // all three point at identical urls.
+  // zoom geometry and the live zoom overlay so both point at identical urls.
   const resolveTile = React.useCallback(
     (id: string): GalleryTile => {
       const item = libraryById.get(id)
-      return {
-        url: item?.fullUrl ?? item?.url ?? collection.thumbUrl(id),
-        previewUrl: item?.url ?? collection.thumbUrl(id),
-        title: item?.galleryTitle ?? item?.gallery ?? id,
-      }
+      const url = item?.url ?? collection.thumbUrl(id)
+      return { url, previewUrl: url, title: id }
     },
     [libraryById, collection]
   )
@@ -1182,16 +880,6 @@ export function CanvasHero({
         canvasW,
         canvasH
       )
-      // Era bias is opt-in (knicks). Build it from the live slider refs so the
-      // matcher favors recent/playoff tiles; omitted entirely otherwise.
-      const weighting: TileWeighting | undefined = eraEmphasis
-        ? {
-            recencyStrength: recencyStrengthRef.current,
-            playoffBoost: playoffBoostRef.current,
-            recencyHalfLifeMonths: RECENCY_HALF_LIFE_MONTHS,
-            playoffYears: PLAYOFF_YEARS,
-          }
-        : undefined
       const { assignment, base } = await engine.generate(
         cellSigs,
         grid,
@@ -1213,7 +901,7 @@ export function CanvasHero({
           if (token !== generateTokenRef.current) return
           setGenerateProgress({ done: doneCells, total: totalCells })
         },
-        { maxTileReuse, weighting }
+        { maxTileReuse }
       )
       if (token !== generateTokenRef.current) {
         base.close()
@@ -1262,10 +950,6 @@ export function CanvasHero({
               savedAt: Date.now(),
               libraryVersion: libraryVersionRef.current,
               maxTileReuse,
-              recencyStrength: eraEmphasis
-                ? recencyStrengthRef.current
-                : undefined,
-              playoffBoost: eraEmphasis ? playoffBoostRef.current : undefined,
             })
           } catch {
             // Quota/private-mode failures should not block the generated mosaic.
@@ -1280,7 +964,7 @@ export function CanvasHero({
         setGenerateProgress(null)
       }
     }
-  }, [collection, maxTileReuse, eraEmphasis])
+  }, [collection, maxTileReuse])
 
   // Export the current mosaic canvas as a downloaded PNG. The canvas is never
   // tainted (tiles are fetched with CORS — the same toBlob path backs the
@@ -1304,81 +988,6 @@ export function CanvasHero({
       // Download is best-effort; failure leaves the on-screen mosaic intact.
     }
   }, [hasMosaic, reference, collection])
-
-  // Publish the current mosaic to a shareable /m/<id> link. Builds the same
-  // hover hit-map the gallery uses, captures the canvas as a JPEG, and posts
-  // both to the share route, which persists them and returns the link.
-  const handlePublish = React.useCallback(async (source: MosaicActionSource) => {
-    const canvas = mosaicCanvasRef.current
-    const map = tileMap
-    const fr = frame
-    if (!canvas || !map || !fr || !hasMosaic || isPublishing) return
-    track(MOSAIC_SHARE_BUTTON_EVENT, {
-      button: "publish",
-      collection: collection.id,
-      source,
-    })
-    setIsPublishing(true)
-    setShareError(null)
-    setShareUrl(null)
-    setShareCapacityNotice(false)
-    try {
-      const hit = buildMosaicHitMap({
-        frameW: fr.w,
-        frameH: fr.h,
-        centers: map.centers,
-        assignment: map.assignment,
-        tileIds: map.tileIds,
-        hitCellPx: SHARE_HIT_CELL_PX,
-        resolveTile,
-      })
-      const shot = await canvasToShareImage(canvas)
-      if (!shot) throw new Error("Could not capture the mosaic image.")
-
-      const fd = new FormData()
-      fd.append("image", shot.blob, "mosaic.jpg")
-      fd.append("tilemap", JSON.stringify({ w: shot.w, h: shot.h, ...hit }))
-      // Per-tile zoom geometry. Resolution-independent (frame coords), so the
-      // downscaled share image and the geometry stay decoupled. Omitted when an
-      // older cached mosaic lacks angles — it still publishes + hovers.
-      if (map.angles && map.tileSize) {
-        const geometry = buildMosaicGeometry({
-          frameW: fr.w,
-          frameH: fr.h,
-          tileSize: map.tileSize,
-          centers: map.centers,
-          angles: map.angles,
-          assignment: map.assignment,
-          tileIds: map.tileIds,
-          resolveTile,
-        })
-        fd.append("geometry", JSON.stringify(encodeGeometry(geometry)))
-      }
-      fd.append("collection", collection.id)
-      fd.append("w", String(shot.w))
-      fd.append("h", String(shot.h))
-
-      const res = await fetch("/api/mosaic/share", {
-        method: "POST",
-        body: fd,
-      })
-      // 429 (per-IP or global hourly cap) and 503 (capacity / not configured)
-      // are temporary: show the soft "high demand" notice, not a hard error.
-      if (res.status === 429 || res.status === 503) {
-        setShareCapacityNotice(true)
-        return
-      }
-      if (!res.ok) {
-        throw new Error(`Publish failed (${res.status}).`)
-      }
-      const { url } = (await res.json()) as { url: string }
-      setShareUrl(new URL(url, window.location.origin).toString())
-    } catch (err) {
-      setShareError(err instanceof Error ? err.message : "Publish failed.")
-    } finally {
-      setIsPublishing(false)
-    }
-  }, [tileMap, frame, hasMosaic, isPublishing, collection, resolveTile])
 
   React.useEffect(() => {
     if (!restoredMosaicUrl || !frame) return
@@ -1459,8 +1068,8 @@ export function CanvasHero({
         id,
         hoverSerial: 0,
         previewUrl,
-        openUrl: item?.fullUrl ?? previewUrl,
-        title: item?.galleryTitle ?? item?.gallery ?? id,
+        openUrl: previewUrl,
+        title: id,
         x,
         y,
         width: item?.w,
@@ -1515,17 +1124,14 @@ export function CanvasHero({
   )
 
   const handleTileClick = React.useCallback(() => {
-    // Desktop: clicking anywhere on the mosaic opens the zoom preview (matching
-    // the published mosaics). Touch is handled on pointer up so a drag/scroll is
-    // not mistaken for a tap.
+    // Desktop: clicking anywhere on the mosaic opens the zoom preview. Touch is
+    // handled on pointer up so a drag/scroll is not mistaken for a tap.
     if (pointerTypeRef.current !== "mouse") return
     openZoom()
   }, [openZoom])
 
   // Usage stats for the current mosaic: how many distinct library photos ended
-  // up placed, and — for frame-sampled collections (knicks) — how many distinct
-  // source clips those photos came from. Null clips means the library carries
-  // no source-video info (regular photo collections), so the count is hidden.
+  // up placed.
   const mosaicStats = React.useMemo(() => {
     if (!tileMap) return null
     const photoIds = new Set<string>()
@@ -1533,24 +1139,13 @@ export function CanvasHero({
       const id = tileMap.tileIds[tileMap.assignment[i]]
       if (id) photoIds.add(id)
     }
-    const clips = new Set<string>()
-    let withVideo = 0
-    for (const id of photoIds) {
-      const video = libraryById.get(id)?.video
-      if (video) {
-        clips.add(video)
-        withVideo++
-      }
-    }
     return {
       cells: tileMap.assignment.length,
       uniquePhotos: photoIds.size,
-      uniqueClips: withVideo > 0 ? clips.size : null,
     }
-  }, [tileMap, libraryById])
+  }, [tileMap])
 
   const currentLabel = collection.label
-  const otherLabel = switchLabel ?? ""
   const copy = collection.copy
   const resolutionValue = resolutionForDensity(density, densityMin)
   const resolutionMode = nearestResolutionMode(density, densityMin)
@@ -1567,23 +1162,6 @@ export function CanvasHero({
       style={{ "--sidebar-width": "18rem" } as React.CSSProperties}
     >
       <CloseAdvancedWhenSidebarCloses onClose={closeAdvanced} />
-
-      {(shareUrl || shareError) && (
-        <ShareResultDialog
-          url={shareUrl}
-          error={shareError}
-          onClose={() => {
-            setShareUrl(null)
-            setShareError(null)
-          }}
-        />
-      )}
-
-      {shareCapacityNotice && (
-        <ShareCapacityDialog
-          onClose={() => setShareCapacityNotice(false)}
-        />
-      )}
 
       {zoomState && frame && (
         <MosaicZoomViewer
@@ -1631,9 +1209,6 @@ export function CanvasHero({
           progressPct={displayedProgressPct}
           generateDisabled={tileCount === 0 || isGenerating}
           onDownload={handleDownload}
-          showPublish={collection.shareable}
-          onPublish={handlePublish}
-          isPublishing={isPublishing}
         />
 
         <div
@@ -1651,22 +1226,7 @@ export function CanvasHero({
             } as React.CSSProperties
           }
         >
-          <div className="z-20 flex min-w-0 items-start justify-between gap-3 max-md:absolute max-md:inset-x-3 max-md:top-[calc(env(safe-area-inset-top,0px)+1rem)] sm:max-md:inset-x-4 md:flex-col md:justify-start">
-            {/* Mobile-only shortcut to the collaborative NYC mosaic; on desktop
-                this link lives in the right sidebar instead. */}
-            {collection.shareable && (
-              <Button
-                variant="link"
-                asChild
-                className="h-auto p-0 underline md:hidden"
-              >
-                <Link href="/newyork-mosaic">
-                  new york city mosaic
-                  <ArrowRight />
-                </Link>
-              </Button>
-            )}
-          </div>
+          <div className="z-20 hidden min-w-0 md:flex md:flex-col md:justify-start" />
 
           <div className="mx-auto grid w-full min-w-0 place-items-center max-md:flex max-md:flex-1 max-md:items-center max-md:justify-center md:max-w-[94vw] xl:max-w-none">
             {/* The flat mosaic, centered in the dominant middle column. */}
@@ -1781,25 +1341,10 @@ export function CanvasHero({
 
       <Sidebar side="right" mobileSide="bottom" collapsible="offcanvas">
         <SidebarContent className="gap-4 p-4">
-          {(!hideCollectionLabel || onSwitchBucket) && (
+          {!hideCollectionLabel && (
             <SidebarGroup className="p-0">
               <SidebarGroupContent className="flex items-center gap-2 text-sm text-muted-foreground">
-                {!hideCollectionLabel && <span>{currentLabel}</span>}
-                {onSwitchBucket && (
-                  <>
-                    {!hideCollectionLabel && <span aria-hidden="true">·</span>}
-                    <Button
-                      variant="link"
-                      onClick={onSwitchBucket}
-                      className="h-auto gap-1 p-0 underline"
-                    >
-                      {switchLocked && (
-                        <Lock className="size-3" aria-hidden="true" />
-                      )}
-                      switch to {otherLabel}
-                    </Button>
-                  </>
-                )}
+                <span>{currentLabel}</span>
               </SidebarGroupContent>
             </SidebarGroup>
           )}
@@ -1815,7 +1360,7 @@ export function CanvasHero({
             </SidebarGroup>
           )}
 
-          {(!hideCollectionLabel || onSwitchBucket || !hideIntroCopy) && (
+          {(!hideCollectionLabel || !hideIntroCopy) && (
             <SidebarSeparator className="mx-0" />
           )}
 
@@ -1870,32 +1415,12 @@ export function CanvasHero({
                   progressPct={displayedProgressPct}
                   generateDisabled={tileCount === 0 || isGenerating}
                   onDownload={handleDownload}
-                  showPublish={collection.shareable}
-                  onPublish={handlePublish}
-                  isPublishing={isPublishing}
                 />
               </SidebarGroupContent>
             </SidebarGroup>
           )}
 
           <SidebarSeparator className="mx-0 hidden md:block" />
-
-          {/* Invite visitors from this personal-mosaic experiment over to the
-              collaborative New York mosaic. Site-specific, so it rides along
-              with `shareable` — the Roboflow page opts out of both. */}
-          {collection.shareable && (
-          <SidebarGroup className="hidden p-0 md:flex">
-            <SidebarGroupContent>
-              <Link
-                href="/newyork-mosaic"
-                className="group/contribute inline-flex items-center gap-1.5 text-sm text-muted-foreground underline underline-offset-4 transition-colors hover:text-foreground"
-              >
-                contribute to the world&apos;s largest new york city mosaic
-                <ArrowRight className="size-4 shrink-0 transition-transform duration-200 group-hover/contribute:translate-x-0.5" />
-              </Link>
-            </SidebarGroupContent>
-          </SidebarGroup>
-          )}
         </SidebarContent>
 
         <SidebarFooter className="mt-auto flex flex-col gap-3 border-t p-4">
@@ -1909,12 +1434,6 @@ export function CanvasHero({
               <p className="text-xs text-muted-foreground">
                 {mosaicStats.cells.toLocaleString()} tiles ·{" "}
                 {mosaicStats.uniquePhotos.toLocaleString()} unique photos
-                {mosaicStats.uniqueClips !== null && (
-                  <>
-                    {" "}
-                    · {mosaicStats.uniqueClips.toLocaleString()} unique clips
-                  </>
-                )}
               </p>
             )}
 
@@ -1937,46 +1456,6 @@ export function CanvasHero({
                 aria-label="Mosaic resolution"
               />
             </div>
-
-            {eraEmphasis && (
-              <>
-                <div className="flex flex-col gap-1.5">
-                  <div className="flex items-center justify-between gap-3 text-sm text-muted-foreground">
-                    <span>Recent</span>
-                    <span className="tabular-nums">
-                      {formatSliderValue(recencyStrength)}
-                    </span>
-                  </div>
-                  <Slider
-                    className="w-full"
-                    min={0}
-                    max={RECENCY_STRENGTH_MAX}
-                    step={0.25}
-                    value={[recencyStrength]}
-                    onValueChange={(v) => setRecencyStrength(v[0])}
-                    aria-label="Recent-photo emphasis"
-                  />
-                </div>
-
-                <div className="flex flex-col gap-1.5">
-                  <div className="flex items-center justify-between gap-3 text-sm text-muted-foreground">
-                    <span>Playoffs</span>
-                    <span className="tabular-nums">
-                      {formatSliderValue(playoffBoost)}
-                    </span>
-                  </div>
-                  <Slider
-                    className="w-full"
-                    min={0}
-                    max={PLAYOFF_BOOST_MAX}
-                    step={0.25}
-                    value={[playoffBoost]}
-                    onValueChange={(v) => setPlayoffBoost(v[0])}
-                    aria-label="Playoff-photo emphasis"
-                  />
-                </div>
-              </>
-            )}
           </SidebarExpandableControls>
         </SidebarFooter>
       </Sidebar>

@@ -70,13 +70,11 @@ cells pushed out of edges so cell borders settle along contours, one colour
 signature per cell, and a min-error tile per cell drawn rotated along the local
 contour. Tiles are fetched lazily, one thumbnail per placed cell.
 
-**Where the tiles come from** is now an argument. `lib/mosaic-source.ts` defines
-a `MosaicSource` — how the library loads, how a tile's URL is built, whether the
-result can be published — with `supabaseSource(bucket)` and
-`roboflowSource(dataset)` behind it. `CanvasHero` used to take a bucket name and
-call Supabase directly; it takes a source instead, so one UI serves both. A
-source holds functions, so it has to be built on the client: server pages go
-through `SupabaseCanvasHero`.
+**Where the tiles come from** is a `MosaicSource` (`lib/mosaic-source.ts`) —
+how the library loads and how a tile's URL is built. Today the only
+implementation is `roboflowSource(dataset)`. `CanvasHero` takes a source instead
+of a storage backend, so the inherited UI stays source-agnostic. A source holds
+functions, so it is built on the client.
 
 **How the reference is chosen** is a `referencePicker` prop. Supplying one
 replaces CanvasHero's upload card (and its "replace" control) so there is a
@@ -100,7 +98,7 @@ re-export. To rebuild a dataset from scratch, POST
 | `app/roboflow/` | the page |
 | `components/roboflow-mosaic.tsx` | URL input → ingest → hand off to CanvasHero |
 | `components/roboflow-reference-picker.tsx` | project cover, or a grid of the dataset |
-| `lib/mosaic-source.ts` | where tiles come from (Supabase or Roboflow) |
+| `lib/mosaic-source.ts` | where tiles come from (Roboflow) |
 | `lib/roboflow.ts` | URL parsing, slugs, asset URLs (shared client/server) |
 | `lib/roboflow-api.ts` | the two Roboflow REST calls |
 | `lib/roboflow-ingest.ts` | download, extract, tiles, signatures, median |
@@ -128,10 +126,6 @@ This is also how to exercise the pipeline without an API key.
 
 The inherited pages (`/knicks-mosaic`, `/newyork-mosaic`, `/bake`, `/m/<id>`,
 `/admin`, the landing page and gallery) and everything only they used — the
-Supabase proxy, share and submission routes, the auth/admin helpers, the baked
-gallery assets — are deleted. `/` redirects to `/roboflow`, and no Supabase
-credentials are needed any more; only `ROBOFLOW_API_KEY`.
-
-One remnant: `CanvasHero` still carries the publish-to-a-share-link code path.
-It is unreachable (every source is `shareable: false`) but it does still
-reference the routes that were deleted.
+Supabase proxy, share/publish flow, submission routes, auth/admin helpers,
+era-emphasis matching, and baked gallery assets — are deleted. `/` redirects to
+`/roboflow`. Only `ROBOFLOW_API_KEY` is needed.

@@ -12,7 +12,7 @@ import { cn } from "@/lib/utils"
 // wrapper; a fixed canvas overlay paints the actual photo for each on-screen tile
 // once the zoom is deep enough, crossfading in so the composite→photos transition
 // doesn't pop. Desktop drives it with the wheel + drag; touch with pinch + drag.
-// Reused by the shared /m view, the home gallery, and the live generator.
+// Used by the live generator (geometry supplied in memory).
 
 // On-screen tile size (px) at which the overlay starts/finishes fading in.
 // Kept high enough that the fade window never has so many tiles on screen that
@@ -74,7 +74,6 @@ export function MosaicZoomViewer({
   frameW,
   frameH,
   alt = "Mosaic",
-  loadGeometry,
   geometry: initialGeometry,
   onClose,
 }: {
@@ -82,9 +81,6 @@ export function MosaicZoomViewer({
   frameW: number
   frameH: number
   alt?: string
-  // Lazy geometry source (shared/gallery fetch a URL). Omitted when `geometry`
-  // is supplied directly (the live generator already has it in memory).
-  loadGeometry?: () => Promise<MosaicGeometry | null>
   geometry?: MosaicGeometry | null
   onClose: () => void
 }) {
@@ -320,29 +316,10 @@ export function MosaicZoomViewer({
     }
   }, [scheduleRaster])
 
-  // Resolve geometry: prefer the in-memory one, else lazily load it.
+  // Paint when in-memory geometry is already available.
   React.useEffect(() => {
-    if (geoRef.current) {
-      scheduleRaster()
-      return
-    }
-    if (!loadGeometry) return
-    let cancelled = false
-    void (async () => {
-      try {
-        const geo = await loadGeometry()
-        if (cancelled || !geo) return
-        geoRef.current = geo
-        clampView()
-        scheduleRaster()
-      } catch {
-        // Geometry is an enhancement; the base image still zooms without it.
-      }
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [loadGeometry, clampView, scheduleRaster])
+    if (geoRef.current) scheduleRaster()
+  }, [scheduleRaster])
 
   React.useEffect(() => {
     return () => {

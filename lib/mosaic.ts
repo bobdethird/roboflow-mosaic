@@ -1,13 +1,9 @@
-// Photo-mosaic helpers: build an averaged-color signature for each of the
-// reference's grid cells and for each tile photo, then pick the min-MSE tile per
-// cell. These run on BOTH the main thread and inside the mosaic Web Worker, so
-// they avoid `document` (preferring OffscreenCanvas) and accept either an
-// HTMLImageElement (main thread) or an ImageBitmap (worker) as an image source.
+// Photo-mosaic helpers shared by the main thread and the mosaic Web Worker:
+// color signatures, edge fields, and polygon cell painting. Avoids `document`
+// (preferring OffscreenCanvas) and accepts either an HTMLImageElement or an
+// ImageBitmap as an image source. Matching/assignment runs in the worker.
 
 export type Grid = { cols: number; rows: number }
-
-// A rectangle in mosaic-content coordinates (the 0..width × 0..height frame).
-export type Region = { x: number; y: number; w: number; h: number }
 
 // A 2D context from either a DOM <canvas> or an OffscreenCanvas (worker-safe).
 export type AnyCanvasContext =
@@ -110,36 +106,6 @@ export function signatureOf(
   return sig
 }
 
-// One signature per grid cell from a single reference draw at (cols*s)x(rows*s).
-export function referenceCellSignatures(
-  ref: TileSource,
-  grid: Grid,
-  s = SIGNATURE_GRID
-): Float32Array[] {
-  const w = grid.cols * s
-  const h = grid.rows * s
-  const ctx = createContext2d(w, h)
-  drawCover(ctx, ref, 0, 0, w, h)
-  const { data } = ctx.getImageData(0, 0, w, h)
-  const cells: Float32Array[] = []
-  for (let row = 0; row < grid.rows; row++) {
-    for (let col = 0; col < grid.cols; col++) {
-      const sig = new Float32Array(s * s * 3)
-      for (let yy = 0; yy < s; yy++) {
-        for (let xx = 0; xx < s; xx++) {
-          const px = ((row * s + yy) * w + (col * s + xx)) * 4
-          const k = (yy * s + xx) * 3
-          sig[k] = data[px]
-          sig[k + 1] = data[px + 1]
-          sig[k + 2] = data[px + 2]
-        }
-      }
-      cells.push(sig)
-    }
-  }
-  return cells
-}
-
 // Per-tile color signatures for an arbitrary set of tile centers (used by the
 // contour-flow layout, whose tiles aren't on a grid). The reference is drawn
 // once into a buffer scaled so a `size`×`size` tile window maps to s×s buffer
@@ -186,54 +152,6 @@ export function referenceWindowSignatures(
   return out
 }
 
-// Minimum Sobel gradient magnitude (on the coarse cols×rows luminance grid)
-// before a cell counts as "on an edge". Below it the local direction is mostly
-// noise, so the tile is left axis-aligned (angle 0).
-const EDGE_MIN = 16
-
-// Per-cell stroke orientation in radians, derived from the reference's edges. A
-// Sobel gradient is taken over a cols×rows luminance grid and each tile is
-// aligned ALONG the local contour (perpendicular to the gradient). Flat areas
-// resolve to 0 so only real edges steer the tiles.
-export function referenceCellOrientations(
-  ref: TileSource,
-  grid: Grid
-): Float32Array {
-  const { cols, rows } = grid
-  const ctx = createContext2d(cols, rows)
-  drawCover(ctx, ref, 0, 0, cols, rows)
-  const { data } = ctx.getImageData(0, 0, cols, rows)
-  const lum = new Float32Array(cols * rows)
-  for (let i = 0; i < cols * rows; i++) {
-    lum[i] =
-      0.299 * data[i * 4] + 0.587 * data[i * 4 + 1] + 0.114 * data[i * 4 + 2]
-  }
-  const at = (x: number, y: number) => {
-    const cx = x < 0 ? 0 : x >= cols ? cols - 1 : x
-    const cy = y < 0 ? 0 : y >= rows ? rows - 1 : y
-    return lum[cy * cols + cx]
-  }
-  const angles = new Float32Array(cols * rows)
-  for (let y = 0; y < rows; y++) {
-    for (let x = 0; x < cols; x++) {
-      const gx =
-        at(x + 1, y - 1) +
-        2 * at(x + 1, y) +
-        at(x + 1, y + 1) -
-        (at(x - 1, y - 1) + 2 * at(x - 1, y) + at(x - 1, y + 1))
-      const gy =
-        at(x - 1, y + 1) +
-        2 * at(x, y + 1) +
-        at(x + 1, y + 1) -
-        (at(x - 1, y - 1) + 2 * at(x, y - 1) + at(x + 1, y - 1))
-      const mag = Math.hypot(gx, gy)
-      angles[y * cols + x] =
-        mag > EDGE_MIN ? Math.atan2(gy, gx) + Math.PI / 2 : 0
-    }
-  }
-  return angles
-}
-
 // Average color of the reference (its mean pixel), used as the mosaic's grout /
 // background so the gaps between tiles sit on-palette. Squishing the whole image
 // into a single pixel lets the browser area-average every pixel for us.
@@ -244,55 +162,9 @@ export function averageColor(img: TileSource): string {
   return `rgb(${data[0]}, ${data[1]}, ${data[2]})`
 }
 
-// A normalized (0..1) Sobel edge-magnitude field of the reference at fw×fh. The
-// Voronoi seeder uses it to push seeds out of edges so the cell borders settle
-// along the photo's contours.
-export type EdgeField = { mag: Float32Array; fw: number; fh: number }
-
-export function edgeMagnitudeField(
-  ref: TileSource,
-  fw: number,
-  fh: number
-): EdgeField {
-  const ctx = createContext2d(fw, fh)
-  drawCover(ctx, ref, 0, 0, fw, fh)
-  const { data } = ctx.getImageData(0, 0, fw, fh)
-  const lum = new Float32Array(fw * fh)
-  for (let i = 0; i < fw * fh; i++) {
-    lum[i] =
-      0.299 * data[i * 4] + 0.587 * data[i * 4 + 1] + 0.114 * data[i * 4 + 2]
-  }
-  const at = (x: number, y: number) => {
-    const cx = x < 0 ? 0 : x >= fw ? fw - 1 : x
-    const cy = y < 0 ? 0 : y >= fh ? fh - 1 : y
-    return lum[cy * fw + cx]
-  }
-  const mag = new Float32Array(fw * fh)
-  let max = 1e-6
-  for (let y = 0; y < fh; y++) {
-    for (let x = 0; x < fw; x++) {
-      const gx =
-        at(x + 1, y - 1) +
-        2 * at(x + 1, y) +
-        at(x + 1, y + 1) -
-        (at(x - 1, y - 1) + 2 * at(x - 1, y) + at(x - 1, y + 1))
-      const gy =
-        at(x - 1, y + 1) +
-        2 * at(x, y + 1) +
-        at(x + 1, y + 1) -
-        (at(x - 1, y - 1) + 2 * at(x, y - 1) + at(x + 1, y - 1))
-      const m = Math.hypot(gx, gy)
-      mag[y * fw + x] = m
-      if (m > max) max = m
-    }
-  }
-  for (let i = 0; i < mag.length; i++) mag[i] /= max
-  return { mag, fw, fh }
-}
-
-// Like `EdgeField` but also retains the per-pixel gradient direction. The
-// contour-flow layout needs the direction (not just the strength) so it can lay
-// tiles tangent to the photo's edges.
+// Per-pixel Sobel edge magnitude + gradient direction. The contour-flow layout
+// needs the direction (not just the strength) so it can lay tiles tangent to
+// the photo's edges.
 export type EdgeVectorField = {
   mag: Float32Array
   // Gradient direction in radians (atan2(gy, gx)). The contour tangent — the
@@ -345,36 +217,6 @@ export function edgeVectorField(
   return { mag, dir, fw, fh }
 }
 
-export function mse(a: Float32Array, b: Float32Array): number {
-  let sum = 0
-  for (let i = 0; i < a.length; i++) {
-    const d = a[i] - b[i]
-    sum += d * d
-  }
-  return sum / a.length
-}
-
-// For each cell, the index of the tile with the lowest MSE. Tiles are reused
-// freely (a tile may fill many cells), which is required when cells outnumber
-// the uploaded photos.
-export function assignTiles(
-  cellSigs: Float32Array[],
-  tileSigs: Float32Array[]
-): number[] {
-  return cellSigs.map((cell) => {
-    let best = 0
-    let bestErr = Infinity
-    for (let t = 0; t < tileSigs.length; t++) {
-      const err = mse(cell, tileSigs[t])
-      if (err < bestErr) {
-        bestErr = err
-        best = t
-      }
-    }
-    return best
-  })
-}
-
 export function gridForCellSize(
   cellPx: number,
   width: number,
@@ -383,57 +225,6 @@ export function gridForCellSize(
   return {
     cols: Math.max(1, Math.round(width / cellPx)),
     rows: Math.max(1, Math.round(height / cellPx)),
-  }
-}
-
-// Paint every assigned tile, cover-cropped to fill its cell. Cell edges are
-// rounded to whole pixels so the grid tiles seamlessly with no hairlines.
-export function drawMosaic(
-  ctx: AnyCanvasContext,
-  grid: Grid,
-  assignment: ArrayLike<number>,
-  tiles: ReadonlyArray<TileSource | null | undefined>,
-  width: number,
-  height: number
-) {
-  drawMosaicRegion(ctx, grid, assignment, tiles, width, height, {
-    x: 0,
-    y: 0,
-    w: width,
-    h: height,
-  })
-}
-
-// Like `drawMosaic`, but only paints the cells overlapping `region`. The caller
-// is expected to have applied the pan/zoom transform to `ctx` already, so tiles
-// are drawn from their source at the displayed size. Restricting to the visible
-// region keeps the work (and memory) bounded no matter the zoom level.
-export function drawMosaicRegion(
-  ctx: AnyCanvasContext,
-  grid: Grid,
-  assignment: ArrayLike<number>,
-  tiles: ReadonlyArray<TileSource | null | undefined>,
-  width: number,
-  height: number,
-  region: Region
-) {
-  const cw = width / grid.cols
-  const ch = height / grid.rows
-  const colStart = Math.max(0, Math.floor(region.x / cw))
-  const colEnd = Math.min(grid.cols - 1, Math.floor((region.x + region.w) / cw))
-  const rowStart = Math.max(0, Math.floor(region.y / ch))
-  const rowEnd = Math.min(grid.rows - 1, Math.floor((region.y + region.h) / ch))
-  if (colEnd < colStart || rowEnd < rowStart) return
-  for (let row = rowStart; row <= rowEnd; row++) {
-    for (let col = colStart; col <= colEnd; col++) {
-      const tile = tiles[assignment[row * grid.cols + col]]
-      if (!tile) continue
-      const x = Math.round(col * cw)
-      const y = Math.round(row * ch)
-      const w = Math.round((col + 1) * cw) - x
-      const h = Math.round((row + 1) * ch) - y
-      drawCover(ctx, tile, x, y, w, h)
-    }
   }
 }
 
@@ -537,73 +328,4 @@ export function drawPolygonCell(
   if (angle) c.rotate(angle)
   drawCover(ctx, img, -cover / 2, -cover / 2, cover, cover)
   c.restore()
-}
-
-// Voronoi variant of `drawMosaicRegion`: every cell is a polygon (triangle …
-// hexagon) that tessellates, filled with its matched photo rotated to the cell's
-// edge orientation. Cells are seeded from the grid, so we cull by grid cell
-// (widened generously, since a Voronoi cell can spill past its seed's cell).
-export function drawPolygonMosaicRegion(
-  ctx: AnyCanvasContext,
-  grid: Grid,
-  assignment: ArrayLike<number>,
-  angles: ArrayLike<number>,
-  tiles: ReadonlyArray<TileSource | null | undefined>,
-  width: number,
-  height: number,
-  region: Region,
-  polys: ArrayLike<number>,
-  offsets: ArrayLike<number>
-) {
-  const { cols, rows } = grid
-  const cw = width / cols
-  const ch = height / rows
-  const colStart = Math.max(0, Math.floor(region.x / cw) - 2)
-  const colEnd = Math.min(cols - 1, Math.floor((region.x + region.w) / cw) + 2)
-  const rowStart = Math.max(0, Math.floor(region.y / ch) - 2)
-  const rowEnd = Math.min(rows - 1, Math.floor((region.y + region.h) / ch) + 2)
-  if (colEnd < colStart || rowEnd < rowStart) return
-  for (let row = rowStart; row <= rowEnd; row++) {
-    for (let col = colStart; col <= colEnd; col++) {
-      const idx = row * cols + col
-      const tile = tiles[assignment[idx]]
-      if (!tile) continue
-      drawPolygonCell(ctx, polys, offsets, idx, tile, angles[idx], {
-        width,
-        height,
-      })
-    }
-  }
-}
-
-// Like `drawPolygonMosaicRegion`, but for the contour-flow layout whose tiles
-// are NOT on a grid (their count and positions are free). Culling is by each
-// tile's center against the region, widened by `extent` (≈ a tile's reach) so
-// tiles whose center sits just outside still paint into the view. Cheap enough
-// to scan every tile since the overlay only repaints once a gesture settles.
-export function drawTileMosaicRegion(
-  ctx: AnyCanvasContext,
-  assignment: ArrayLike<number>,
-  angles: ArrayLike<number>,
-  tiles: ReadonlyArray<TileSource | null | undefined>,
-  region: Region,
-  polys: ArrayLike<number>,
-  offsets: ArrayLike<number>,
-  centers: ArrayLike<number>,
-  extent: number,
-  frame?: { width: number; height: number }
-) {
-  const n = centers.length / 2
-  const minX = region.x - extent
-  const maxX = region.x + region.w + extent
-  const minY = region.y - extent
-  const maxY = region.y + region.h + extent
-  for (let i = 0; i < n; i++) {
-    const x = centers[i * 2]
-    const y = centers[i * 2 + 1]
-    if (x < minX || x > maxX || y < minY || y > maxY) continue
-    const tile = tiles[assignment[i]]
-    if (!tile) continue
-    drawPolygonCell(ctx, polys, offsets, i, tile, angles[i], frame)
-  }
 }

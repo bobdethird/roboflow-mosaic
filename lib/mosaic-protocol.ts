@@ -13,32 +13,6 @@ export type HydrateItem = {
   w: number
   h: number
   url: string
-  // ISO date the tile's photo is from (gallery publish date for the knicks
-  // collection). Drives the optional recency/playoff match bias below; tiles
-  // without a date are treated as neutral (weight 1).
-  takenAt?: string
-}
-
-// Optional bias applied during matching so certain eras are favored without
-// abandoning color fidelity. Each tile gets a multiplicative weight ≥ 1 and the
-// matcher minimizes colorError / weight, so a higher weight only helps a tile
-// win cells it's already a *reasonable* color match for — it never forces a
-// wrong-color tile. All-zero strengths ⇒ every weight is 1 ⇒ unbiased matching.
-//
-//   weight = 1
-//          + recencyStrength · 2^(-ageMonths / recencyHalfLifeMonths)   // smooth recency
-//          + (isPlayoff ? playoffBoost : 0)                              // Apr–Jun of playoffYears
-export type TileWeighting = {
-  // Epoch ms the recency decay is measured from; defaults to Date.now().
-  nowMs?: number
-  // Peak recency bonus (added at age 0). 0 disables the recency term.
-  recencyStrength?: number
-  // Months for the recency bonus to halve.
-  recencyHalfLifeMonths?: number
-  // Additive bonus for photos in the Apr–Jun window of a playoff year.
-  playoffBoost?: number
-  // Years whose Apr–Jun window counts as playoffs. Defaults to [2025, 2026].
-  playoffYears?: number[]
 }
 
 export type WorkerRequest =
@@ -63,8 +37,6 @@ export type WorkerRequest =
       // Optional per-generated-mosaic cap. When set, a single source photo will
       // not be assigned more than this many cells unless the library is too small.
       maxTileReuse?: number
-      // Optional era bias (recency + playoff emphasis). Omitted ⇒ unbiased.
-      weighting?: TileWeighting
     }
 
 export type WorkerResponse =

@@ -1,9 +1,5 @@
-// The shared shape of a mosaic tile library.
-//
-// This was the common core of `lib/photo-library.ts`, which also held the
-// Supabase bucket plumbing. The Supabase-backed pages are gone, so only these
-// pieces remain: the on-the-wire signature sizes the worker decodes, and the
-// hydrated tile the engine matches against.
+// Shared shape of a mosaic tile library: on-the-wire signature sizes the worker
+// decodes, and the hydrated tile the engine matches against.
 
 import { SIGNATURE_GRID } from "./mosaic"
 
@@ -26,13 +22,5 @@ export type LibraryItem = {
   sig: Uint8Array
   w: number
   h: number
-  takenAt?: string
-  gallery?: string
-  galleryTitle?: string
-  sourceUrl?: string
-  location?: { lat: number; lng: number }
-  // Source video id for frame-sampled tiles.
-  video?: string
-  fullUrl?: string
   url: string
 }

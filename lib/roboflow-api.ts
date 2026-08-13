@@ -35,15 +35,6 @@ export function roboflowApiKey(): string {
   return key
 }
 
-export function hasRoboflowApiKey(): boolean {
-  try {
-    roboflowApiKey()
-    return true
-  } catch {
-    return false
-  }
-}
-
 type ProjectVersion = {
   // "<workspace>/<project>/<version>"
   id?: string
