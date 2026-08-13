@@ -11,6 +11,7 @@ import {
   RoboflowUrlError,
   datasetSlug,
   isDatasetSlug,
+  newerStatus,
   parseRoboflowUrl,
   universeUrl,
   type IngestStatus,
@@ -29,6 +30,7 @@ import {
   acquireIngestLease,
   consumeGlobalIngestRateLimit,
   consumeIngestRateLimit,
+  ingestLeaseHeld,
   releaseIngestLease,
   type IngestLease,
 } from "@/lib/roboflow-control"
@@ -57,6 +59,11 @@ export const dynamic = "force-dynamic"
 // An ingest can take a few minutes; the request itself returns immediately, but
 // the background job must be allowed to keep running.
 export const maxDuration = 300
+
+// How long a "running" status may sit untouched before it stops being believed.
+// A running ingest refreshes the durable copy every 10 seconds, so this allows
+// several missed writes.
+const STALE_RUNNING_MS = 60_000
 
 function errorMessage(error: unknown): string {
   if (
@@ -104,15 +111,19 @@ async function persistStatus(status: IngestStatus): Promise<void> {
   if (blobEnabled()) await writeBlobStatus(status.slug, status)
 }
 
-// Local /tmp first (the instance that is ingesting), then the Blob copy so a
-// poll that landed on a different lambda can still see progress, then a
-// reconstructed record from a published library.
+// The freshest record of this ingest, then a reconstructed one from a published
+// library.
+//
+// The instance running the job has the freshest copy by definition, and asking
+// Blob on every poll of it would cost a request per 700ms tick. Anywhere else
+// the local file may be an attempt this instance abandoned an hour ago while the
+// live run reports from another, so the newer of the two wins. Preferring the
+// local file unconditionally is what let a poll declare a live ingest dead.
 async function loadStatus(slug: string): Promise<IngestStatus | null> {
-  return (
-    (await readStatus(slug)) ??
-    (blobEnabled() ? await readBlobStatus(slug) : null) ??
-    (await statusFromDisk(slug))
-  )
+  const local = await readStatus(slug)
+  if (local && isRunning(slug)) return local
+  const durable = blobEnabled() ? await readBlobStatus(slug) : null
+  return newerStatus(local, durable) ?? (await statusFromDisk(slug))
 }
 
 // Status for a dataset whose files are on disk but whose status.json is gone
@@ -176,12 +187,16 @@ export async function GET(request: Request): Promise<Response> {
   if (raw.state === "running" && !isRunning(slug)) {
     const published = await statusFromDisk(slug)
     if (published) return json(published)
-    const stale = Date.now() - Date.parse(raw.updatedAt) > 60_000
-    if (stale) {
+    // A status that has stopped moving is the symptom of a dead worker, not
+    // proof of one: the ingest may just have failed to write it. Only the lease
+    // says whether a job is still alive, and only Blob has one — without a
+    // store, no ingest outlives its own instance anyway, so silence is death.
+    const stale = Date.now() - Date.parse(raw.updatedAt) > STALE_RUNNING_MS
+    if (stale && !(blobEnabled() && (await ingestLeaseHeld(slug)))) {
       return json({
         ...raw,
         state: "error",
-        error: "The ingest stopped unexpectedly. Try again.",
+        error: `The ingest stopped unexpectedly at "${raw.step}". Try again.`,
       })
     }
   }

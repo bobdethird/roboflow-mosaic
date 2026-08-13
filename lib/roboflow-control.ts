@@ -125,6 +125,19 @@ export async function acquireIngestLease(
   }
 }
 
+// Is some instance still holding this dataset's lease? A job holds one until it
+// settles, so this answers "is an ingest alive" without asking an instance that
+// would only know about its own. The age of a status record cannot answer it:
+// the record is written by the ingesting instance and read by another, and a
+// write that never landed looks exactly like a worker that died.
+export async function ingestLeaseHeld(
+  slug: string,
+  now = Date.now()
+): Promise<boolean> {
+  const current = await readControl<LeaseRecord>(lockPath(slug))
+  return Boolean(current && current.value.expiresAt > now)
+}
+
 export async function releaseIngestLease(lease: IngestLease): Promise<void> {
   try {
     await del(lease.pathname, { ifMatch: lease.etag })

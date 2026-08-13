@@ -201,3 +201,16 @@ export type IngestStatus = {
   error?: string
   dataset?: RoboflowDataset
 }
+
+// Two records of the same ingest — one instance's local file and the durable
+// copy every instance writes — reduced to the one that describes the run that is
+// actually happening. A serverless instance keeps the status of every ingest it
+// ever started, so the record nearest to hand is not the current one.
+export function newerStatus(
+  a: IngestStatus | null,
+  b: IngestStatus | null
+): IngestStatus | null {
+  if (!a) return b
+  if (!b) return a
+  return Date.parse(b.updatedAt) > Date.parse(a.updatedAt) ? b : a
+}

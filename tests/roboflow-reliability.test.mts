@@ -11,6 +11,7 @@ import {
   nextRateRecord,
 } from "../lib/roboflow-control"
 import { acquirePack, releasePack } from "../lib/roboflow-pack"
+import { newerStatus } from "../lib/roboflow"
 import { MosaicEngine } from "../lib/mosaic-client"
 import { buildMosaicGeometry } from "../lib/mosaic-geometry"
 
@@ -238,6 +239,30 @@ test("status progress writes are serialized", async () => {
     delete process.env.ROBOFLOW_CACHE_DIR
     await rm(root, { recursive: true, force: true })
   }
+})
+
+// A poll can see two records of the same ingest: the file in this instance's
+// /tmp and the durable copy every instance writes. The local one is not the
+// truth — /tmp is never cleaned, so an instance keeps every attempt it ever
+// started, and reading a dead attempt over a live run is what made a poll
+// report "The ingest stopped unexpectedly" while the ingest went on to finish.
+test("the newer of two status records wins, whichever side it came from", () => {
+  const record = (state: "running" | "error", updatedAt: string) => ({
+    slug: "workspace--dataset--v1",
+    state,
+    step: state === "error" ? "Failed" : "Building tiles",
+    done: 0,
+    total: 0,
+    updatedAt,
+  })
+  const abandoned = record("running", "2026-08-13T07:30:00.000Z")
+  const live = record("running", "2026-08-13T07:41:00.000Z")
+
+  assert.equal(newerStatus(abandoned, live), live)
+  assert.equal(newerStatus(live, abandoned), live)
+  assert.equal(newerStatus(null, live), live)
+  assert.equal(newerStatus(live, null), live)
+  assert.equal(newerStatus(null, null), null)
 })
 
 test("worker request errors reject generation instead of hanging", async () => {

@@ -79,8 +79,8 @@ export type ProgressReporter = (
 ) => void
 
 // How often a running ingest refreshes the durable (Blob) copy of status.json.
-// GET on another instance treats a running status older than 60s as dead, so
-// this has to be comfortably under that.
+// GET on another instance stops believing a running status after 60s and falls
+// back to the ingest lease, so this has to be comfortably under that.
 const DURABLE_INTERVAL_MS = 10_000
 
 // Build a reporter that persists coarse progress, throttled so a per-image
