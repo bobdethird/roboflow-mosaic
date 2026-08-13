@@ -23,6 +23,7 @@ import {
   roboflowThumbPath,
 } from "./roboflow"
 import { MIB } from "./roboflow-limits"
+import { COARSE_SIG_BYTES } from "./tile-library"
 
 export type PackProgress = {
   // Bytes received so far, and the total when the server declared one.
@@ -51,11 +52,51 @@ export type PackManifest = {
 const DB_NAME = "roboflow-packs"
 const DB_VERSION = 1
 const STORE = "archives"
-const MAX_MANIFEST_BYTES = 8 * MIB
-const MAX_SIGNATURE_BYTES = 32 * MIB
+
+// The archive comes off a public CDN URL, so a corrupt or hostile zip could
+// declare an entry far larger than the tab can buffer. The guards below exist
+// only to stop that — they are not a limit on how big a real dataset may be.
+//
+// `icon.jpg` and each `thumbs/*.jpg` do not grow with the dataset, so they keep
+// fixed ceilings. `manifest.json` and `signatures-coarse.bin` both scale
+// linearly with the photo count, so their ceilings are derived from the count
+// the ingest already published (`expectedPhotoCount`) with headroom, letting a
+// legitimate library of any size through while still rejecting one that
+// balloons well past what this dataset should contain.
 const MAX_ICON_BYTES = 12 * MIB
 const MAX_THUMB_BYTES = 2 * MIB
-const MAX_PACK_PHOTOS = 50_000
+
+// Padded well above the ~150 bytes/photo a real manifest weighs, so long image
+// filenames never trip it.
+const MANIFEST_BYTES_PER_PHOTO = 256
+const MANIFEST_OVERHEAD_BYTES = 64 * 1024
+// Signatures are exactly `COARSE_SIG_BYTES` per photo; the overhead is slack.
+const SIGNATURE_OVERHEAD_BYTES = 64 * 1024
+// A hostile archive has to more than double the expected size to be rejected,
+// which keeps buffered memory bounded to ~2x what the dataset legitimately needs
+// while tolerating any reasonable drift between the reported and packed counts.
+const ENTRY_SIZE_SAFETY_MULTIPLE = 2
+const PHOTO_COUNT_SAFETY_MULTIPLE = 2
+
+// Last-resort ceilings that apply when `expectedPhotoCount` is unknown, so a
+// missing count can never let a single entry or the photo list grow unbounded.
+const ABSOLUTE_MAX_ENTRY_BYTES = 1024 * MIB
+const ABSOLUTE_MAX_PHOTOS = 5_000_000
+
+// The manifest/signature ceiling for a scaling entry, given the expected count.
+function scaledEntryLimit(
+  perPhoto: number,
+  overhead: number,
+  expectedPhotoCount?: number | null
+): number {
+  if (!expectedPhotoCount || expectedPhotoCount <= 0) {
+    return ABSOLUTE_MAX_ENTRY_BYTES
+  }
+  const scaled =
+    overhead + expectedPhotoCount * perPhoto * ENTRY_SIZE_SAFETY_MULTIPLE
+  return Math.min(ABSOLUTE_MAX_ENTRY_BYTES, scaled)
+}
+
 type StoredPack = {
   slug: string
   version: string
@@ -174,19 +215,47 @@ type UnpackedParts = {
   urls: Map<string, string>
 }
 
-function maxEntryBytes(name: string): number {
-  if (name === MANIFEST_FILE) return MAX_MANIFEST_BYTES
-  if (name === COARSE_SIGNATURES_FILE) return MAX_SIGNATURE_BYTES
+function maxEntryBytes(
+  name: string,
+  expectedPhotoCount?: number | null
+): number {
+  if (name === MANIFEST_FILE) {
+    return scaledEntryLimit(
+      MANIFEST_BYTES_PER_PHOTO,
+      MANIFEST_OVERHEAD_BYTES,
+      expectedPhotoCount
+    )
+  }
+  if (name === COARSE_SIGNATURES_FILE) {
+    return scaledEntryLimit(
+      COARSE_SIG_BYTES,
+      SIGNATURE_OVERHEAD_BYTES,
+      expectedPhotoCount
+    )
+  }
   if (name === ICON_FILE) return MAX_ICON_BYTES
   return MAX_THUMB_BYTES
 }
 
-function parseManifest(bytes: Uint8Array): PackManifest {
+// How many photos a manifest may declare before it looks corrupt: scaled from
+// the published count, or the absolute floor when that count is unknown.
+function maxPhotoCount(expectedPhotoCount?: number | null): number {
+  if (!expectedPhotoCount || expectedPhotoCount <= 0) return ABSOLUTE_MAX_PHOTOS
+  return Math.min(
+    ABSOLUTE_MAX_PHOTOS,
+    Math.ceil(expectedPhotoCount * PHOTO_COUNT_SAFETY_MULTIPLE)
+  )
+}
+
+function parseManifest(
+  bytes: Uint8Array,
+  expectedPhotoCount?: number | null
+): PackManifest {
   const value = JSON.parse(TEXT.decode(bytes)) as Partial<PackManifest>
   if (
     typeof value.version !== "string" ||
     !Array.isArray(value.photos) ||
-    value.photos.length > MAX_PACK_PHOTOS ||
+    value.photos.length > maxPhotoCount(expectedPhotoCount) ||
     value.photos.some(
       (photo) =>
         !photo ||
@@ -206,14 +275,15 @@ function parseManifest(bytes: Uint8Array): PackManifest {
 function buildPack(
   slug: string,
   parts: UnpackedParts,
-  expectedVersion?: string | null
+  expectedVersion?: string | null,
+  expectedPhotoCount?: number | null
 ): RoboflowPack {
   const manifestBytes = parts.manifest
   const signatures = parts.signatures
   if (!manifestBytes || !signatures) {
     throw new Error("The dataset archive is missing its manifest.")
   }
-  const manifest = parseManifest(manifestBytes)
+  const manifest = parseManifest(manifestBytes, expectedPhotoCount)
   if (expectedVersion && manifest.version !== expectedVersion) {
     throw new Error(
       "The downloaded dataset is stale. Reload to fetch the newly published version."
@@ -249,6 +319,9 @@ function buildPack(
 
 type UnpackOptions = {
   expectedVersion?: string | null
+  // The photo count the ingest published for this dataset, used to size the
+  // manifest/signature guards. Undefined falls back to the absolute floors.
+  expectedPhotoCount?: number | null
   signal?: AbortSignal
   total?: number
   onProgress?: (progress: PackProgress) => void
@@ -275,7 +348,7 @@ export async function unpackArchive(
       file.name === ICON_FILE ||
       (file.name.startsWith("thumbs/") && file.name.endsWith(".jpg"))
     if (!wanted) return
-    const entryLimit = maxEntryBytes(file.name)
+    const entryLimit = maxEntryBytes(file.name, options.expectedPhotoCount)
     if (file.originalSize !== undefined && file.originalSize > entryLimit) {
       streamError = new Error("A dataset archive entry is unexpectedly large.")
       return
@@ -332,7 +405,12 @@ export async function unpackArchive(
     unzipper.push(new Uint8Array(), true)
     await Promise.all(pending)
     if (streamError) throw streamError
-    return buildPack(slug, parts, options.expectedVersion)
+    return buildPack(
+      slug,
+      parts,
+      options.expectedVersion,
+      options.expectedPhotoCount
+    )
   } catch (error) {
     void reader.cancel(error).catch(() => undefined)
     for (const url of parts.urls.values()) URL.revokeObjectURL(url)
@@ -351,7 +429,12 @@ async function downloadPack(
   slug: string,
   options: LoadPackOptions
 ): Promise<{ pack: RoboflowPack; archive: Blob }> {
-  const { expectedVersion, onProgress = () => {}, signal } = options
+  const {
+    expectedVersion,
+    expectedPhotoCount,
+    onProgress = () => {},
+    signal,
+  } = options
   const response = await fetch(roboflowPackUrl(slug), { signal })
   if (!response.ok) {
     throw new Error(`Could not download the dataset (${response.status}).`)
@@ -362,6 +445,7 @@ async function downloadPack(
     const archive = await response.blob()
     const pack = await unpackArchive(slug, archive.stream(), {
       expectedVersion,
+      expectedPhotoCount,
       signal,
       total: archive.size,
       onProgress,
@@ -372,6 +456,7 @@ async function downloadPack(
   const chunks: BlobPart[] = []
   const pack = await unpackArchive(slug, response.body, {
     expectedVersion,
+    expectedPhotoCount,
     signal,
     total,
     onProgress,
@@ -385,6 +470,9 @@ async function downloadPack(
 
 export type LoadPackOptions = {
   expectedVersion?: string | null
+  // The photo count the ingest published, forwarded to the unpack guards so a
+  // large but legitimate library is not mistaken for a corrupt archive.
+  expectedPhotoCount?: number | null
   onProgress?: (progress: PackProgress) => void
   signal?: AbortSignal
 }
@@ -398,7 +486,12 @@ async function loadPack(
   slug: string,
   options: LoadPackOptions = {}
 ): Promise<RoboflowPack> {
-  const { expectedVersion, onProgress = () => {}, signal } = options
+  const {
+    expectedVersion,
+    expectedPhotoCount,
+    onProgress = () => {},
+    signal,
+  } = options
 
   const stored = await readStored(slug)
   if (stored && (!expectedVersion || stored.version === expectedVersion)) {
@@ -408,6 +501,7 @@ async function loadPack(
       onProgress({ loaded: 0, total: 0, step: "unpacking" })
       const pack = await unpackArchive(slug, archive.stream(), {
         expectedVersion,
+        expectedPhotoCount,
         signal,
       })
       // Migrate old ArrayBuffer records without retaining a second copy.

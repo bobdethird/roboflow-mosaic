@@ -58,11 +58,14 @@ export function RoboflowReferencePicker({
   const [pack, setPack] = React.useState<RoboflowPack | null>(null)
   const [shown, setShown] = React.useState(PAGE_SIZE)
 
-  const { slug, libraryVersion } = dataset
+  const { slug, libraryVersion, imageCount } = dataset
 
   React.useEffect(() => {
     let cancelled = false
-    void acquirePack(slug, { expectedVersion: libraryVersion ?? null }).then(
+    void acquirePack(slug, {
+      expectedVersion: libraryVersion ?? null,
+      expectedPhotoCount: imageCount,
+    }).then(
       (loaded) => {
         if (!cancelled) setPack(loaded)
       },
@@ -79,7 +82,7 @@ export function RoboflowReferencePicker({
       cancelled = true
       releasePack(slug)
     }
-  }, [slug, libraryVersion])
+  }, [slug, libraryVersion, imageCount])
 
   const ids = React.useMemo(
     () => pack?.manifest.photos.map((photo) => photo.id) ?? null,

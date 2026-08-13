@@ -120,6 +120,76 @@ test("streaming pack parser accepts tiny chunks and verifies versions", async ()
   )
 })
 
+function packStream(archive: Uint8Array): ReadableStream<Uint8Array> {
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(archive)
+      controller.close()
+    },
+  })
+}
+
+test("pack guards scale with the published photo count", async () => {
+  const version = "2026-08-12T00:00:00.000Z"
+  const ids = ["0123456789abcdef", "0123456789abcde0", "0123456789abcde1"]
+
+  // A signature blob far larger than one photo warrants is rejected as corrupt,
+  // sized against the count the ingest reported rather than a fixed ceiling.
+  const oversizedSignatures = zipSync({
+    "manifest.json": strToU8(
+      JSON.stringify({ version, photos: [{ id: ids[0], w: 20, h: 10 }] })
+    ),
+    "signatures-coarse.bin": new Uint8Array(256 * 1024),
+    [`thumbs/${ids[0]}.jpg`]: new Uint8Array([0xff, 0xd8, 0xff, 0xd9]),
+  })
+  await assert.rejects(
+    unpackArchive("workspace--dataset--v1", packStream(oversizedSignatures), {
+      expectedVersion: version,
+      expectedPhotoCount: 1,
+    }),
+    /unexpectedly large/
+  )
+
+  // A manifest declaring far more photos than the dataset should hold is corrupt.
+  const tooManyPhotos = zipSync({
+    "manifest.json": strToU8(
+      JSON.stringify({
+        version,
+        photos: ids.map((id) => ({ id, w: 20, h: 10 })),
+      })
+    ),
+    "signatures-coarse.bin": new Uint8Array(ids.length * 384),
+  })
+  await assert.rejects(
+    unpackArchive("workspace--dataset--v1", packStream(tooManyPhotos), {
+      expectedVersion: version,
+      expectedPhotoCount: 1,
+    }),
+    /invalid manifest/
+  )
+
+  // The same signature blob loads cleanly once the expected count matches it,
+  // proving a large but legitimate library is not mistaken for a corrupt one.
+  const legit = zipSync({
+    "manifest.json": strToU8(
+      JSON.stringify({
+        photos: ids.map((id) => ({ id, w: 20, h: 10 })),
+        version,
+      })
+    ),
+    "signatures-coarse.bin": new Uint8Array(ids.length * 384),
+    ...Object.fromEntries(
+      ids.map((id) => [`thumbs/${id}.jpg`, new Uint8Array([0xff, 0xd8, 0xff, 0xd9])])
+    ),
+  })
+  const pack = await unpackArchive("workspace--dataset--v1", packStream(legit), {
+    expectedVersion: version,
+    expectedPhotoCount: ids.length,
+  })
+  assert.equal(pack.manifest.photos.length, ids.length)
+  pack.release()
+})
+
 test("status progress writes are serialized", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "roboflow-status-test-"))
   process.env.ROBOFLOW_CACHE_DIR = root

@@ -25,6 +25,7 @@ export async function loadRoboflowLibrary(
   slug: string,
   options: {
     expectedVersion?: string | null
+    expectedPhotoCount?: number | null
     onProgress?: (progress: PackProgress) => void
     signal?: AbortSignal
   } = {}
