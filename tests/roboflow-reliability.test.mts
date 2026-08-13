@@ -4,15 +4,13 @@ import { tmpdir } from "node:os"
 import path from "node:path"
 import test from "node:test"
 
-import { strToU8, zipSync } from "fflate"
-
 import {
   INGEST_RATE_LIMIT,
   INGEST_RATE_WINDOW_MS,
   GLOBAL_INGEST_RATE_LIMIT,
   nextRateRecord,
 } from "../lib/roboflow-control"
-import { unpackArchive } from "../lib/roboflow-pack"
+import { acquirePack, releasePack } from "../lib/roboflow-pack"
 import { MosaicEngine } from "../lib/mosaic-client"
 import { buildMosaicGeometry } from "../lib/mosaic-geometry"
 
@@ -79,115 +77,142 @@ test("zoom geometry skips tiles whose image URL is not ready", () => {
   assert.equal(geometry.tiles[0]?.url, "blob:ready")
 })
 
-test("streaming pack parser accepts tiny chunks and verifies versions", async () => {
-  const id = "0123456789abcdef"
-  const version = "2026-08-12T00:00:00.000Z"
-  const archive = zipSync({
-    "manifest.json": strToU8(
-      JSON.stringify({ version, photos: [{ id, w: 20, h: 10 }] })
-    ),
-    "signatures-coarse.bin": new Uint8Array(384),
-    [`thumbs/${id}.jpg`]: new Uint8Array([0xff, 0xd8, 0xff, 0xd9]),
-  })
-  const stream = new ReadableStream<Uint8Array>({
-    start(controller) {
-      for (let offset = 0; offset < archive.length; offset += 7) {
-        controller.enqueue(archive.subarray(offset, offset + 7))
-      }
-      controller.close()
-    },
-  })
-  const pack = await unpackArchive("workspace--dataset--v1", stream, {
-    expectedVersion: version,
-  })
-  assert.equal(pack.manifest.photos.length, 1)
-  assert.equal(pack.signatures.length, 384)
-  assert.match(pack.thumbUrl(id) ?? "", /^blob:/)
-  pack.release()
-
-  await assert.rejects(
-    unpackArchive(
-      "workspace--dataset--v1",
-      new ReadableStream<Uint8Array>({
-        start(controller) {
-          controller.enqueue(archive)
-          controller.close()
-        },
-      }),
-      { expectedVersion: "stale-version" }
-    ),
-    /stale/
-  )
-})
-
-function packStream(archive: Uint8Array): ReadableStream<Uint8Array> {
-  return new ReadableStream<Uint8Array>({
-    start(controller) {
-      controller.enqueue(archive)
-      controller.close()
-    },
-  })
+// Serve the two files the loader is allowed to fetch, recording every request
+// so a test can prove no thumbnail was downloaded.
+function stubAssets(files: Record<string, Uint8Array>): {
+  restore: () => void
+  requested: string[]
+} {
+  const original = globalThis.fetch
+  const requested: string[] = []
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = typeof input === "string" ? input : String(input)
+    requested.push(url)
+    const match = Object.entries(files).find(([name]) =>
+      url.includes(`/${name}`)
+    )
+    if (!match) return new Response("Not found", { status: 404 })
+    const body = match[1]
+    return new Response(body as BodyInit, {
+      headers: { "content-length": String(body.byteLength) },
+    })
+  }) as typeof globalThis.fetch
+  return { restore: () => (globalThis.fetch = original), requested }
 }
 
-test("pack guards scale with the published photo count", async () => {
+function manifestBytes(version: string, ids: string[]): Uint8Array {
+  return new TextEncoder().encode(
+    JSON.stringify({ version, photos: ids.map((id) => ({ id, w: 20, h: 10 })) })
+  )
+}
+
+test("the loader fetches only the manifest and signatures", async () => {
+  const version = "2026-08-12T00:00:00.000Z"
+  const ids = ["0123456789abcdef", "0123456789abcde0"]
+  const stub = stubAssets({
+    "manifest.json": manifestBytes(version, ids),
+    "signatures-coarse.bin": new Uint8Array(ids.length * 384),
+  })
+  try {
+    const slug = "workspace--only-two--v1"
+    const pack = await acquirePack(slug, {
+      expectedVersion: version,
+      expectedPhotoCount: ids.length,
+      hasIcon: true,
+    })
+
+    assert.equal(pack.manifest.photos.length, ids.length)
+    assert.equal(pack.signatures.length, ids.length * 384)
+
+    // The whole point: tiles are URLs, and no tile has been transferred.
+    assert.equal(stub.requested.length, 2)
+    assert.ok(!stub.requested.some((url) => url.includes("thumbs/")))
+    assert.match(pack.thumbUrl(ids[0]) ?? "", /\/api\/roboflow\/asset\/.*thumbs/)
+    assert.equal(pack.thumbUrl("ffffffffffffffff"), null)
+    assert.match(pack.iconUrl ?? "", /icon\.jpg/)
+
+    releasePack(slug)
+  } finally {
+    stub.restore()
+  }
+})
+
+test("loader guards scale with the published photo count", async () => {
   const version = "2026-08-12T00:00:00.000Z"
   const ids = ["0123456789abcdef", "0123456789abcde0", "0123456789abcde1"]
 
   // A signature blob far larger than one photo warrants is rejected as corrupt,
   // sized against the count the ingest reported rather than a fixed ceiling.
-  const oversizedSignatures = zipSync({
-    "manifest.json": strToU8(
-      JSON.stringify({ version, photos: [{ id: ids[0], w: 20, h: 10 }] })
-    ),
+  const oversized = stubAssets({
+    "manifest.json": manifestBytes(version, [ids[0]]),
     "signatures-coarse.bin": new Uint8Array(256 * 1024),
-    [`thumbs/${ids[0]}.jpg`]: new Uint8Array([0xff, 0xd8, 0xff, 0xd9]),
   })
-  await assert.rejects(
-    unpackArchive("workspace--dataset--v1", packStream(oversizedSignatures), {
-      expectedVersion: version,
-      expectedPhotoCount: 1,
-    }),
-    /unexpectedly large/
-  )
+  try {
+    await assert.rejects(
+      acquirePack("workspace--oversized--v1", {
+        expectedVersion: version,
+        expectedPhotoCount: 1,
+      }),
+      /unexpectedly large/
+    )
+  } finally {
+    oversized.restore()
+  }
 
   // A manifest declaring far more photos than the dataset should hold is corrupt.
-  const tooManyPhotos = zipSync({
-    "manifest.json": strToU8(
-      JSON.stringify({
-        version,
-        photos: ids.map((id) => ({ id, w: 20, h: 10 })),
-      })
-    ),
+  const tooMany = stubAssets({
+    "manifest.json": manifestBytes(version, ids),
     "signatures-coarse.bin": new Uint8Array(ids.length * 384),
   })
-  await assert.rejects(
-    unpackArchive("workspace--dataset--v1", packStream(tooManyPhotos), {
-      expectedVersion: version,
-      expectedPhotoCount: 1,
-    }),
-    /invalid manifest/
-  )
+  try {
+    await assert.rejects(
+      acquirePack("workspace--too-many--v1", {
+        expectedVersion: version,
+        expectedPhotoCount: 1,
+      }),
+      /manifest is invalid/
+    )
+  } finally {
+    tooMany.restore()
+  }
 
-  // The same signature blob loads cleanly once the expected count matches it,
-  // proving a large but legitimate library is not mistaken for a corrupt one.
-  const legit = zipSync({
-    "manifest.json": strToU8(
-      JSON.stringify({
-        photos: ids.map((id) => ({ id, w: 20, h: 10 })),
-        version,
-      })
-    ),
+  // The same files load cleanly once the expected count matches them, proving a
+  // large but legitimate library is not mistaken for a corrupt one.
+  const legit = stubAssets({
+    "manifest.json": manifestBytes(version, ids),
     "signatures-coarse.bin": new Uint8Array(ids.length * 384),
-    ...Object.fromEntries(
-      ids.map((id) => [`thumbs/${id}.jpg`, new Uint8Array([0xff, 0xd8, 0xff, 0xd9])])
-    ),
   })
-  const pack = await unpackArchive("workspace--dataset--v1", packStream(legit), {
-    expectedVersion: version,
-    expectedPhotoCount: ids.length,
+  try {
+    const slug = "workspace--legit--v1"
+    const pack = await acquirePack(slug, {
+      expectedVersion: version,
+      expectedPhotoCount: ids.length,
+    })
+    assert.equal(pack.manifest.photos.length, ids.length)
+    releasePack(slug)
+  } finally {
+    legit.restore()
+  }
+})
+
+test("a re-ingested library is reported as stale rather than mixed in", async () => {
+  const stub = stubAssets({
+    "manifest.json": manifestBytes("2026-08-12T00:00:00.000Z", [
+      "0123456789abcdef",
+    ]),
+    "signatures-coarse.bin": new Uint8Array(384),
   })
-  assert.equal(pack.manifest.photos.length, ids.length)
-  pack.release()
+  try {
+    await assert.rejects(
+      acquirePack("workspace--stale--v1", {
+        expectedVersion: "2026-08-13T00:00:00.000Z",
+        expectedPhotoCount: 1,
+      }),
+      /re-ingested/
+    )
+  } finally {
+    stub.restore()
+  }
 })
 
 test("status progress writes are serialized", async () => {

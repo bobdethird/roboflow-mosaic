@@ -131,7 +131,7 @@ export function universeUrl(ref: RoboflowRef & { version: number }): string {
 
 // ─── Client-side URLs for an ingested dataset ────────────────────────────────
 
-export const ROBOFLOW_PACK_BASE = "/api/roboflow/pack"
+export const ROBOFLOW_ASSET_BASE = "/api/roboflow/asset"
 export const ROBOFLOW_INGEST_PATH = "/api/roboflow/ingest"
 
 export const MANIFEST_FILE = "manifest.json"
@@ -139,13 +139,27 @@ export const COARSE_SIGNATURES_FILE = "signatures-coarse.bin"
 // The project's cover image, downloaded from Roboflow during the ingest.
 export const ICON_FILE = "icon.jpg"
 
-// The dataset's whole library as one zip. Everything the browser draws comes
-// out of this; see lib/roboflow-pack.ts.
-export function roboflowPackUrl(slug: string): string {
-  return `${ROBOFLOW_PACK_BASE}/${encodeURIComponent(slug)}`
+// One file of an ingested dataset. Tiles are fetched through here as they are
+// placed rather than arriving in one archive, so a mosaic only ever pays for
+// the images it actually uses; see lib/roboflow-pack.ts.
+//
+// `version` is the library version. It does not select anything — the route
+// serves whatever is current — but it makes the URL change on a re-ingest, so
+// the mutable files can be cached immutably instead of revalidated every load.
+export function roboflowAssetUrl(
+  slug: string,
+  relativePath: string,
+  version?: string | null
+): string {
+  const path = relativePath
+    .split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/")
+  const url = `${ROBOFLOW_ASSET_BASE}/${encodeURIComponent(slug)}/${path}`
+  return version ? `${url}?v=${encodeURIComponent(version)}` : url
 }
 
-// Path of a thumbnail inside the archive.
+// Path of a thumbnail within a dataset.
 export function roboflowThumbPath(id: string): string {
   return `thumbs/${id}.jpg`
 }

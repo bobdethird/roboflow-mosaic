@@ -58,13 +58,14 @@ export function RoboflowReferencePicker({
   const [pack, setPack] = React.useState<RoboflowPack | null>(null)
   const [shown, setShown] = React.useState(PAGE_SIZE)
 
-  const { slug, libraryVersion, imageCount } = dataset
+  const { slug, libraryVersion, imageCount, hasIcon } = dataset
 
   React.useEffect(() => {
     let cancelled = false
     void acquirePack(slug, {
       expectedVersion: libraryVersion ?? null,
       expectedPhotoCount: imageCount,
+      hasIcon,
     }).then(
       (loaded) => {
         if (!cancelled) setPack(loaded)
@@ -82,7 +83,7 @@ export function RoboflowReferencePicker({
       cancelled = true
       releasePack(slug)
     }
-  }, [slug, libraryVersion, imageCount])
+  }, [slug, libraryVersion, imageCount, hasIcon])
 
   const ids = React.useMemo(
     () => pack?.manifest.photos.map((photo) => photo.id) ?? null,
@@ -195,8 +196,10 @@ export function RoboflowReferencePicker({
                           onClick={() => void pickFromDataset(id)}
                           className="focus-visible:ring-ring overflow-hidden rounded-lg border transition hover:opacity-80 focus-visible:ring-2 focus-visible:outline-none"
                         >
-                          {/* An object url into the downloaded archive; there is
-                              nothing for next/image's optimizer to do. */}
+                          {/* Already a dataset-sized thumbnail, so there is
+                              nothing for next/image's optimizer to do. Native
+                              lazy loading means scrolling the grid is what
+                              fetches these, a page at a time. */}
                           {/* eslint-disable-next-line @next/next/no-img-element */}
                           <img
                             src={src}

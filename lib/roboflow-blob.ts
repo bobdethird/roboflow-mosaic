@@ -5,9 +5,10 @@
 // stream and uploaded once — a single PUT, not one per thumbnail or a second
 // archive written to /tmp.
 //
-// Nothing downloads that zip back onto a server. The browser fetches it whole
-// from the Blob CDN and reads every tile out of it locally (lib/roboflow-pack.ts),
-// so no instance ever needs the dataset on disk except the one that built it.
+// Nothing downloads that zip in full, on either side. The asset route reads
+// single files out of it with byte-range requests (lib/roboflow-archive.ts), so
+// no instance ever needs the dataset on disk except the one that built it, and
+// the browser only ever receives the tiles it actually draws.
 
 import { head, put } from "@vercel/blob"
 import { readdir, readFile } from "node:fs/promises"
@@ -169,19 +170,6 @@ function libraryArchiveNodeStream(
   // @types/yazl declares the minimal NodeJS interface, but this is a
   // stream.PassThrough at runtime.
   return zipfile.outputStream as Readable
-}
-
-// The archive as a stream, built on the fly from a dataset directory. Used by
-// the pack route when there is no Blob store to redirect the browser to, which
-// is the normal case in local development.
-export async function libraryArchiveStream(
-  directory: string
-): Promise<ReadableStream<Uint8Array> | null> {
-  const files = await libraryFiles(directory)
-  if (!files.length) return null
-  return Readable.toWeb(
-    libraryArchiveNodeStream(directory, files)
-  ) as ReadableStream<Uint8Array>
 }
 
 export async function publishFile(

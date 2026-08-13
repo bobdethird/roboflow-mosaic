@@ -563,11 +563,11 @@ function LibraryStatus({
         />
       </div>
       <p className="text-xs text-muted-foreground tabular-nums">
-        {progress.step === "unpacking"
-          ? "Unpacking the dataset…"
+        {progress.step === "preparing"
+          ? "Preparing the dataset…"
           : pct === null
-            ? `Downloading the dataset — ${megabytes(progress.loaded)}`
-            : `Downloading the dataset — ${pct}%`}
+            ? `Loading the dataset — ${megabytes(progress.loaded)}`
+            : `Loading the dataset — ${pct}%`}
       </p>
     </div>
   )

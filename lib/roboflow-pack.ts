@@ -1,25 +1,24 @@
-// The browser's copy of an ingested dataset.
+// The browser's handle on an ingested dataset.
 //
-// A mosaic uses almost every photo in its library — tile reuse is capped, and a
-// mosaic has tens of thousands of cells — so fetching thumbnails one at a time
-// was thousands of requests to move bytes the page was always going to need.
-// Instead the whole library arrives as one zip and lives here: the manifest,
-// the signature blob, the cover, and every thumbnail.
+// Only two files are actually downloaded: the manifest (every photo's id and
+// dimensions) and the coarse signature blob the worker matches against. Those
+// are all a mosaic needs to decide which photo goes in which cell, and together
+// they are a small fraction of the library.
 //
-// Once unpacked, each tile gets an object url. The mosaic worker, the hover
-// popup, the zoom overlay, and the reference picker all read those, so after
-// this download the page makes no further requests for dataset bytes.
+// Thumbnails are not downloaded here at all. A mosaic paints far fewer tiles
+// than a large dataset contains, and the reference grid shows a page at a time,
+// so `thumbUrl` hands back a URL into the asset route and the image is fetched
+// only when something actually draws it. The bytes for an unused photo are
+// never transferred.
 //
-// The archive is kept in IndexedDB under its library version, so a reload skips
-// the download and a re-ingest (which stamps a new version) does not.
-
-import { Unzip, UnzipInflate, type UnzipFile } from "fflate"
+// Both files are requested with the library version on the URL and served
+// immutably, so a reload is an HTTP cache hit rather than a second download.
 
 import {
   COARSE_SIGNATURES_FILE,
   ICON_FILE,
   MANIFEST_FILE,
-  roboflowPackUrl,
+  roboflowAssetUrl,
   roboflowThumbPath,
 } from "./roboflow"
 import { MIB } from "./roboflow-limits"
@@ -29,7 +28,7 @@ export type PackProgress = {
   // Bytes received so far, and the total when the server declared one.
   loaded: number
   total: number
-  step: "downloading" | "unpacking"
+  step: "downloading" | "preparing"
 }
 
 export type RoboflowPack = {
@@ -37,10 +36,10 @@ export type RoboflowPack = {
   version: string
   manifest: PackManifest
   signatures: Uint8Array
+  // The project's cover, when the ingest saved one.
   iconUrl: string | null
-  // Object url for a tile, or null when the archive has no such thumbnail.
+  // Where to fetch a tile. Nothing is downloaded until a caller uses it.
   thumbUrl: (id: string) => string | null
-  // Revoke every object url. The pack is unusable afterwards.
   release: () => void
 }
 
@@ -49,22 +48,14 @@ export type PackManifest = {
   photos: { id: string; w: number; h: number; file?: string }[]
 }
 
-const DB_NAME = "roboflow-packs"
-const DB_VERSION = 1
-const STORE = "archives"
-
-// The archive comes off a public CDN URL, so a corrupt or hostile zip could
-// declare an entry far larger than the tab can buffer. The guards below exist
-// only to stop that — they are not a limit on how big a real dataset may be.
+// The manifest and the signature blob are buffered whole, so a corrupt or
+// hostile response could otherwise make the tab allocate without bound. Both
+// scale linearly with the photo count the ingest published, so their ceilings
+// are derived from it with headroom rather than fixed — a fixed ceiling is a
+// limit on dataset size in disguise, and eventually a real dataset crosses it.
 //
-// `icon.jpg` and each `thumbs/*.jpg` do not grow with the dataset, so they keep
-// fixed ceilings. `manifest.json` and `signatures-coarse.bin` both scale
-// linearly with the photo count, so their ceilings are derived from the count
-// the ingest already published (`expectedPhotoCount`) with headroom, letting a
-// legitimate library of any size through while still rejecting one that
-// balloons well past what this dataset should contain.
-const MAX_ICON_BYTES = 12 * MIB
-const MAX_THUMB_BYTES = 2 * MIB
+// Thumbnails need no such guard now: each one is its own response, decoded by
+// the image pipeline rather than buffered here.
 
 // Padded well above the ~150 bytes/photo a real manifest weighs, so long image
 // filenames never trip it.
@@ -72,19 +63,18 @@ const MANIFEST_BYTES_PER_PHOTO = 256
 const MANIFEST_OVERHEAD_BYTES = 64 * 1024
 // Signatures are exactly `COARSE_SIG_BYTES` per photo; the overhead is slack.
 const SIGNATURE_OVERHEAD_BYTES = 64 * 1024
-// A hostile archive has to more than double the expected size to be rejected,
+// A hostile response has to more than double the expected size to be rejected,
 // which keeps buffered memory bounded to ~2x what the dataset legitimately needs
 // while tolerating any reasonable drift between the reported and packed counts.
 const ENTRY_SIZE_SAFETY_MULTIPLE = 2
 const PHOTO_COUNT_SAFETY_MULTIPLE = 2
 
-// Last-resort ceilings that apply when `expectedPhotoCount` is unknown, so a
-// missing count can never let a single entry or the photo list grow unbounded.
+// Last-resort ceilings for when the expected count is unknown, so a missing
+// count can never let a response or the photo list grow unbounded.
 const ABSOLUTE_MAX_ENTRY_BYTES = 1024 * MIB
 const ABSOLUTE_MAX_PHOTOS = 5_000_000
 
-// The manifest/signature ceiling for a scaling entry, given the expected count.
-function scaledEntryLimit(
+function scaledLimit(
   perPhoto: number,
   overhead: number,
   expectedPhotoCount?: number | null
@@ -97,148 +87,6 @@ function scaledEntryLimit(
   return Math.min(ABSOLUTE_MAX_ENTRY_BYTES, scaled)
 }
 
-type StoredPack = {
-  slug: string
-  version: string
-  archive?: Blob
-  // Version-1 cache records stored one ArrayBuffer. Read it once and migrate.
-  bytes?: ArrayBuffer
-}
-
-function openDb(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, DB_VERSION)
-    request.onupgradeneeded = () => {
-      if (!request.result.objectStoreNames.contains(STORE)) {
-        request.result.createObjectStore(STORE, { keyPath: "slug" })
-      }
-    }
-    request.onsuccess = () => resolve(request.result)
-    request.onerror = () => reject(request.error)
-  })
-}
-
-function promisify<T>(request: IDBRequest<T>): Promise<T> {
-  return new Promise((resolve, reject) => {
-    request.onsuccess = () => resolve(request.result)
-    request.onerror = () => reject(request.error)
-  })
-}
-
-// IndexedDB is a cache here, never a source of truth — every failure just means
-// the archive gets downloaded again.
-async function withStore<T>(
-  mode: IDBTransactionMode,
-  run: (store: IDBObjectStore) => Promise<T>
-): Promise<T | null> {
-  if (typeof indexedDB === "undefined") return null
-  let db: IDBDatabase | null = null
-  try {
-    db = await openDb()
-    return await run(db.transaction(STORE, mode).objectStore(STORE))
-  } catch {
-    return null
-  } finally {
-    db?.close()
-  }
-}
-
-async function readStored(slug: string): Promise<StoredPack | null> {
-  return withStore("readonly", async (store) => {
-    const found = await promisify<StoredPack | undefined>(store.get(slug))
-    return found ?? null
-  })
-}
-
-// Keep only this dataset: a library is tens of megabytes and the page shows one
-// at a time, so holding onto the others just crowds the origin's storage quota.
-async function writeStored(pack: StoredPack): Promise<void> {
-  await withStore("readwrite", async (store) => {
-    const keys = await promisify<IDBValidKey[]>(store.getAllKeys())
-    for (const key of keys) {
-      if (key !== pack.slug) await promisify(store.delete(key))
-    }
-    await promisify(store.put(pack))
-    return null
-  })
-}
-
-async function forgetPack(slug: string): Promise<void> {
-  await withStore("readwrite", async (store) => {
-    await promisify(store.delete(slug))
-    return null
-  })
-}
-
-const TEXT = new TextDecoder()
-
-function joinChunks(chunks: Uint8Array[], length: number): Uint8Array {
-  if (chunks.length === 1) return chunks[0]
-  const output = new Uint8Array(length)
-  let offset = 0
-  for (const chunk of chunks) {
-    output.set(chunk, offset)
-    offset += chunk.length
-  }
-  return output
-}
-
-function readZipFile(
-  file: UnzipFile,
-  onChunk: (chunk: Uint8Array) => void
-): Promise<void> {
-  return new Promise((resolve, reject) => {
-    file.ondata = (error, chunk, final) => {
-      if (error) {
-        reject(error)
-        return
-      }
-      try {
-        if (chunk.length) onChunk(chunk)
-      } catch (chunkError) {
-        reject(chunkError)
-        return
-      }
-      if (final) resolve()
-    }
-    try {
-      file.start()
-    } catch (error) {
-      reject(error)
-    }
-  })
-}
-
-type UnpackedParts = {
-  manifest: Uint8Array | null
-  signatures: Uint8Array | null
-  urls: Map<string, string>
-}
-
-function maxEntryBytes(
-  name: string,
-  expectedPhotoCount?: number | null
-): number {
-  if (name === MANIFEST_FILE) {
-    return scaledEntryLimit(
-      MANIFEST_BYTES_PER_PHOTO,
-      MANIFEST_OVERHEAD_BYTES,
-      expectedPhotoCount
-    )
-  }
-  if (name === COARSE_SIGNATURES_FILE) {
-    return scaledEntryLimit(
-      COARSE_SIG_BYTES,
-      SIGNATURE_OVERHEAD_BYTES,
-      expectedPhotoCount
-    )
-  }
-  if (name === ICON_FILE) return MAX_ICON_BYTES
-  return MAX_THUMB_BYTES
-}
-
-// How many photos a manifest may declare before it looks corrupt: scaled from
-// the published count, or the absolute floor when that count is unknown.
 function maxPhotoCount(expectedPhotoCount?: number | null): number {
   if (!expectedPhotoCount || expectedPhotoCount <= 0) return ABSOLUTE_MAX_PHOTOS
   return Math.min(
@@ -246,6 +94,8 @@ function maxPhotoCount(expectedPhotoCount?: number | null): number {
     Math.ceil(expectedPhotoCount * PHOTO_COUNT_SAFETY_MULTIPLE)
   )
 }
+
+const TEXT = new TextDecoder()
 
 function parseManifest(
   bytes: Uint8Array,
@@ -267,221 +117,82 @@ function parseManifest(
         !Number.isFinite(photo.h)
     )
   ) {
-    throw new Error("The dataset archive contains an invalid manifest.")
+    throw new Error("The dataset's manifest is invalid.")
   }
   return value as PackManifest
 }
 
-function buildPack(
-  slug: string,
-  parts: UnpackedParts,
-  expectedVersion?: string | null,
-  expectedPhotoCount?: number | null
-): RoboflowPack {
-  const manifestBytes = parts.manifest
-  const signatures = parts.signatures
-  if (!manifestBytes || !signatures) {
-    throw new Error("The dataset archive is missing its manifest.")
-  }
-  const manifest = parseManifest(manifestBytes, expectedPhotoCount)
-  if (expectedVersion && manifest.version !== expectedVersion) {
-    throw new Error(
-      "The downloaded dataset is stale. Reload to fetch the newly published version."
-    )
-  }
-
-  const used = new Set<string>()
-  for (const photo of manifest.photos ?? []) {
-    used.add(roboflowThumbPath(photo.id))
-  }
-  used.add(ICON_FILE)
-  for (const [name, url] of parts.urls) {
-    if (!used.has(name)) {
-      URL.revokeObjectURL(url)
-      parts.urls.delete(name)
-    }
-  }
-  const iconUrl = parts.urls.get(ICON_FILE) ?? null
-
-  return {
-    slug,
-    version: manifest.version,
-    manifest,
-    signatures,
-    iconUrl,
-    thumbUrl: (id) => parts.urls.get(roboflowThumbPath(id)) ?? null,
-    release: () => {
-      for (const url of parts.urls.values()) URL.revokeObjectURL(url)
-      parts.urls.clear()
-    },
-  }
-}
-
-type UnpackOptions = {
-  expectedVersion?: string | null
-  // The photo count the ingest published for this dataset, used to size the
-  // manifest/signature guards. Undefined falls back to the absolute floors.
-  expectedPhotoCount?: number | null
+type FetchOptions = {
+  limit: number
   signal?: AbortSignal
-  total?: number
-  onProgress?: (progress: PackProgress) => void
-  onArchiveChunk?: (chunk: Uint8Array) => void
+  // Called with each chunk's length and the declared total, if there was one.
+  onChunk?: (added: number, total: number) => void
 }
 
-export async function unpackArchive(
-  slug: string,
-  stream: ReadableStream<Uint8Array>,
-  options: UnpackOptions = {}
-): Promise<RoboflowPack> {
-  const parts: UnpackedParts = {
-    manifest: null,
-    signatures: null,
-    urls: new Map(),
-  }
-  const pending: Promise<void>[] = []
-  let streamError: unknown = null
-
-  const unzipper = new Unzip((file) => {
-    const wanted =
-      file.name === MANIFEST_FILE ||
-      file.name === COARSE_SIGNATURES_FILE ||
-      file.name === ICON_FILE ||
-      (file.name.startsWith("thumbs/") && file.name.endsWith(".jpg"))
-    if (!wanted) return
-    const entryLimit = maxEntryBytes(file.name, options.expectedPhotoCount)
-    if (file.originalSize !== undefined && file.originalSize > entryLimit) {
-      streamError = new Error("A dataset archive entry is unexpectedly large.")
-      return
-    }
-
-    const chunks: Uint8Array[] = []
-    let length = 0
-    const task = readZipFile(file, (chunk) => {
-      length += chunk.length
-      if (length > entryLimit) {
-        throw new Error("A dataset archive entry is unexpectedly large.")
-      }
-      chunks.push(chunk)
-    })
-      .then(() => {
-        const bytes = joinChunks(chunks, length)
-        if (file.name === MANIFEST_FILE) parts.manifest = bytes
-        else if (file.name === COARSE_SIGNATURES_FILE) parts.signatures = bytes
-        else {
-          const previous = parts.urls.get(file.name)
-          if (previous) URL.revokeObjectURL(previous)
-          parts.urls.set(
-            file.name,
-            URL.createObjectURL(
-              new Blob([bytes as BlobPart], { type: "image/jpeg" })
-            )
-          )
-        }
-      })
-      .catch((error: unknown) => {
-        streamError ??= error
-      })
-    pending.push(task)
-  })
-  unzipper.register(UnzipInflate)
-
-  const reader = stream.getReader()
-  let loaded = 0
-  try {
-    for (;;) {
-      options.signal?.throwIfAborted()
-      const { done, value } = await reader.read()
-      if (done) break
-      loaded += value.length
-      options.onArchiveChunk?.(value)
-      unzipper.push(value)
-      if (streamError) throw streamError
-      options.onProgress?.({
-        loaded,
-        total: options.total ?? 0,
-        step: "downloading",
-      })
-    }
-    unzipper.push(new Uint8Array(), true)
-    await Promise.all(pending)
-    if (streamError) throw streamError
-    return buildPack(
-      slug,
-      parts,
-      options.expectedVersion,
-      options.expectedPhotoCount
-    )
-  } catch (error) {
-    void reader.cancel(error).catch(() => undefined)
-    for (const url of parts.urls.values()) URL.revokeObjectURL(url)
-    parts.urls.clear()
-    throw error
-  }
-}
-
-function storedArchive(stored: StoredPack): Blob | null {
-  if (stored.archive instanceof Blob) return stored.archive
-  if (stored.bytes) return new Blob([stored.bytes], { type: "application/zip" })
-  return null
-}
-
-async function downloadPack(
-  slug: string,
-  options: LoadPackOptions
-): Promise<{ pack: RoboflowPack; archive: Blob }> {
-  const {
-    expectedVersion,
-    expectedPhotoCount,
-    onProgress = () => {},
-    signal,
-  } = options
-  const response = await fetch(roboflowPackUrl(slug), { signal })
+// Download one file, enforcing its ceiling as the bytes arrive so an oversized
+// response is abandoned rather than buffered to completion.
+async function fetchFile(
+  url: string,
+  { limit, signal, onChunk }: FetchOptions
+): Promise<Uint8Array> {
+  const response = await fetch(url, { signal })
   if (!response.ok) {
-    throw new Error(`Could not download the dataset (${response.status}).`)
+    throw new Error(`Could not load the dataset (${response.status}).`)
   }
   const total = Number(response.headers.get("content-length") ?? 0)
-
+  if (total > limit) {
+    await response.body?.cancel()
+    throw new Error("A dataset file is unexpectedly large.")
+  }
   if (!response.body) {
-    const archive = await response.blob()
-    const pack = await unpackArchive(slug, archive.stream(), {
-      expectedVersion,
-      expectedPhotoCount,
-      signal,
-      total: archive.size,
-      onProgress,
-    })
-    return { pack, archive }
+    const bytes = new Uint8Array(await response.arrayBuffer())
+    if (bytes.length > limit) {
+      throw new Error("A dataset file is unexpectedly large.")
+    }
+    onChunk?.(bytes.length, total)
+    return bytes
   }
 
-  const chunks: BlobPart[] = []
-  const pack = await unpackArchive(slug, response.body, {
-    expectedVersion,
-    expectedPhotoCount,
-    signal,
-    total,
-    onProgress,
-    onArchiveChunk: (chunk) => chunks.push(chunk as BlobPart),
-  })
-  return {
-    pack,
-    archive: new Blob(chunks, { type: "application/zip" }),
+  const reader = response.body.getReader()
+  const chunks: Uint8Array[] = []
+  let length = 0
+  try {
+    for (;;) {
+      signal?.throwIfAborted()
+      const { done, value } = await reader.read()
+      if (done) break
+      length += value.length
+      if (length > limit) {
+        throw new Error("A dataset file is unexpectedly large.")
+      }
+      chunks.push(value)
+      onChunk?.(value.length, total)
+    }
+  } catch (error) {
+    void reader.cancel(error).catch(() => undefined)
+    throw error
   }
+
+  if (chunks.length === 1) return chunks[0]
+  const bytes = new Uint8Array(length)
+  let offset = 0
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset)
+    offset += chunk.length
+  }
+  return bytes
 }
 
 export type LoadPackOptions = {
   expectedVersion?: string | null
-  // The photo count the ingest published, forwarded to the unpack guards so a
-  // large but legitimate library is not mistaken for a corrupt archive.
+  // The photo count the ingest published, used to size the guards above.
   expectedPhotoCount?: number | null
+  // Whether the ingest saved a project cover, which decides `iconUrl`.
+  hasIcon?: boolean
   onProgress?: (progress: PackProgress) => void
   signal?: AbortSignal
 }
 
-// Get the dataset into the browser, from IndexedDB when it is already there.
-//
-// `expectedVersion` is the manifest version the page is expecting (from the
-// ingest status). A stored archive that does not match it is stale — a
-// re-ingest happened — so it is discarded rather than served.
 async function loadPack(
   slug: string,
   options: LoadPackOptions = {}
@@ -489,44 +200,76 @@ async function loadPack(
   const {
     expectedVersion,
     expectedPhotoCount,
+    hasIcon,
     onProgress = () => {},
     signal,
   } = options
 
-  const stored = await readStored(slug)
-  if (stored && (!expectedVersion || stored.version === expectedVersion)) {
-    const archive = storedArchive(stored)
-    try {
-      if (!archive) throw new Error("Bad cache")
-      onProgress({ loaded: 0, total: 0, step: "unpacking" })
-      const pack = await unpackArchive(slug, archive.stream(), {
-        expectedVersion,
-        expectedPhotoCount,
-        signal,
-      })
-      // Migrate old ArrayBuffer records without retaining a second copy.
-      if (!stored.archive) {
-        await writeStored({ slug, version: pack.version, archive })
-      }
-      return pack
-    } catch (error) {
-      if (signal?.aborted) throw signal.reason ?? error
-      // A corrupt cache entry is not worth diagnosing; fetch it again.
-      await forgetPack(slug)
-    }
+  // Both totals only become known once each response's headers arrive, so
+  // progress is reported against whatever has been declared so far.
+  let loaded = 0
+  const totals = new Map<string, number>()
+  const report = (key: string) => (added: number, total: number) => {
+    loaded += added
+    if (total) totals.set(key, total)
+    let combined = 0
+    for (const value of totals.values()) combined += value
+    onProgress({ loaded, total: totals.size === 2 ? combined : 0, step: "downloading" })
   }
 
-  const { pack, archive } = await downloadPack(slug, options)
-  onProgress({ loaded: archive.size, total: archive.size, step: "unpacking" })
-  await writeStored({ slug, version: pack.version, archive })
-  return pack
+  const [manifestBytes, signatures] = await Promise.all([
+    fetchFile(roboflowAssetUrl(slug, MANIFEST_FILE, expectedVersion), {
+      limit: scaledLimit(
+        MANIFEST_BYTES_PER_PHOTO,
+        MANIFEST_OVERHEAD_BYTES,
+        expectedPhotoCount
+      ),
+      signal,
+      onChunk: report(MANIFEST_FILE),
+    }),
+    fetchFile(roboflowAssetUrl(slug, COARSE_SIGNATURES_FILE, expectedVersion), {
+      limit: scaledLimit(
+        COARSE_SIG_BYTES,
+        SIGNATURE_OVERHEAD_BYTES,
+        expectedPhotoCount
+      ),
+      signal,
+      onChunk: report(COARSE_SIGNATURES_FILE),
+    }),
+  ])
+
+  onProgress({ loaded, total: loaded, step: "preparing" })
+  const manifest = parseManifest(manifestBytes, expectedPhotoCount)
+  if (expectedVersion && manifest.version !== expectedVersion) {
+    throw new Error(
+      "The dataset was re-ingested. Reload to fetch the new version."
+    )
+  }
+
+  const ids = new Set(manifest.photos.map((photo) => photo.id))
+  return {
+    slug,
+    version: manifest.version,
+    manifest,
+    signatures,
+    iconUrl: hasIcon
+      ? roboflowAssetUrl(slug, ICON_FILE, manifest.version)
+      : null,
+    // No fetch happens here — the URL is resolved when an <img> or the worker
+    // asks for it, so a photo the mosaic never places is never transferred.
+    thumbUrl: (id) =>
+      ids.has(id) ? roboflowAssetUrl(slug, roboflowThumbPath(id)) : null,
+    // Nothing to free: tiles live in the browser's HTTP cache, not in object
+    // urls this module owns.
+    release: () => {},
+  }
 }
 
 // ─── Sharing one pack between the canvas and the reference picker ────────────
 //
-// Both mount at once and both want every thumbnail. Loading twice would mean
-// two downloads and two sets of object urls for identical bytes, so callers
-// take a reference instead and the last one to let go frees it.
+// Both mount at once and both want the manifest. Loading twice would mean two
+// downloads of identical bytes, so callers take a reference instead and the
+// last one to let go frees it.
 //
 // Progress is broadcast rather than tied to whoever happened to ask first: the
 // picker is a child of the canvas, so its effect runs first and it would
@@ -593,11 +336,6 @@ export function releasePack(slug: string): void {
   entry.refs -= 1
   if (entry.refs > 0) return
   live.delete(slug)
-  // Stop a download/unpack nobody can use. If it already finished, abort is a
-  // no-op and the resolved pack's URLs are released below.
+  // Stop a download nobody can use. If it already finished, abort is a no-op.
   entry.controller.abort(new DOMException("Pack released", "AbortError"))
-  void entry.promise.then(
-    (pack) => pack.release(),
-    () => {}
-  )
 }

@@ -53,6 +53,7 @@ export function roboflowSource(dataset: RoboflowDataset): MosaicSource {
       const library = await loadRoboflowLibrary(dataset.slug, {
         expectedVersion: dataset.libraryVersion ?? null,
         expectedPhotoCount: dataset.imageCount,
+        hasIcon: dataset.hasIcon,
         ...options,
       })
       pack = library.pack
