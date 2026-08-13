@@ -16,7 +16,12 @@ export type RoboflowDataset = RoboflowRef & {
   slug: string
   // Human label, from the Roboflow project record when available.
   name: string
+  // Tiles in the built library.
   imageCount: number
+  // Images the dataset holds. Larger than `imageCount` when the dataset has more
+  // images than a mosaic can use, in which case the library is an even sample of
+  // it rather than all of it.
+  sourceImages?: number
   // Roboflow project type (object-detection, classification, ...).
   type?: string
   universeUrl: string
