@@ -23,52 +23,48 @@ pnpm dev
 The API key is free: roboflow.com → Settings → API Keys. Public Universe
 datasets still need one.
 
+### Deploying to Vercel
+
+Connect a public Vercel Blob store to the project before deploying. The ingest
+route requires both `ROBOFLOW_API_KEY` and the store-provided
+`BLOB_READ_WRITE_TOKEN`: Vercel's `/tmp` filesystem is only scratch space and is
+deleted after each finished or failed ingest. The completed library is streamed
+to Blob and the browser downloads it from the Blob CDN.
+
+To stay below the function's 500 MB scratch-space ceiling, deployments accept
+exports up to 320 MB and generated libraries up to 128 MB. Larger datasets fail
+with a size-limit message instead of filling the filesystem.
+
 ## How it works
 
 **1. Ingest (server, `lib/roboflow-ingest.ts`).** The URL is parsed into
 `workspace / project / version`; a missing version resolves to the project's
 latest. Roboflow is asked for a zip export (the format is chosen from the project
 type, falling back through the others — every format ships the same images, only
-the annotation sidecars differ), the zip is streamed down, and its images are
-extracted. Then one pass per image produces:
+the annotation sidecars differ). Images are decoded directly from that zip, so
+the full-resolution originals are not extracted to disk. One pass produces:
 
 - a **content-addressed id** (sha1 of the bytes), which also de-duplicates the
   augmented copies that Roboflow exports across splits,
 - a **16×16×3 colour signature**, packed into the 8×8 uint16 fixed-point format
   the mosaic worker compares on,
-- a **thumbnail** (384px long edge), and
-- a contribution to the **median image**.
+- a **thumbnail** (192px long edge).
 
 The project's cover image is downloaded alongside them (`project.icon` from the
-Roboflow API, capped at 1600px, aspect preserved). A project without one — or a
-local-folder ingest — just leaves the median as the only reference.
-
-Results land in `.roboflow-cache/<workspace>--<project>--v<n>/`, laid out exactly
-like the Supabase buckets the original engine reads (`manifest.json`,
-`signatures-coarse.bin`, `thumbs/<id>.jpg`), plus the two references:
-`reference.jpg` (the median) and `icon.jpg` (the cover).
-
-**The median.** Still computed and written as `reference.jpg`, though the UI no
-longer offers it — the reference is the cover or an image from the set. Every
-sampled image is folded into a per-pixel, per-channel value
-histogram, so the median runs over the whole dataset without ever holding it in
-memory. A median rather than a mean because the mean smears outliers into every
-pixel; the median keeps whatever structure the dataset actually shares — the
-framing, the background, the object that sits in the middle of every shot.
-
-Nothing is cropped out of the reference. The frame is the dataset's **own native
-size** (the size most of its images share, or the median width and height for a
-mixed set), and each image is resampled whole into it — so for the usual
-uniformly-sized export the map is 1:1 and no resampling happens at all. The only
-thing that can shrink the frame is the histogram's memory ceiling
-(width × height × 3 × 256 × 2 bytes, capped around a 512×512-equivalent), and
-that preserves the aspect ratio.
+Roboflow API, capped at 1600px, aspect preserved). Locally, results remain in
+`.roboflow-cache/<workspace>--<project>--v<n>/`. On Vercel, the library is
+streamed as one zip to Blob and the temporary build directory is deleted.
 
 **2. Generate (browser, unchanged engine + unchanged UI).** The reference is
 handed to the existing contour-flow generator: a Sobel edge-vector field, Voronoi
 cells pushed out of edges so cell borders settle along contours, one colour
 signature per cell, and a min-error tile per cell drawn rotated along the local
-contour. Tiles are fetched lazily, one thumbnail per placed cell.
+contour.
+
+The browser downloads the dataset archive once, unpacks it into object URLs, and
+caches the archive in IndexedDB. The canvas, hover preview, zoom view, and
+reference picker then share that one in-browser copy instead of making one HTTP
+request per thumbnail.
 
 **Where the tiles come from** is a `MosaicSource` (`lib/mosaic-source.ts`) —
 how the library loads and how a tile's URL is built. Today the only
@@ -82,38 +78,35 @@ single route to a reference image. The Roboflow picker offers the project cover
 and a grid of the dataset's own images, and hands back a `File` — exactly what
 the upload card produced, so nothing downstream changes.
 
-Ingests are slow (a large export is hundreds of megabytes), so the route starts
-one in the background and the page polls `status.json` for progress. Re-opening a
-dataset whose version is named in the URL is a pure cache hit — no API call.
-
-Picking **Project cover** for a dataset with none saved (one ingested before
-covers were fetched) pulls just that image via `/api/roboflow/cover` — no
-re-export. To rebuild a dataset from scratch, POST
-`{"url": …, "refresh": true}` to the ingest route.
+Ingests are slow, so the route starts one with Next.js `after()` and the page
+polls the ingest route for progress. Local status is written atomically; Vercel
+also publishes it to Blob so polls can land on another function instance.
+Re-opening a published dataset version is a cache hit. To rebuild one from
+scratch, POST `{"url": …, "refresh": true}` to the ingest route.
 
 ## Layout
 
-| Path | What |
-| --- | --- |
-| `app/roboflow/` | the page |
-| `components/roboflow-mosaic.tsx` | URL input → ingest → hand off to CanvasHero |
-| `components/roboflow-reference-picker.tsx` | project cover, or a grid of the dataset |
-| `lib/mosaic-source.ts` | where tiles come from (Roboflow) |
-| `lib/roboflow.ts` | URL parsing, slugs, asset URLs (shared client/server) |
-| `lib/roboflow-api.ts` | the two Roboflow REST calls |
-| `lib/roboflow-ingest.ts` | download, extract, tiles, signatures, median |
-| `lib/roboflow-store.ts` | cache layout, ingest status, job registry |
-| `lib/roboflow-library.ts` | browser-side library loader |
-| `app/api/roboflow/ingest/` | start (POST) / poll (GET) an ingest |
-| `app/api/roboflow/cover/` | fetches a project cover into an existing dataset |
-| `app/api/roboflow/asset/` | serves one dataset's cached library files |
-| `lib/mosaic*.ts`, `lib/contour-mosaic.ts` | the inherited engine, untouched |
-| `components/canvas-hero.tsx` | the inherited UI, now source-agnostic |
-| `lib/tile-library.ts` | the shared tile/signature shapes |
+| Path                                       | What                                                   |
+| ------------------------------------------ | ------------------------------------------------------ |
+| `app/roboflow/`                            | the page                                               |
+| `components/roboflow-mosaic.tsx`           | URL input → ingest → hand off to CanvasHero            |
+| `components/roboflow-reference-picker.tsx` | project cover, or a grid of the dataset                |
+| `lib/mosaic-source.ts`                     | where tiles come from (Roboflow)                       |
+| `lib/roboflow.ts`                          | URL parsing, slugs, asset URLs (shared client/server)  |
+| `lib/roboflow-api.ts`                      | the two Roboflow REST calls                            |
+| `lib/roboflow-ingest.ts`                   | export download, thumbnail and signature build         |
+| `lib/roboflow-store.ts`                    | local cache, scratch directories, status, job registry |
+| `lib/roboflow-blob.ts`                     | durable status and streamed archive publication        |
+| `lib/roboflow-pack.ts`                     | browser download, unzip, and IndexedDB cache           |
+| `app/api/roboflow/ingest/`                 | start (POST) / poll (GET) an ingest                    |
+| `app/api/roboflow/pack/[slug]/`            | Blob redirect or local streamed archive                |
+| `lib/mosaic*.ts`, `lib/contour-mosaic.ts`  | the inherited engine, untouched                        |
+| `components/canvas-hero.tsx`               | the inherited UI, now source-agnostic                  |
+| `lib/tile-library.ts`                      | the shared tile/signature shapes                       |
 
 ## Any folder of images
 
-The tile/median half of the pipeline doesn't care where the images came from:
+The tile-library half of the pipeline doesn't care where the images came from:
 
 ```bash
 pnpm ingest:dir ~/Pictures/some-folder myworkspace my-project 1
@@ -128,4 +121,5 @@ The inherited pages (`/knicks-mosaic`, `/newyork-mosaic`, `/bake`, `/m/<id>`,
 `/admin`, the landing page and gallery) and everything only they used — the
 Supabase proxy, share/publish flow, submission routes, auth/admin helpers,
 era-emphasis matching, and baked gallery assets — are deleted. `/` redirects to
-`/roboflow`. Only `ROBOFLOW_API_KEY` is needed.
+`/roboflow`. Local development only needs `ROBOFLOW_API_KEY`; Vercel also needs
+the connected Blob store described above.

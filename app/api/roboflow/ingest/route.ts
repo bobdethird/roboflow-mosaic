@@ -31,10 +31,13 @@ import {
   writeBlobStatus,
 } from "@/lib/roboflow-blob"
 import {
+  IS_VERCEL,
   datasetDir,
   isRunning,
   progressWriter,
   readStatus,
+  releaseJobReservation,
+  reserveJob,
   trackJob,
   writeStatus,
 } from "@/lib/roboflow-store"
@@ -163,7 +166,21 @@ export async function POST(request: Request): Promise<Response> {
     return json({ error: "Expected a JSON body with a `url`." }, 400)
   }
 
+  // /tmp is scratch space, not a deployment cache. Refuse to download a large
+  // export when there is nowhere durable to publish it; otherwise a successful
+  // ingest disappears across instances and eventually fills the warm one.
+  if (IS_VERCEL && !blobEnabled()) {
+    return json(
+      {
+        error:
+          "Dataset storage is not configured. Connect a Vercel Blob store and redeploy.",
+      },
+      503
+    )
+  }
+
   let slug: string
+  let reservedSlug: string | null = null
   let started: IngestStatus
   try {
     const ref = parseRoboflowUrl(body.url ?? "")
@@ -184,12 +201,31 @@ export async function POST(request: Request): Promise<Response> {
 
     if (isRunning(slug)) {
       const current = await loadStatus(slug)
-      return json(current ?? { slug, state: "running", step: "Working", done: 0, total: 0 })
+      return json(
+        current ?? {
+          slug,
+          state: "running",
+          step: "Working",
+          done: 0,
+          total: 0,
+        }
+      )
     }
     if (!body.refresh && (await isIngested(slug))) {
       const cached = await loadStatus(slug)
       if (cached?.state === "ready") return json(cached)
     }
+
+    if (!reserveJob(slug)) {
+      return json(
+        {
+          error:
+            "Another dataset is already being prepared on this server. Try again shortly.",
+        },
+        429
+      )
+    }
+    reservedSlug = slug
 
     started = {
       slug,
@@ -216,12 +252,14 @@ export async function POST(request: Request): Promise<Response> {
         await finish("error", { error: errorMessage(error) })
       })
     trackJob(slug, job)
+    reservedSlug = null
     // Keep the invocation alive after the 202. Without this, Vercel may freeze
     // the function as soon as the response is sent and the ingest never runs.
     after(async () => {
       await job
     })
   } catch (error) {
+    if (reservedSlug) releaseJobReservation(reservedSlug)
     return json({ error: errorMessage(error) }, 400)
   }
 

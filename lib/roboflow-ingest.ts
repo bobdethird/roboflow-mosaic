@@ -22,7 +22,7 @@ import { createHash } from "node:crypto"
 import { createWriteStream } from "node:fs"
 import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises"
 import path from "node:path"
-import { Readable } from "node:stream"
+import { Readable, Transform } from "node:stream"
 import { pipeline } from "node:stream/promises"
 
 import sharp from "sharp"
@@ -48,7 +48,12 @@ import {
   blobHasIcon,
   publishDataset,
 } from "./roboflow-blob"
-import { datasetDir, type ProgressReporter } from "./roboflow-store"
+import {
+  IS_VERCEL,
+  createIngestDirectory,
+  datasetDir,
+  type ProgressReporter,
+} from "./roboflow-store"
 
 // Must match lib/mosaic.ts SIGNATURE_GRID and the worker's COARSE_GRID: the
 // browser compares tiles on 8×8×3 values stored as uint16 LE fixed-point, where
@@ -70,7 +75,14 @@ const THUMB_QUALITY = 80
 const ICON_MAX_EDGE = 1600
 // Hobby functions are 1 vCPU; eight Sharp pipelines just contend. Local
 // machines can keep more in flight.
-const CONCURRENCY = process.env.VERCEL ? 3 : 8
+const CONCURRENCY = IS_VERCEL ? 3 : 8
+
+// Keep headroom below Vercel's 500 MB /tmp ceiling for Sharp's temporary work,
+// status files, and a few in-flight thumbnails. The archive upload itself is
+// streamed, so these are the only two material on-disk allocations.
+const MIB = 1024 * 1024
+const MAX_VERCEL_EXPORT_BYTES = 320 * MIB
+const MAX_VERCEL_LIBRARY_BYTES = 128 * MIB
 
 const IMAGE_EXTENSIONS = new Set([
   ".jpg",
@@ -85,6 +97,13 @@ const IMAGE_EXTENSIONS = new Set([
 
 export class IngestError extends Error {}
 
+class IngestStorageLimitError extends IngestError {}
+
+function storageLimitMessage(kind: "export" | "library", maxBytes: number) {
+  const limit = Math.floor(maxBytes / MIB)
+  return `This dataset's ${kind} is too large for this deployment (limit: ${limit} MB). Try a smaller dataset.`
+}
+
 function isImagePath(name: string): boolean {
   return IMAGE_EXTENSIONS.has(path.extname(name).toLowerCase())
 }
@@ -94,8 +113,9 @@ function isImagePath(name: string): boolean {
 async function downloadZip(
   link: string,
   destination: string,
-  report: ProgressReporter
-): Promise<void> {
+  report: ProgressReporter,
+  maxBytes?: number
+): Promise<number> {
   const response = await fetch(link)
   if (!response.ok || !response.body) {
     throw new IngestError(
@@ -103,21 +123,36 @@ async function downloadZip(
     )
   }
   const total = Number(response.headers.get("content-length") ?? 0)
+  if (maxBytes && total > maxBytes) {
+    await response.body.cancel()
+    throw new IngestStorageLimitError(storageLimitMessage("export", maxBytes))
+  }
   let received = 0
   const source = Readable.fromWeb(
     response.body as Parameters<typeof Readable.fromWeb>[0]
   )
-  source.on("data", (chunk: Buffer) => {
-    received += chunk.length
-    report("Downloading export", received, total)
+  const meter = new Transform({
+    transform(chunk: Buffer, _encoding, callback) {
+      received += chunk.length
+      if (maxBytes && received > maxBytes) {
+        callback(
+          new IngestStorageLimitError(storageLimitMessage("export", maxBytes))
+        )
+        return
+      }
+      report("Downloading export", received, total)
+      callback(null, chunk)
+    },
   })
-  await pipeline(source, createWriteStream(destination))
+  await pipeline(source, meter, createWriteStream(destination))
+  return received
 }
 
 function openZip(file: string): Promise<yauzl.ZipFile> {
   return new Promise((resolve, reject) => {
     yauzl.open(file, { lazyEntries: true, autoClose: true }, (error, zip) => {
-      if (error || !zip) reject(error ?? new IngestError("Could not open the export zip."))
+      if (error || !zip)
+        reject(error ?? new IngestError("Could not open the export zip."))
       else resolve(zip)
     })
   })
@@ -132,6 +167,7 @@ async function extractImages(
   destination: string,
   report: ProgressReporter
 ): Promise<string[]> {
+  await rm(destination, { recursive: true, force: true })
   await mkdir(destination, { recursive: true })
   const zip = await openZip(zipPath)
   const written: string[] = []
@@ -226,6 +262,7 @@ async function forEachZipImage(
   let active = 0
   const waiting: Array<() => void> = []
   const tasks: Promise<void>[] = []
+  let visitError: unknown = null
 
   const acquire = () =>
     new Promise<void>((resolve) => {
@@ -247,6 +284,10 @@ async function forEachZipImage(
     zip.on("entry", (entry: yauzl.Entry) => {
       chain = chain
         .then(async () => {
+          if (visitError) {
+            zip.readEntry()
+            return
+          }
           if (entry.fileName.endsWith("/") || !isImagePath(entry.fileName)) {
             zip.readEntry()
             return
@@ -257,13 +298,30 @@ async function forEachZipImage(
           }
           const bytes = await readZipEntry(zip, entry)
           await acquire()
-          tasks.push(visit(entry.fileName, bytes).catch(reject).finally(release))
+          if (visitError) {
+            release()
+            zip.readEntry()
+            return
+          }
+          tasks.push(
+            visit(entry.fileName, bytes)
+              .catch((error: unknown) => {
+                visitError ??= error
+              })
+              .finally(release)
+          )
           zip.readEntry()
         })
         .catch(reject)
     })
     zip.on("end", () => {
-      chain.then(() => Promise.all(tasks)).then(() => resolve()).catch(reject)
+      chain
+        .then(() => Promise.all(tasks))
+        .then(() => {
+          if (visitError) reject(visitError)
+          else resolve()
+        })
+        .catch(reject)
     })
     zip.on("error", reject)
     zip.readEntry()
@@ -293,11 +351,16 @@ async function signatureGrid(pipeline: sharp.Sharp): Promise<Buffer> {
 async function decodeOutputs(
   bytes: Buffer,
   thumbPath: string
-): Promise<{ width: number; height: number; signature: Buffer }> {
+): Promise<{
+  width: number
+  height: number
+  signature: Buffer
+  thumbnailBytes: number
+}> {
   const image = sharp(bytes, { failOn: "none" })
   const metadata = await image.metadata()
 
-  const [signature] = await Promise.all([
+  const [signature, thumbnail] = await Promise.all([
     signatureGrid(image.clone()).then(coarseSignature),
     image
       .clone()
@@ -314,6 +377,7 @@ async function decodeOutputs(
     width: metadata.width ?? 0,
     height: metadata.height ?? 0,
     signature,
+    thumbnailBytes: thumbnail.size,
   }
 }
 
@@ -344,14 +408,23 @@ async function pooled<T>(
   task: (item: T, index: number) => Promise<void>
 ): Promise<void> {
   let next = 0
-  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
-    for (;;) {
-      const index = next++
-      if (index >= items.length) return
-      await task(items[index], index)
+  let failure: unknown = null
+  const workers = Array.from(
+    { length: Math.min(limit, items.length) },
+    async () => {
+      while (!failure) {
+        const index = next++
+        if (index >= items.length) return
+        try {
+          await task(items[index], index)
+        } catch (error) {
+          failure ??= error
+        }
+      }
     }
-  })
+  )
   await Promise.all(workers)
+  if (failure) throw failure
 }
 
 export type ManifestPhoto = { id: string; w: number; h: number; file: string }
@@ -368,10 +441,12 @@ export type LibraryResult = {
 export async function buildLibrary(
   imageFiles: string[],
   outputDir: string,
-  report: ProgressReporter
+  report: ProgressReporter,
+  maxOutputBytes?: number
 ): Promise<LibraryResult> {
   const files = [...imageFiles].sort()
   const thumbsDir = path.join(outputDir, "thumbs")
+  await rm(thumbsDir, { recursive: true, force: true })
   await mkdir(thumbsDir, { recursive: true })
 
   const photos: (ManifestPhoto | null)[] = new Array(files.length).fill(null)
@@ -379,6 +454,7 @@ export async function buildLibrary(
   const seen = new Set<string>()
   let processed = 0
   let skipped = 0
+  let thumbnailBytes = 0
 
   await pooled(files, CONCURRENCY, async (file, index) => {
     try {
@@ -392,6 +468,12 @@ export async function buildLibrary(
         bytes,
         path.join(thumbsDir, `${id}.jpg`)
       )
+      thumbnailBytes += decoded.thumbnailBytes
+      if (maxOutputBytes && thumbnailBytes > maxOutputBytes) {
+        throw new IngestStorageLimitError(
+          storageLimitMessage("library", maxOutputBytes)
+        )
+      }
       photos[index] = {
         id,
         w: decoded.width,
@@ -399,7 +481,8 @@ export async function buildLibrary(
         file: path.basename(file),
       }
       signatures[index] = decoded.signature
-    } catch {
+    } catch (error) {
+      if (error instanceof IngestStorageLimitError) throw error
       skipped += 1
     } finally {
       processed += 1
@@ -421,7 +504,14 @@ export async function buildLibrary(
     throw new IngestError("None of the dataset's images could be read.")
   }
 
-  const version = await writeLibrary(outputDir, keptPhotos, keptSignatures, report)
+  const version = await writeLibrary(
+    outputDir,
+    keptPhotos,
+    keptSignatures,
+    thumbnailBytes,
+    report,
+    maxOutputBytes
+  )
 
   return { photoCount: keptPhotos.length, skipped, version }
 }
@@ -430,18 +520,23 @@ async function writeLibrary(
   outputDir: string,
   photos: ManifestPhoto[],
   signatures: Buffer[],
-  report: ProgressReporter
+  thumbnailBytes: number,
+  report: ProgressReporter,
+  maxOutputBytes?: number
 ): Promise<string> {
   report("Writing library", 0, 0)
   const version = new Date().toISOString()
-  await writeFile(
-    path.join(outputDir, COARSE_SIGNATURES_FILE),
-    Buffer.concat(signatures)
-  )
-  await writeFile(
-    path.join(outputDir, MANIFEST_FILE),
-    JSON.stringify({ version, photos }, null, 2)
-  )
+  const signatureBytes = Buffer.concat(signatures)
+  const manifest = JSON.stringify({ version, photos }, null, 2)
+  const outputBytes =
+    thumbnailBytes + signatureBytes.byteLength + Buffer.byteLength(manifest)
+  if (maxOutputBytes && outputBytes > maxOutputBytes) {
+    throw new IngestStorageLimitError(
+      storageLimitMessage("library", maxOutputBytes)
+    )
+  }
+  await writeFile(path.join(outputDir, COARSE_SIGNATURES_FILE), signatureBytes)
+  await writeFile(path.join(outputDir, MANIFEST_FILE), manifest)
   return version
 }
 
@@ -450,7 +545,8 @@ async function writeLibrary(
 async function buildLibraryFromZip(
   zipPath: string,
   outputDir: string,
-  report: ProgressReporter
+  report: ProgressReporter,
+  maxOutputBytes?: number
 ): Promise<LibraryResult> {
   report("Listing images", 0, 0)
   const names = (await zipImageNames(zipPath)).sort()
@@ -459,12 +555,14 @@ async function buildLibraryFromZip(
   }
 
   const thumbsDir = path.join(outputDir, "thumbs")
+  await rm(thumbsDir, { recursive: true, force: true })
   await mkdir(thumbsDir, { recursive: true })
 
   const byName = new Map<string, { photo: ManifestPhoto; signature: Buffer }>()
   const seen = new Set<string>()
   let processed = 0
   let skipped = 0
+  let thumbnailBytes = 0
 
   await forEachZipImage(zipPath, async (fileName, bytes) => {
     try {
@@ -477,6 +575,12 @@ async function buildLibraryFromZip(
         bytes,
         path.join(thumbsDir, `${id}.jpg`)
       )
+      thumbnailBytes += decoded.thumbnailBytes
+      if (maxOutputBytes && thumbnailBytes > maxOutputBytes) {
+        throw new IngestStorageLimitError(
+          storageLimitMessage("library", maxOutputBytes)
+        )
+      }
       byName.set(fileName, {
         photo: {
           id,
@@ -486,7 +590,8 @@ async function buildLibraryFromZip(
         },
         signature: decoded.signature,
       })
-    } catch {
+    } catch (error) {
+      if (error instanceof IngestStorageLimitError) throw error
       skipped += 1
     } finally {
       processed += 1
@@ -506,7 +611,14 @@ async function buildLibraryFromZip(
     throw new IngestError("None of the dataset's images could be read.")
   }
 
-  const version = await writeLibrary(outputDir, keptPhotos, keptSignatures, report)
+  const version = await writeLibrary(
+    outputDir,
+    keptPhotos,
+    keptSignatures,
+    thumbnailBytes,
+    report,
+    maxOutputBytes
+  )
 
   return { photoCount: keptPhotos.length, skipped, version }
 }
@@ -520,7 +632,10 @@ async function buildLibraryFromZip(
 // originals run to several megapixels and the engine never draws the reference
 // larger than this. A failure here is not fatal: the picker can still offer any
 // image out of the dataset.
-async function downloadIcon(url: string, destination: string): Promise<boolean> {
+async function downloadIcon(
+  url: string,
+  destination: string
+): Promise<boolean> {
   try {
     const response = await fetch(url)
     if (!response.ok) return false
@@ -580,10 +695,20 @@ export async function ingestDataset(
   report: ProgressReporter,
   options: IngestOptions = {}
 ): Promise<RoboflowDataset> {
+  if (IS_VERCEL && !blobEnabled()) {
+    throw new IngestError(
+      "Dataset storage is not configured. Connect a Vercel Blob store and redeploy."
+    )
+  }
+  if (IS_VERCEL && options.keepSource) {
+    throw new IngestError(
+      "Keeping full-resolution source images is not supported on Vercel."
+    )
+  }
   report("Resolving dataset", 0, 0)
   const resolved = await resolveDataset(ref)
   const slug = datasetSlug(resolved.ref)
-  const outputDir = datasetDir(slug)
+  const outputDir = await createIngestDirectory(slug)
   const zipPath = path.join(outputDir, "export.zip")
   await mkdir(outputDir, { recursive: true })
 
@@ -595,7 +720,12 @@ export async function ingestDataset(
       (message) => report(message, 0, 0)
     )
 
-    await downloadZip(link, zipPath, report)
+    await downloadZip(
+      link,
+      zipPath,
+      report,
+      IS_VERCEL ? MAX_VERCEL_EXPORT_BYTES : undefined
+    )
 
     let hasIcon = false
     if (resolved.iconUrl) {
@@ -610,10 +740,21 @@ export async function ingestDataset(
       ? await buildLibrary(
           await extractImages(zipPath, path.join(outputDir, "source"), report),
           outputDir,
-          report
+          report,
+          IS_VERCEL ? MAX_VERCEL_LIBRARY_BYTES : undefined
         )
-      : await buildLibraryFromZip(zipPath, outputDir, report)
-    if (blobEnabled()) await publishDataset(slug, outputDir, report)
+      : await buildLibraryFromZip(
+          zipPath,
+          outputDir,
+          report,
+          IS_VERCEL ? MAX_VERCEL_LIBRARY_BYTES : undefined
+        )
+    if (blobEnabled()) {
+      // The export is no longer needed once thumbnails and signatures exist.
+      // Release it before upload so the two large allocations never overlap.
+      await rm(zipPath, { force: true })
+      await publishDataset(slug, outputDir, report)
+    }
 
     return {
       ...resolved.ref,
@@ -627,6 +768,9 @@ export async function ingestDataset(
     }
   } finally {
     await rm(zipPath, { force: true })
+    if (IS_VERCEL) {
+      await rm(outputDir, { recursive: true, force: true })
+    }
   }
 }
 

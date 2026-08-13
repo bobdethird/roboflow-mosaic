@@ -1,16 +1,16 @@
 // Durable copy of an ingested dataset, for serverless hosts.
 //
 // The library is built on local disk the same way it always was. A Vercel
-// instance cannot keep that directory, so the finished library is packed into
-// one zip and uploaded once — a single PUT, not one per thumbnail.
+// instance cannot keep that directory, so the finished library is packed as a
+// stream and uploaded once — a single PUT, not one per thumbnail or a second
+// archive written to /tmp.
 //
 // Nothing downloads that zip back onto a server. The browser fetches it whole
 // from the Blob CDN and reads every tile out of it locally (lib/roboflow-pack.ts),
 // so no instance ever needs the dataset on disk except the one that built it.
 
 import { head, put } from "@vercel/blob"
-import { createReadStream, createWriteStream } from "node:fs"
-import { readdir, readFile, rm } from "node:fs/promises"
+import { readdir, readFile } from "node:fs/promises"
 import path from "node:path"
 import { Readable } from "node:stream"
 import { ZipFile } from "yazl"
@@ -27,12 +27,7 @@ const META_FILE = "published.json"
 const STORE_MAX_AGE = 60
 
 const SKIP_DIRS = new Set(["source"])
-const SKIP_FILES = new Set([
-  STATUS_FILE,
-  "export.zip",
-  ARCHIVE_FILE,
-  META_FILE,
-])
+const SKIP_FILES = new Set([STATUS_FILE, "export.zip", ARCHIVE_FILE, META_FILE])
 
 export function blobEnabled(): boolean {
   return Boolean(process.env.BLOB_READ_WRITE_TOKEN)
@@ -66,7 +61,13 @@ export async function blobUrl(
   relativePath: string
 ): Promise<string | null> {
   try {
-    return (await head(blobKey(slug, relativePath))).url
+    const meta = await head(blobKey(slug, relativePath))
+    const url = new URL(meta.url)
+    // Archive keys are overwritten on refresh. The ETag gives every version a
+    // distinct CDN cache key, so a freshly published manifest never receives
+    // the previous archive for up to STORE_MAX_AGE seconds.
+    url.searchParams.set("v", meta.etag)
+    return url.toString()
   } catch {
     return null
   }
@@ -89,14 +90,20 @@ export async function readBlobText(
 ): Promise<string | null> {
   try {
     const meta = await head(blobKey(slug, relativePath))
-    const response = await fetch(meta.url, { cache: "no-store" })
+    const url = new URL(meta.url)
+    // Public Blob objects have a minimum 60-second cache lifetime. Bust that
+    // cache with the current ETag so mutable status/manifest reads are fresh.
+    url.searchParams.set("v", meta.etag)
+    const response = await fetch(url, { cache: "no-store" })
     return response.ok ? await response.text() : null
   } catch {
     return null
   }
 }
 
-export async function readBlobStatus(slug: string): Promise<IngestStatus | null> {
+export async function readBlobStatus(
+  slug: string
+): Promise<IngestStatus | null> {
   const text = await readBlobText(slug, STATUS_FILE)
   if (!text) return null
   try {
@@ -108,7 +115,7 @@ export async function readBlobStatus(slug: string): Promise<IngestStatus | null>
 
 // Ingest progress has to be visible to every instance, not just the one that
 // started the job — GET polls land on a different lambda, and /tmp is not
-// shared. No CDN cache: the page reads this every 700ms.
+// shared. Reads use the current ETag as a cache key so each overwrite is fresh.
 export async function writeBlobStatus(
   slug: string,
   status: IngestStatus
@@ -118,7 +125,7 @@ export async function writeBlobStatus(
     addRandomSuffix: false,
     allowOverwrite: true,
     contentType: "application/json",
-    cacheControlMaxAge: 0,
+    cacheControlMaxAge: STORE_MAX_AGE,
   })
 }
 
@@ -153,22 +160,15 @@ function addAll(zipfile: ZipFile, directory: string, files: string[]): void {
   zipfile.end()
 }
 
-function packZip(
+function libraryArchiveNodeStream(
   directory: string,
-  files: string[],
-  destination: string,
-  report: ProgressReporter
-): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const zipfile = new ZipFile()
-    const output = createWriteStream(destination)
-    zipfile.outputStream.pipe(output)
-    output.on("close", resolve)
-    output.on("error", reject)
-    zipfile.outputStream.on("error", reject)
-    report("Packing library", 0, files.length)
-    addAll(zipfile, directory, files)
-  })
+  files: string[]
+): Readable {
+  const zipfile = new ZipFile()
+  addAll(zipfile, directory, files)
+  // @types/yazl declares the minimal NodeJS interface, but this is a
+  // stream.PassThrough at runtime.
+  return zipfile.outputStream as Readable
 }
 
 // The archive as a stream, built on the fly from a dataset directory. Used by
@@ -179,12 +179,8 @@ export async function libraryArchiveStream(
 ): Promise<ReadableStream<Uint8Array> | null> {
   const files = await libraryFiles(directory)
   if (!files.length) return null
-  const zipfile = new ZipFile()
-  addAll(zipfile, directory, files)
-  // @types/yazl declares outputStream as the minimal NodeJS.ReadableStream; it
-  // is a stream.PassThrough at runtime, which is what toWeb needs.
   return Readable.toWeb(
-    zipfile.outputStream as Readable
+    libraryArchiveNodeStream(directory, files)
   ) as ReadableStream<Uint8Array>
 }
 
@@ -212,11 +208,11 @@ export async function publishDataset(
     throw new Error("Nothing to publish — the library was empty.")
   }
 
-  const zipPath = path.join(directory, ARCHIVE_FILE)
+  report("Packing library", 0, files.length)
+  const archive = libraryArchiveNodeStream(directory, files)
   try {
-    await packZip(directory, files, zipPath, report)
     report("Uploading library", 0, 0)
-    await put(blobKey(slug, ARCHIVE_FILE), createReadStream(zipPath), {
+    await put(blobKey(slug, ARCHIVE_FILE), archive, {
       access: "public",
       addRandomSuffix: false,
       allowOverwrite: true,
@@ -228,7 +224,7 @@ export async function publishDataset(
       },
     })
   } finally {
-    await rm(zipPath, { force: true })
+    archive.destroy()
   }
 
   const manifest = files.find((file) => file === MANIFEST_FILE)

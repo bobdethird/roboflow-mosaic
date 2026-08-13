@@ -5,7 +5,16 @@ import type { NextConfig } from "next"
 const appRoot = process.cwd()
 const isVercel = process.env.VERCEL === "1"
 
+const tracingConfig: NextConfig = {
+  // Runtime data is never an application dependency. Without this exclusion,
+  // Turbopack traces every local thumbnail into both Roboflow route bundles.
+  outputFileTracingExcludes: {
+    "/api/roboflow/**": ["./.roboflow-cache/**/*"],
+  },
+}
+
 const localRootConfig: NextConfig = {
+  ...tracingConfig,
   // Pin the workspace root to this directory. Without this, Next's root
   // inference walks up looking for a lockfile and finds a stray
   // ~/package-lock.json, treating the entire home folder (incl. the 12GB
@@ -18,6 +27,6 @@ const localRootConfig: NextConfig = {
   },
 }
 
-const nextConfig: NextConfig = isVercel ? {} : localRootConfig
+const nextConfig: NextConfig = isVercel ? tracingConfig : localRootConfig
 
 export default nextConfig

@@ -11,8 +11,13 @@
 // it zips the cache directory on the fly.
 
 import { isDatasetSlug } from "@/lib/roboflow"
-import { ARCHIVE_FILE, blobEnabled, blobUrl, libraryArchiveStream } from "@/lib/roboflow-blob"
-import { datasetDir } from "@/lib/roboflow-store"
+import {
+  ARCHIVE_FILE,
+  blobEnabled,
+  blobUrl,
+  libraryArchiveStream,
+} from "@/lib/roboflow-blob"
+import { IS_VERCEL, datasetDir } from "@/lib/roboflow-store"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -30,6 +35,10 @@ export async function GET(
   const { slug } = await params
   if (!isDatasetSlug(slug)) return notFound()
 
+  if (IS_VERCEL && !blobEnabled()) {
+    return new Response("Dataset storage is not configured.", { status: 503 })
+  }
+
   if (blobEnabled()) {
     const url = await blobUrl(slug, ARCHIVE_FILE)
     if (!url) return notFound()
@@ -37,7 +46,7 @@ export async function GET(
     return Response.redirect(url, 307)
   }
 
-  const stream = await libraryArchiveStream(datasetDir(slug))
+  const stream = await libraryArchiveStream(datasetDir(slug)).catch(() => null)
   if (!stream) return notFound()
   return new Response(stream, {
     headers: {
