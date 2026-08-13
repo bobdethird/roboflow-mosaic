@@ -2,6 +2,9 @@
 //
 //   pnpm ingest:dir <image-dir> <workspace> <project> [version]
 //
+// Kept as .mts because the package is CommonJS (see package.json) and this
+// script runs on top-level await.
+//
 // Useful for two things: mosaicking a folder you already have on disk, and
 // exercising the whole tile/median pipeline without a Roboflow API key. It
 // writes the same cache layout the API route does, so /roboflow can render the

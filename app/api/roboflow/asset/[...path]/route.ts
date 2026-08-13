@@ -1,14 +1,16 @@
-// Serves one ingested dataset's library files off the local cache directory:
-// manifest.json, signatures-coarse.bin, reference.jpg, and thumbs/<id>.jpg.
+// Serves one ingested dataset's library files: manifest.json,
+// signatures-coarse.bin, reference.jpg, and thumbs/<id>.jpg. Same-origin only,
+// and no path may escape the dataset's own directory.
 //
-// This is the local-disk counterpart to /api/mosaic (which proxies Supabase),
-// and it applies the same rules: same-origin only, and no path may escape the
-// dataset's own directory.
+// The local cache is tried first. On a serverless host that cache is empty
+// unless this instance ran the ingest, so a miss hydrates from the published
+// archive and then serves from disk the same way.
 
 import { readFile, stat } from "node:fs/promises"
 import path from "node:path"
 
 import { isDatasetSlug } from "@/lib/roboflow"
+import { blobEnabled, ensureLocalDataset } from "@/lib/roboflow-blob"
 import { datasetFile } from "@/lib/roboflow-store"
 
 export const runtime = "nodejs"
@@ -43,6 +45,26 @@ function isSameOriginRequest(request: Request): boolean {
   }
 }
 
+async function fileResponse(file: string, immutable: boolean): Promise<Response> {
+  const info = await stat(file)
+  if (!info.isFile()) throw new Error("Not a file")
+  const bytes = await readFile(file)
+  return new Response(new Uint8Array(bytes), {
+    headers: {
+      "content-type":
+        CONTENT_TYPES[path.extname(file).toLowerCase()] ??
+        "application/octet-stream",
+      "content-length": String(bytes.byteLength),
+      // Thumbnails are content-addressed (the filename is a hash of the image
+      // bytes), so they can be cached forever. The manifest, signatures, and
+      // reference change on every re-ingest, so they must revalidate.
+      "cache-control": immutable
+        ? "private, max-age=31536000, immutable"
+        : "no-cache",
+    },
+  })
+}
+
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ path?: string[] }> }
@@ -71,23 +93,14 @@ export async function GET(
   if (!file) return new Response("Not found", { status: 404 })
 
   try {
-    const info = await stat(file)
-    if (!info.isFile()) return new Response("Not found", { status: 404 })
-    const bytes = await readFile(file)
-    const headers = new Headers({
-      "content-type":
-        CONTENT_TYPES[path.extname(file).toLowerCase()] ??
-        "application/octet-stream",
-      "content-length": String(bytes.byteLength),
-      // Thumbnails are content-addressed (the filename is a hash of the image
-      // bytes), so they can be cached forever. The manifest, signatures, and
-      // reference change on every re-ingest, so they must revalidate.
-      "cache-control": isThumb
-        ? "private, max-age=31536000, immutable"
-        : "no-cache",
-    })
-    return new Response(new Uint8Array(bytes), { headers })
+    return await fileResponse(file, isThumb)
   } catch {
-    return new Response("Not found", { status: 404 })
+    if (!blobEnabled()) return new Response("Not found", { status: 404 })
+    try {
+      await ensureLocalDataset(slug)
+      return await fileResponse(file, isThumb)
+    } catch {
+      return new Response("Not found", { status: 404 })
+    }
   }
 }

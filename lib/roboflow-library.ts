@@ -1,14 +1,14 @@
 // Browser-side loader for an ingested Roboflow dataset's tile library.
 //
-// The ingest writes the same wire format the Supabase collections use — a
-// manifest plus one concatenated uint16 coarse signature per photo — so this is
-// the Supabase `loadLibrary` with the bucket proxy swapped for the local asset
-// route. Thumbnails are still fetched lazily by the worker, one per placed tile.
+// Reads `manifest.json` plus the concatenated coarse-signature blob from the
+// local asset route. Thumbnails are still fetched lazily by the worker, one per
+// placed tile.
 
 import { COARSE_SIG_BYTES, type LibraryItem } from "./tile-library"
 import {
   COARSE_SIGNATURES_FILE,
   MANIFEST_FILE,
+  readJsonBody,
   roboflowAssetUrl,
   roboflowThumbPath,
 } from "./roboflow"
@@ -31,7 +31,7 @@ export async function loadRoboflowManifest(
   if (!response.ok) {
     throw new Error(`Could not load the dataset manifest (${response.status}).`)
   }
-  return (await response.json()) as RoboflowManifest
+  return await readJsonBody<RoboflowManifest>(response)
 }
 
 // Just the library version, without pulling the signatures blob — used to spot a
@@ -42,7 +42,7 @@ export async function roboflowLibraryVersion(
   try {
     const response = await fetch(roboflowAssetUrl(slug, MANIFEST_FILE))
     if (!response.ok) return null
-    return ((await response.json()) as RoboflowManifest).version ?? null
+    return (await readJsonBody<RoboflowManifest>(response)).version ?? null
   } catch {
     return null
   }
@@ -55,7 +55,7 @@ export async function loadRoboflowLibrary(
   if (!manifestResponse.ok) {
     throw new Error(`Could not load the dataset manifest (${manifestResponse.status}).`)
   }
-  const manifest = (await manifestResponse.json()) as RoboflowManifest
+  const manifest = await readJsonBody<RoboflowManifest>(manifestResponse)
   const count = manifest.photos?.length ?? 0
   if (!count) throw new Error("This dataset ingested zero usable images.")
 
@@ -83,7 +83,6 @@ export async function loadRoboflowLibrary(
       w,
       h,
       url,
-      fullUrl: url,
     }
   }
   return { version: manifest.version, items }

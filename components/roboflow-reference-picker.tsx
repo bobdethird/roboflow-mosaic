@@ -24,6 +24,7 @@ import { cn } from "@/lib/utils"
 import {
   ICON_FILE,
   ROBOFLOW_COVER_PATH,
+  readJsonBody,
   roboflowAssetUrl,
   roboflowThumbPath,
   type RoboflowDataset,
@@ -72,10 +73,10 @@ export function RoboflowReferencePicker({
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ slug: dataset.slug }),
         })
-        const body = (await response.json()) as {
+        const body = await readJsonBody<{
           hasIcon?: boolean
           error?: string
-        }
+        }>(response)
         if (!response.ok || !body.hasIcon) {
           throw new Error(body.error ?? "Could not fetch the cover image.")
         }

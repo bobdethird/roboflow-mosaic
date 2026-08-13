@@ -154,6 +154,23 @@ export function roboflowThumbPath(id: string): string {
   return `thumbs/${id}.jpg`
 }
 
+// Read a JSON body from one of the routes above.
+//
+// A route that never got to run — a function that crashed on load, a platform
+// timeout, a 404 — answers with an HTML error page, and `response.json()` then
+// reports a syntax error about "<!DOCTYPE" that says nothing about the real
+// failure. Parse the text ourselves so those cases name the status instead.
+export async function readJsonBody<T>(response: Response): Promise<T> {
+  const text = await response.text()
+  try {
+    return JSON.parse(text) as T
+  } catch {
+    throw new Error(
+      `The server returned ${response.status} ${response.statusText || "error"} instead of JSON.`
+    )
+  }
+}
+
 // ─── Ingest job status (shared by the route and the page) ────────────────────
 
 export type IngestState = "pending" | "running" | "ready" | "error"

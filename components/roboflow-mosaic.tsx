@@ -20,6 +20,7 @@ import { roboflowSource } from "@/lib/mosaic-source"
 import {
   ROBOFLOW_INGEST_PATH,
   parseRoboflowUrl,
+  readJsonBody,
   type IngestStatus,
   type RoboflowDataset,
 } from "@/lib/roboflow"
@@ -37,7 +38,7 @@ async function startIngest(url: string): Promise<IngestStatus> {
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ url }),
   })
-  const body = (await response.json()) as IngestStatus & { error?: string }
+  const body = await readJsonBody<IngestStatus & { error?: string }>(response)
   if (!response.ok) throw new Error(body.error ?? "Could not start the ingest.")
   return body
 }
@@ -53,7 +54,9 @@ async function pollIngest(
       `${ROBOFLOW_INGEST_PATH}?slug=${encodeURIComponent(slug)}`,
       { signal }
     )
-    const status = (await response.json()) as IngestStatus & { error?: string }
+    const status = await readJsonBody<IngestStatus & { error?: string }>(
+      response
+    )
     if (!response.ok)
       throw new Error(status.error ?? "Lost track of the ingest.")
     onStatus(status)

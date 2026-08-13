@@ -20,6 +20,7 @@ import {
   isIngested,
   resolveDataset,
 } from "@/lib/roboflow-ingest"
+import { blobEnabled, readBlobText } from "@/lib/roboflow-blob"
 import {
   isRunning,
   progressWriter,
@@ -64,9 +65,17 @@ async function statusFromDisk(slug: string): Promise<IngestStatus | null> {
   let imageCount = 0
   let name = slug
   try {
-    const manifest = JSON.parse(
-      await readFile(path.join(datasetDir(slug), MANIFEST_FILE), "utf8")
-    ) as { photos?: unknown[] }
+    const raw = await readFile(
+      path.join(datasetDir(slug), MANIFEST_FILE),
+      "utf8"
+    ).catch(async (error: unknown) => {
+      const published = blobEnabled()
+        ? await readBlobText(slug, MANIFEST_FILE)
+        : null
+      if (published === null) throw error
+      return published
+    })
+    const manifest = JSON.parse(raw) as { photos?: unknown[] }
     imageCount = manifest.photos?.length ?? 0
   } catch {
     // Leave the count at zero; the library load will surface a real failure.

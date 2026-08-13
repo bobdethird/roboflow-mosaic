@@ -45,6 +45,13 @@ import {
   fetchExportLink,
   fetchProjectInfo,
 } from "./roboflow-api"
+import {
+  blobEnabled,
+  blobHasDataset,
+  blobHasIcon,
+  publishDataset,
+  publishFile,
+} from "./roboflow-blob"
 import { datasetDir, type ProgressReporter } from "./roboflow-store"
 
 // Must match lib/mosaic.ts SIGNATURE_GRID and the worker's COARSE_GRID: the
@@ -586,6 +593,7 @@ export async function ingestDataset(
     }
 
     const result = await buildLibrary(files, outputDir, report)
+    if (blobEnabled()) await publishDataset(slug, outputDir, report)
 
     return {
       ...resolved.ref,
@@ -640,6 +648,7 @@ export async function ensureCover(slug: string): Promise<boolean> {
   if (!saved) {
     throw new IngestError("Roboflow's cover image could not be downloaded.")
   }
+  if (blobEnabled()) await publishFile(slug, datasetDir(slug), ICON_FILE)
   return true
 }
 
@@ -649,12 +658,11 @@ export async function hasIconFile(slug: string): Promise<boolean> {
     await stat(path.join(datasetDir(slug), ICON_FILE))
     return true
   } catch {
-    return false
+    return blobEnabled() ? blobHasIcon(slug) : false
   }
 }
 
-// Has this dataset already been ingested? Used to short-circuit a repeat request.
-export async function isIngested(slug: string): Promise<boolean> {
+async function isIngestedLocally(slug: string): Promise<boolean> {
   try {
     const dir = datasetDir(slug)
     await stat(path.join(dir, MANIFEST_FILE))
@@ -665,4 +673,12 @@ export async function isIngested(slug: string): Promise<boolean> {
   } catch {
     return false
   }
+}
+
+// Has this dataset already been ingested? Used to short-circuit a repeat
+// request. A published dataset counts even on an instance whose cache is
+// empty — that is the whole point of publishing it.
+export async function isIngested(slug: string): Promise<boolean> {
+  if (await isIngestedLocally(slug)) return true
+  return blobEnabled() ? blobHasDataset(slug) : false
 }

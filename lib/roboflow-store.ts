@@ -1,7 +1,6 @@
 // Server-side store for ingested Roboflow datasets.
 //
-// Each dataset version gets one directory under the cache root, laid out like a
-// Supabase mosaic bucket so the browser engine can consume it unchanged:
+// Each dataset version gets one directory under the cache root:
 //
 //   <cache>/<slug>/manifest.json           { version, photos: [{ id, w, h }] }
 //   <cache>/<slug>/signatures-coarse.bin   uint16 LE coarse signatures, in photo order
@@ -19,9 +18,15 @@ import path from "node:path"
 import type { IngestStatus, RoboflowDataset } from "./roboflow"
 import { isDatasetSlug } from "./roboflow"
 
+// On a serverless host the deployment directory is read-only and /tmp is the
+// only place an ingest can build, so the cache doubles as scratch space there
+// and the finished library is published to Blob (see lib/roboflow-blob.ts).
+const DEFAULT_CACHE_ROOT = process.env.VERCEL
+  ? "/tmp/roboflow-cache"
+  : path.join(process.cwd(), ".roboflow-cache")
+
 export const CACHE_ROOT = path.resolve(
-  process.env.ROBOFLOW_CACHE_DIR?.trim() ||
-    path.join(process.cwd(), ".roboflow-cache")
+  process.env.ROBOFLOW_CACHE_DIR?.trim() || DEFAULT_CACHE_ROOT
 )
 
 export function datasetDir(slug: string): string {

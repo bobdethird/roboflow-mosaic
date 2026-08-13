@@ -1,8 +1,8 @@
 import type { NextConfig } from "next"
-import { dirname } from "node:path"
-import { fileURLToPath } from "node:url"
 
-const appRoot = dirname(fileURLToPath(import.meta.url))
+// The package is CommonJS (see package.json), so `import.meta.url` is not
+// available here; Next always loads this config with the project as the cwd.
+const appRoot = process.cwd()
 const isVercel = process.env.VERCEL === "1"
 
 const localRootConfig: NextConfig = {
