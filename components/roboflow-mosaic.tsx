@@ -15,6 +15,7 @@ import { CanvasHero } from "@/components/canvas-hero"
 import { RoboflowReferencePicker } from "@/components/roboflow-reference-picker"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Progress } from "@/components/ui/progress"
 import { Spinner } from "@/components/ui/spinner"
 import { ingestExportInBrowser } from "@/lib/roboflow-client-ingest"
 import { roboflowSource } from "@/lib/mosaic-source"
@@ -32,6 +33,45 @@ const MIN_CELL_SIZE = 8
 
 const EXAMPLE_URL =
   "https://universe.roboflow.com/joseph-nelson/chess-pieces-new"
+
+// An ingest walks a fixed sequence of stages, and only the long one — building
+// tiles — reports counts. Giving every stage its own share of the bar turns
+// that into one percentage for the whole load, instead of a number that exists
+// for a single stage and restarts at the next. Weights are rough durations and
+// sum to 100, but an uncounted stage only parks at its own start, so the bar
+// fills all the way just for a dataset that reports itself ready.
+// Matched by prefix: the export-wait step carries Roboflow's own percentage in
+// its label, and each ingest path (browser, server) reports only a subset.
+const INGEST_STAGES: { step: string; weight: number }[] = [
+  { step: "resolving dataset", weight: 4 },
+  { step: "requesting export", weight: 6 },
+  { step: "roboflow is generating", weight: 9 },
+  { step: "downloading export", weight: 8 },
+  { step: "reading export index", weight: 8 },
+  { step: "building tiles", weight: 57 },
+  { step: "fetching project cover image", weight: 3 },
+  { step: "writing library", weight: 3 },
+  { step: "publishing library", weight: 2 },
+]
+
+// Null is "nothing to say": an unrecognized stage with no counts, which leaves
+// the bar wherever it already stood.
+function ingestPercent(status: IngestStatus): number | null {
+  if (status.state === "ready") return 100
+  const step = status.step.toLowerCase()
+  let start = 0
+  for (const stage of INGEST_STAGES) {
+    if (step.startsWith(stage.step)) {
+      const fraction =
+        status.total > 0 ? Math.min(1, status.done / status.total) : 0
+      return start + stage.weight * fraction
+    }
+    start += stage.weight
+  }
+  return status.total > 0
+    ? Math.min(100, (status.done / status.total) * 100)
+    : null
+}
 
 async function startIngest(url: string): Promise<IngestStatus> {
   const response = await fetch(ROBOFLOW_INGEST_PATH, {
@@ -84,12 +124,27 @@ async function pollIngest(
 export function RoboflowMosaic() {
   const [url, setUrl] = React.useState("")
   const [ingesting, setIngesting] = React.useState(false)
-  const [status, setStatus] = React.useState<IngestStatus | null>(null)
+  // Status and its percentage travel together because the percentage is not a
+  // pure function of the latest status: it is clamped against the previous one
+  // so the bar never walks backwards mid-load, which a poll landing on a
+  // coarser step (or a stage with no counts) would otherwise do.
+  const [progress, setProgress] = React.useState<{
+    status: IngestStatus
+    percent: number
+  } | null>(null)
   const [dataset, setDataset] = React.useState<RoboflowDataset | null>(null)
   const [error, setError] = React.useState<string | null>(null)
   const abortRef = React.useRef<AbortController | null>(null)
 
   React.useEffect(() => () => abortRef.current?.abort(), [])
+
+  const report = React.useCallback((status: IngestStatus) => {
+    setProgress((current) => {
+      const floor = current?.percent ?? 0
+      const next = ingestPercent(status)
+      return { status, percent: next === null ? floor : Math.max(floor, next) }
+    })
+  }, [])
 
   // CanvasHero uses this as an effect dependency, so it has to be stable across
   // renders — otherwise the tile library reloads on every keystroke.
@@ -122,7 +177,7 @@ export function RoboflowMosaic() {
     const controller = new AbortController()
     abortRef.current = controller
     setError(null)
-    setStatus(null)
+    setProgress(null)
 
     try {
       parseRoboflowUrl(requestedUrl)
@@ -133,7 +188,7 @@ export function RoboflowMosaic() {
 
     setIngesting(true)
     try {
-      setStatus({
+      report({
         slug: "",
         state: "running",
         step: "Requesting export",
@@ -142,7 +197,7 @@ export function RoboflowMosaic() {
         updatedAt: new Date().toISOString(),
       })
       const started = await startIngest(requestedUrl)
-      setStatus(started)
+      report(started)
       if (started.state === "ready" && started.dataset) {
         setDataset(started.dataset)
         return
@@ -154,14 +209,14 @@ export function RoboflowMosaic() {
             exportUrl: started.exportUrl,
             iconUrl: started.iconUrl,
           },
-          (progress) => {
+          (stage) => {
             if (controller.signal.aborted) return
-            setStatus({
+            report({
               slug: started.slug,
               state: "running",
-              step: progress.step,
-              done: progress.done,
-              total: progress.total,
+              step: stage.step,
+              done: stage.done,
+              total: stage.total,
               updatedAt: new Date().toISOString(),
             })
           },
@@ -170,11 +225,7 @@ export function RoboflowMosaic() {
         setDataset(built.dataset)
         return
       }
-      const resolved = await pollIngest(
-        started.slug,
-        setStatus,
-        controller.signal
-      )
+      const resolved = await pollIngest(started.slug, report, controller.signal)
       setDataset(resolved)
     } catch (runError) {
       if (controller.signal.aborted) return
@@ -182,16 +233,9 @@ export function RoboflowMosaic() {
     } finally {
       setIngesting(false)
     }
-  }, [url])
+  }, [url, report])
 
-  const statusLine =
-    ingesting && status
-      ? `${status.step}${
-          status.total > 0
-            ? ` — ${Math.round((status.done / status.total) * 100)}%`
-            : ""
-        }`
-      : null
+  const shownPercent = progress ? Math.round(progress.percent) : 0
 
   // The URL, with the action tucked into the right end.
   const datasetBar = (
@@ -235,10 +279,17 @@ export function RoboflowMosaic() {
           {ingesting ? <Spinner /> : "Load Dataset"}
         </Button>
       </div>
-      {statusLine && (
-        <p className="text-xs text-muted-foreground tabular-nums">
-          {statusLine}
-        </p>
+      {ingesting && progress && (
+        <div className="flex w-full min-w-0 flex-col gap-1.5">
+          <Progress
+            value={shownPercent}
+            className="h-1"
+            aria-label="Dataset load progress"
+          />
+          <p className="text-center text-xs text-muted-foreground tabular-nums">
+            {progress.status.step} — {shownPercent}%
+          </p>
+        </div>
       )}
       {error && <p className="text-xs text-destructive">{error}</p>}
     </div>

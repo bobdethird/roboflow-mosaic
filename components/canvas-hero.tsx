@@ -15,6 +15,7 @@ import {
   type ReferenceImage,
 } from "@/components/reference-image"
 import { Button } from "@/components/ui/button"
+import { Progress } from "@/components/ui/progress"
 import { buildMosaicGeometry, type MosaicGeometry } from "@/lib/mosaic-geometry"
 import { MosaicZoomViewer } from "@/components/mosaic-zoom-viewer"
 import type { GalleryTile } from "@/lib/gallery"
@@ -554,14 +555,13 @@ function LibraryStatus({
 
   return (
     <div className="flex w-56 flex-col items-center gap-1.5">
-      <div className="h-1 w-full overflow-hidden rounded-full bg-muted">
-        <div
-          className="h-full rounded-full bg-foreground/70 transition-[width] duration-200"
-          // An unknown total (no content-length) still gets a filled bar rather
-          // than a stuck-at-zero one; the byte count carries the real progress.
-          style={{ width: pct === null ? "100%" : `${pct}%` }}
-        />
-      </div>
+      <Progress
+        // An unknown total (no content-length) still gets a filled bar rather
+        // than a stuck-at-zero one; the byte count carries the real progress.
+        value={pct ?? 100}
+        className="h-1"
+        aria-label="Dataset download progress"
+      />
       <p className="text-xs text-muted-foreground tabular-nums">
         {progress.step === "preparing"
           ? "Preparing the dataset…"
