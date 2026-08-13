@@ -247,28 +247,19 @@ export function RoboflowMosaic() {
   return (
     <div className="relative flex min-h-svh flex-col">
       {collection && dataset ? (
-        <>
-          {/* Keep the editable dataset field outside CanvasHero's select-none
-              image workspace and pointer handlers. It remains visually over
-              the canvas, but is an independent interaction layer so generating
-              or hovering a mosaic cannot intercept its focus. */}
-          <div className="pointer-events-none absolute inset-x-0 top-[calc(env(safe-area-inset-top,0px)+1rem)] z-40 flex justify-center px-4 md:top-6 md:px-16 xl:top-8">
-            <div className="pointer-events-auto w-full max-w-xl md:max-w-2xl">
-              {datasetBar}
-            </div>
-          </div>
-
-          {/* Remounted per dataset so every piece of CanvasHero's state —
-              library, reference, cached mosaic — resets with the collection. */}
-          <CanvasHero
-            key={collection.id}
-            collection={collection}
-            maxTileReuse={MAX_TILE_REUSE}
-            minCellSize={MIN_CELL_SIZE}
-            hideCollectionLabel
-            referencePicker={ReferencePicker}
-          />
-        </>
+        // Remounted per dataset so every piece of CanvasHero's state —
+        // library, reference, cached mosaic — resets with the collection.
+        // The dataset field is hosted as CanvasHero's top bar so it lives on
+        // the mosaic canvas and recenters with the image when the sidebar opens.
+        <CanvasHero
+          key={collection.id}
+          collection={collection}
+          topBarSlot={datasetBar}
+          maxTileReuse={MAX_TILE_REUSE}
+          minCellSize={MIN_CELL_SIZE}
+          hideCollectionLabel
+          referencePicker={ReferencePicker}
+        />
       ) : (
         // Before a dataset is loaded there is no CanvasHero to host the bar, so
         // it gets its own centered landing state.

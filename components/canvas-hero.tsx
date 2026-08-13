@@ -1286,7 +1286,7 @@ export function CanvasHero({
             anything else it passes over). Only the bar itself takes events. */}
         {topBarSlot && (
           <div className="pointer-events-none absolute inset-x-0 top-[calc(env(safe-area-inset-top,0px)+1rem)] z-30 flex justify-center px-4 md:top-6 md:px-16 xl:top-8">
-            <div className="pointer-events-auto w-full max-w-xl md:max-w-2xl">
+            <div className="pointer-events-auto w-full max-w-xl select-text md:max-w-2xl">
               {topBarSlot}
             </div>
           </div>
