@@ -15,6 +15,9 @@ import { datasetFile } from "@/lib/roboflow-store"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
+// Hydrating a published library from Blob can take longer than the default
+// serverless budget, especially for a dataset with hundreds of thumbnails.
+export const maxDuration = 60
 
 const CONTENT_TYPES: Record<string, string> = {
   ".json": "application/json; charset=utf-8",

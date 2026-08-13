@@ -43,8 +43,10 @@ export function datasetFile(slug: string, relativePath: string): string | null {
   return resolved === base || resolved.startsWith(prefix) ? resolved : null
 }
 
+export const STATUS_FILE = "status.json"
+
 export function statusPath(slug: string): string {
-  return path.join(datasetDir(slug), "status.json")
+  return path.join(datasetDir(slug), STATUS_FILE)
 }
 
 export async function readStatus(slug: string): Promise<IngestStatus | null> {
@@ -73,11 +75,21 @@ export type ProgressReporter = (
   total?: number
 ) => void
 
+// How often a running ingest refreshes the durable (Blob) copy of status.json.
+// GET on another instance treats a running status older than 60s as dead, so
+// this has to be comfortably under that.
+const DURABLE_INTERVAL_MS = 10_000
+
 // Build a reporter that persists coarse progress, throttled so a per-image
 // callback doesn't turn into thousands of writes.
 export function progressWriter(
   slug: string,
-  onError: (error: unknown) => void = () => {}
+  options: {
+    onError?: (error: unknown) => void
+    // Cross-instance copy (Blob). Step changes and finish always go; counter
+    // ticks are rate-limited so a per-image callback doesn't become a PUT storm.
+    durable?: (status: IngestStatus) => Promise<void>
+  } = {}
 ): {
   report: ProgressReporter
   finish: (
@@ -85,8 +97,26 @@ export function progressWriter(
     extra: { dataset?: RoboflowDataset; error?: string }
   ) => Promise<void>
 } {
+  const onError = options.onError ?? (() => {})
   let lastWrite = 0
   let lastStep = ""
+  let lastDurable = 0
+  let lastDurableStep = ""
+
+  const persist = (status: IngestStatus, forceDurable: boolean) => {
+    const durable =
+      options.durable &&
+      (forceDurable ||
+        status.step !== lastDurableStep ||
+        Date.now() - lastDurable >= DURABLE_INTERVAL_MS)
+    if (durable) {
+      lastDurable = Date.now()
+      lastDurableStep = status.step
+    }
+    const writes = [writeStatus(status)]
+    if (durable && options.durable) writes.push(options.durable(status))
+    return Promise.all(writes).then(() => undefined)
+  }
 
   const report: ProgressReporter = (step, done = 0, total = 0) => {
     const now = Date.now()
@@ -95,29 +125,35 @@ export function progressWriter(
     if (step === lastStep && now - lastWrite < 400) return
     lastStep = step
     lastWrite = now
-    void writeStatus({
-      slug,
-      state: "running",
-      step,
-      done,
-      total,
-      updatedAt: new Date().toISOString(),
-    }).catch(onError)
+    void persist(
+      {
+        slug,
+        state: "running",
+        step,
+        done,
+        total,
+        updatedAt: new Date().toISOString(),
+      },
+      false
+    ).catch(onError)
   }
 
   const finish = async (
     state: "ready" | "error",
     extra: { dataset?: RoboflowDataset; error?: string }
   ) => {
-    await writeStatus({
-      slug,
-      state,
-      step: state === "ready" ? "Ready" : "Failed",
-      done: 0,
-      total: 0,
-      updatedAt: new Date().toISOString(),
-      ...extra,
-    })
+    await persist(
+      {
+        slug,
+        state,
+        step: state === "ready" ? "Ready" : "Failed",
+        done: 0,
+        total: 0,
+        updatedAt: new Date().toISOString(),
+        ...extra,
+      },
+      true
+    )
   }
 
   return { report, finish }

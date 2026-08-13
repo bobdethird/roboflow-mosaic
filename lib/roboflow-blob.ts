@@ -15,8 +15,8 @@ import { pipeline } from "node:stream/promises"
 import yauzl from "yauzl"
 import { ZipFile } from "yazl"
 
-import { ICON_FILE, MANIFEST_FILE } from "./roboflow"
-import { datasetDir, type ProgressReporter } from "./roboflow-store"
+import { ICON_FILE, MANIFEST_FILE, type IngestStatus } from "./roboflow"
+import { STATUS_FILE, datasetDir, type ProgressReporter } from "./roboflow-store"
 
 const PREFIX = "roboflow"
 export const ARCHIVE_FILE = "library.zip"
@@ -27,7 +27,7 @@ const STORE_MAX_AGE = 60
 
 const SKIP_DIRS = new Set(["source"])
 const SKIP_FILES = new Set([
-  "status.json",
+  STATUS_FILE,
   "export.zip",
   ARCHIVE_FILE,
   META_FILE,
@@ -79,6 +79,32 @@ export async function readBlobText(
   } catch {
     return null
   }
+}
+
+export async function readBlobStatus(slug: string): Promise<IngestStatus | null> {
+  const text = await readBlobText(slug, STATUS_FILE)
+  if (!text) return null
+  try {
+    return JSON.parse(text) as IngestStatus
+  } catch {
+    return null
+  }
+}
+
+// Ingest progress has to be visible to every instance, not just the one that
+// started the job — GET polls land on a different lambda, and /tmp is not
+// shared. No CDN cache: the page reads this every 700ms.
+export async function writeBlobStatus(
+  slug: string,
+  status: IngestStatus
+): Promise<void> {
+  await put(blobKey(slug, STATUS_FILE), JSON.stringify(status), {
+    access: "public",
+    addRandomSuffix: false,
+    allowOverwrite: true,
+    contentType: "application/json",
+    cacheControlMaxAge: 0,
+  })
 }
 
 async function libraryFiles(directory: string): Promise<string[]> {

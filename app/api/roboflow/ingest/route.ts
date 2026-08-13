@@ -4,9 +4,13 @@
 // image, so it runs in the background and writes its progress to the dataset's
 // status.json; the page polls GET until the state is "ready" or "error".
 
+import { after } from "next/server"
+
 import {
+  MANIFEST_FILE,
   RoboflowUrlError,
   datasetSlug,
+  isDatasetSlug,
   parseRoboflowUrl,
   universeUrl,
   type IngestStatus,
@@ -20,8 +24,14 @@ import {
   isIngested,
   resolveDataset,
 } from "@/lib/roboflow-ingest"
-import { blobEnabled, readBlobText } from "@/lib/roboflow-blob"
 import {
+  blobEnabled,
+  readBlobStatus,
+  readBlobText,
+  writeBlobStatus,
+} from "@/lib/roboflow-blob"
+import {
+  datasetDir,
   isRunning,
   progressWriter,
   readStatus,
@@ -30,8 +40,6 @@ import {
 } from "@/lib/roboflow-store"
 import { readFile } from "node:fs/promises"
 import path from "node:path"
-import { datasetDir } from "@/lib/roboflow-store"
-import { MANIFEST_FILE, isDatasetSlug } from "@/lib/roboflow"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -56,6 +64,22 @@ function json(body: unknown, status = 200): Response {
     status,
     headers: { "cache-control": "no-store" },
   })
+}
+
+async function persistStatus(status: IngestStatus): Promise<void> {
+  await writeStatus(status)
+  if (blobEnabled()) await writeBlobStatus(status.slug, status)
+}
+
+// Local /tmp first (the instance that is ingesting), then the Blob copy so a
+// poll that landed on a different lambda can still see progress, then a
+// reconstructed record from a published library.
+async function loadStatus(slug: string): Promise<IngestStatus | null> {
+  return (
+    (await readStatus(slug)) ??
+    (blobEnabled() ? await readBlobStatus(slug) : null) ??
+    (await statusFromDisk(slug))
+  )
 }
 
 // Status for a dataset whose files are on disk but whose status.json is gone
@@ -119,21 +143,23 @@ export async function GET(request: Request): Promise<Response> {
   if (!slug || !isDatasetSlug(slug)) {
     return json({ error: "Missing or malformed slug." }, 400)
   }
-  const raw = (await readStatus(slug)) ?? (await statusFromDisk(slug))
+  const raw = await loadStatus(slug)
   if (!raw) return json({ error: "Unknown dataset." }, 404)
-  const status = await withIconState(raw)
-  // A status file can claim "running" after a server restart killed the job.
-  if (status.state === "running" && !isRunning(slug)) {
-    const stale = Date.now() - Date.parse(status.updatedAt) > 60_000
+  // The ingesting instance still says "running" while it uploads the library;
+  // any other instance should prefer the published copy once it exists.
+  if (raw.state === "running" && !isRunning(slug)) {
+    const published = await statusFromDisk(slug)
+    if (published) return json(await withIconState(published))
+    const stale = Date.now() - Date.parse(raw.updatedAt) > 60_000
     if (stale) {
       return json({
-        ...status,
+        ...raw,
         state: "error",
         error: "The ingest stopped unexpectedly. Try again.",
       })
     }
   }
-  return json(status)
+  return json(await withIconState(raw))
 }
 
 export async function POST(request: Request): Promise<Response> {
@@ -155,7 +181,7 @@ export async function POST(request: Request): Promise<Response> {
     if (ref.version !== null && !body.refresh) {
       const known = datasetSlug({ ...ref, version: ref.version })
       if (await isIngested(known)) {
-        const cached = (await readStatus(known)) ?? (await statusFromDisk(known))
+        const cached = await loadStatus(known)
         if (cached?.state === "ready") return json(await withIconState(cached))
       }
     }
@@ -164,11 +190,11 @@ export async function POST(request: Request): Promise<Response> {
     slug = datasetSlug(resolved.ref)
 
     if (isRunning(slug)) {
-      const current = await readStatus(slug)
+      const current = await loadStatus(slug)
       return json(current ?? { slug, state: "running", step: "Working", done: 0, total: 0 })
     }
     if (!body.refresh && (await isIngested(slug))) {
-      const cached = (await readStatus(slug)) ?? (await statusFromDisk(slug))
+      const cached = await loadStatus(slug)
       if (cached?.state === "ready") return json(await withIconState(cached))
     }
 
@@ -180,9 +206,15 @@ export async function POST(request: Request): Promise<Response> {
       total: 0,
       updatedAt: new Date().toISOString(),
     }
-    await writeStatus(started)
+    // Durable write before 202: the next poll almost always hits another
+    // instance, and without this that GET 404s ("Unknown dataset").
+    await persistStatus(started)
 
-    const { report, finish } = progressWriter(slug)
+    const { report, finish } = progressWriter(slug, {
+      durable: blobEnabled()
+        ? (status) => writeBlobStatus(status.slug, status)
+        : undefined,
+    })
     const job = ingestDataset(resolved.ref, report)
       .then(async (dataset) => {
         await finish("ready", { dataset })
@@ -191,6 +223,11 @@ export async function POST(request: Request): Promise<Response> {
         await finish("error", { error: errorMessage(error) })
       })
     trackJob(slug, job)
+    // Keep the invocation alive after the 202. Without this, Vercel may freeze
+    // the function as soon as the response is sent and the ingest never runs.
+    after(async () => {
+      await job
+    })
   } catch (error) {
     return json({ error: errorMessage(error) }, 400)
   }

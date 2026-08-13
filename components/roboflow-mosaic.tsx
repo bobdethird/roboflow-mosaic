@@ -48,6 +48,7 @@ async function pollIngest(
   onStatus: (status: IngestStatus) => void,
   signal: AbortSignal
 ): Promise<RoboflowDataset> {
+  const startedAt = Date.now()
   for (;;) {
     if (signal.aborted) throw new Error("Cancelled")
     const response = await fetch(
@@ -57,6 +58,13 @@ async function pollIngest(
     const status = await readJsonBody<IngestStatus & { error?: string }>(
       response
     )
+    // A 404 is the poll landing on an instance that has not seen this job yet
+    // (status lives in /tmp). Give the durable copy a few seconds to show up
+    // rather than failing the default dataset on the first tick.
+    if (response.status === 404 && Date.now() - startedAt < 20_000) {
+      await new Promise((resolve) => setTimeout(resolve, 700))
+      continue
+    }
     if (!response.ok)
       throw new Error(status.error ?? "Lost track of the ingest.")
     onStatus(status)
