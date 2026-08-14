@@ -7,6 +7,7 @@ import test from "node:test"
 import {
   INGEST_RATE_LIMIT,
   INGEST_RATE_WINDOW_MS,
+  RESOLVE_RATE_LIMIT_COUNT,
   GLOBAL_INGEST_RATE_LIMIT,
   nextRateRecord,
 } from "../lib/roboflow-control"
@@ -40,6 +41,30 @@ test("expired rate windows reset instead of permanently blocking a client", () =
   assert.equal(next.result.allowed, true)
   assert.equal(next.record.count, 1)
   assert.equal(next.record.resetAt, now + INGEST_RATE_WINDOW_MS)
+})
+
+test("resolve allows more loads than the ingest window", () => {
+  const now = Date.UTC(2026, 7, 13)
+  let record: { count: number; resetAt: number } | null = null
+  for (let count = 1; count <= RESOLVE_RATE_LIMIT_COUNT; count++) {
+    const next = nextRateRecord(
+      record,
+      now,
+      RESOLVE_RATE_LIMIT_COUNT,
+      INGEST_RATE_WINDOW_MS
+    )
+    record = next.record
+    assert.equal(next.result.allowed, true)
+  }
+
+  const blocked = nextRateRecord(
+    record,
+    now,
+    RESOLVE_RATE_LIMIT_COUNT,
+    INGEST_RATE_WINDOW_MS
+  )
+  assert.equal(blocked.result.allowed, false)
+  assert.ok(RESOLVE_RATE_LIMIT_COUNT > INGEST_RATE_LIMIT)
 })
 
 test("the project-wide ingest window has a separate ceiling", () => {

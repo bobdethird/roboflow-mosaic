@@ -113,6 +113,7 @@ export function RoboflowMosaic() {
   const [error, setError] = React.useState<string | null>(null)
   const [apiKey, setApiKey] = React.useState("")
   const abortRef = React.useRef<AbortController | null>(null)
+  const inFlightUrlRef = React.useRef<string | null>(null)
 
   React.useEffect(() => {
     try {
@@ -161,12 +162,7 @@ export function RoboflowMosaic() {
     // while the current dataset is displayed (and while a new one loads), so
     // later keystrokes must not change the request already in flight.
     const requestedUrl = url.trim()
-
-    abortRef.current?.abort()
-    const controller = new AbortController()
-    abortRef.current = controller
-    setError(null)
-    setProgress(null)
+    if (!requestedUrl || inFlightUrlRef.current === requestedUrl) return
 
     try {
       parseRoboflowUrl(requestedUrl)
@@ -175,6 +171,12 @@ export function RoboflowMosaic() {
       return
     }
 
+    abortRef.current?.abort()
+    const controller = new AbortController()
+    abortRef.current = controller
+    inFlightUrlRef.current = requestedUrl
+    setError(null)
+    setProgress(null)
     setIngesting(true)
     try {
       const key = apiKey.trim() || undefined
@@ -220,7 +222,10 @@ export function RoboflowMosaic() {
       if (controller.signal.aborted || isAbortError(runError)) return
       setError(runError instanceof Error ? runError.message : "Ingest failed.")
     } finally {
-      setIngesting(false)
+      if (abortRef.current === controller) {
+        inFlightUrlRef.current = null
+        setIngesting(false)
+      }
     }
   }, [url, apiKey, report])
 

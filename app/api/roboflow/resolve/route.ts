@@ -6,9 +6,7 @@ import {
   parseRoboflowUrl,
 } from "@/lib/roboflow"
 import { RoboflowApiError } from "@/lib/roboflow-api"
-import {
-  consumeIngestRateLimit,
-} from "@/lib/roboflow-control"
+import { consumeResolveRateLimit } from "@/lib/roboflow-control"
 import {
   clientAddress,
   errorMessage,
@@ -46,7 +44,7 @@ export async function POST(request: Request): Promise<Response> {
     const ref = parseRoboflowUrl(body.url ?? "")
 
     if (IS_VERCEL && !apiKey) {
-      const rate = await consumeIngestRateLimit(clientAddress(request))
+      const rate = await consumeResolveRateLimit(clientAddress(request))
       if (!rate.allowed) {
         return json(
           {

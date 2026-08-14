@@ -19,6 +19,7 @@ const CONTROL_CACHE_SECONDS = 60
 const LEASE_MS = 6 * 60 * 1000
 const RATE_WINDOW_MS = 15 * 60 * 1000
 const RATE_LIMIT = 4
+const RESOLVE_RATE_LIMIT = 30
 const GLOBAL_RATE_LIMIT = 20
 const CAS_RETRIES = 4
 
@@ -42,6 +43,7 @@ export type RateLimitResult = {
 
 export const INGEST_RATE_LIMIT = RATE_LIMIT
 export const INGEST_RATE_WINDOW_MS = RATE_WINDOW_MS
+export const RESOLVE_RATE_LIMIT_COUNT = RESOLVE_RATE_LIMIT
 export const GLOBAL_INGEST_RATE_LIMIT = GLOBAL_RATE_LIMIT
 
 type LeaseRecord = {
@@ -148,9 +150,9 @@ export async function releaseIngestLease(lease: IngestLease): Promise<void> {
   }
 }
 
-function ratePath(clientAddress: string): string {
+function ratePath(kind: "ingest" | "resolve", clientAddress: string): string {
   const digest = createHash("sha256")
-    .update(`roboflow-ingest\0${clientAddress}`)
+    .update(`roboflow-${kind}\0${clientAddress}`)
     .digest("hex")
   return `${CONTROL_PREFIX}/rate/${digest}.json`
 }
@@ -196,7 +198,8 @@ async function consumeRateLimit(
   pathname: string,
   now: number,
   limit: number,
-  windowMs: number
+  windowMs: number,
+  onContention: "allow" | "deny" = "deny"
 ): Promise<RateLimitResult> {
   for (let attempt = 0; attempt < CAS_RETRIES; attempt++) {
     const current = await readControl<RateRecord>(pathname)
@@ -235,8 +238,11 @@ async function consumeRateLimit(
     }
   }
 
-  // Heavy contention is treated as a short throttle, not an uncoordinated
-  // ingest. The client can retry without starting duplicate work.
+  // Ingest stays closed so two instances do not start the same expensive job.
+  // Resolve is a cheap JSON lookup — a Blob race should not 429 the page.
+  if (onContention === "allow") {
+    return { allowed: true, limit, remaining: 0, retryAfterSeconds: 0 }
+  }
   return {
     allowed: false,
     limit,
@@ -250,10 +256,23 @@ export function consumeIngestRateLimit(
   now = Date.now()
 ): Promise<RateLimitResult> {
   return consumeRateLimit(
-    ratePath(clientAddress),
+    ratePath("ingest", clientAddress),
     now,
     RATE_LIMIT,
     RATE_WINDOW_MS
+  )
+}
+
+export function consumeResolveRateLimit(
+  clientAddress: string,
+  now = Date.now()
+): Promise<RateLimitResult> {
+  return consumeRateLimit(
+    ratePath("resolve", clientAddress),
+    now,
+    RESOLVE_RATE_LIMIT,
+    RATE_WINDOW_MS,
+    "allow"
   )
 }
 
