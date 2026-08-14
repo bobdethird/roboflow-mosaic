@@ -9,8 +9,8 @@
 // Either way the result is handed back as a `File`, which is exactly what
 // CanvasHero's upload card produces, so nothing downstream changes.
 //
-// Both come out of the downloaded library archive, which the canvas is loading
-// anyway — this takes a reference on the same copy rather than fetching again.
+// Both come out of the advertised library snapshot, which the canvas is loading
+// anyway — this takes a reference on the same pack rather than fetching again.
 
 import * as React from "react"
 

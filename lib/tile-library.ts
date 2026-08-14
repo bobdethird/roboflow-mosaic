@@ -16,8 +16,8 @@ export const COARSE_SIG_BYTES = COARSE_SIG_VALUES * 2
 export type CollectionCopy = { heading: string; description: string }
 
 // A library tile, ready to hydrate into the mosaic worker. The thumbnail is not
-// sent inline: `url` is an object url into the downloaded library archive, and
-// the worker reads it only when the tile is actually placed.
+  // sent inline: `url` is an asset URL for the tile's thumbnail, and the worker
+  // reads it only when the tile is actually placed.
 export type LibraryItem = {
   id: string
   sig: Uint8Array

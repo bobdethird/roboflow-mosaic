@@ -96,8 +96,10 @@ export class MosaicEngine {
 
   // Replay the shared library into the worker's store so it can match/render. The
   // worker fetches each tile's thumbnail lazily (by URL) when it's placed.
-  hydrate(items: HydrateItem[]) {
-    if (items.length) this.send({ type: "hydrate", items })
+  hydrate(items: HydrateItem[], options: { append?: boolean } = {}) {
+    if (items.length) {
+      this.send({ type: "hydrate", items, append: options.append })
+    }
   }
 
   generate(

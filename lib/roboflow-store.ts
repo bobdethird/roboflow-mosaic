@@ -2,8 +2,9 @@
 //
 // Each dataset version gets one directory under the cache root:
 //
-//   <cache>/<slug>/manifest.json           { version, photos: [{ id, w, h }] }
-//   <cache>/<slug>/signatures-coarse.bin   uint16 LE coarse signatures, in photo order
+//   <cache>/<slug>/manifest.json           latest snapshot { version, photos }
+//   <cache>/<slug>/signatures-coarse.bin   latest coarse signatures, in photo order
+//   <cache>/<slug>/snapshots/<version>/    immutable copy of those two files
 //   <cache>/<slug>/thumbs/<id>.jpg         one thumbnail per photo
 //   <cache>/<slug>/icon.jpg                the project's cover image
 //   <cache>/<slug>/status.json             ingest progress / result
@@ -95,6 +96,7 @@ export function progressWriter(
   } = {}
 ): {
   report: ProgressReporter
+  snapshot: (dataset: RoboflowDataset) => Promise<void>
   finish: (
     state: "ready" | "error",
     extra: { dataset?: RoboflowDataset; error?: string }
@@ -103,6 +105,9 @@ export function progressWriter(
   const onError = options.onError ?? (() => {})
   let lastWrite = 0
   let lastStep = ""
+  let lastDone = 0
+  let lastTotal = 0
+  let lastDataset: RoboflowDataset | undefined
   let lastDurable = 0
   let lastDurableStep = ""
   // Reports are fire-and-forget, but their writes still have to be ordered.
@@ -130,30 +135,48 @@ export function progressWriter(
     return write
   }
 
+  const runningStatus = (
+    step: string,
+    done: number,
+    total: number
+  ): IngestStatus => ({
+    slug,
+    state: "running",
+    step,
+    done,
+    total,
+    updatedAt: new Date().toISOString(),
+    dataset: lastDataset,
+    availableImages: lastDataset?.imageCount,
+    sourceImages: lastDataset?.sourceImages,
+  })
+
   const report: ProgressReporter = (step, done = 0, total = 0) => {
     const now = Date.now()
+    lastDone = done
+    lastTotal = total
     // Persist a stage change immediately; rate-limit the counter updates within
     // a stage so a per-image callback doesn't hammer the disk.
     if (step === lastStep && now - lastWrite < 400) return
     lastStep = step
     lastWrite = now
-    void persist(
-      {
-        slug,
-        state: "running",
-        step,
-        done,
-        total,
-        updatedAt: new Date().toISOString(),
-      },
-      false
-    ).catch(onError)
+    void persist(runningStatus(step, done, total), false).catch(onError)
+  }
+
+  const snapshot = async (dataset: RoboflowDataset) => {
+    lastDataset = dataset
+    lastWrite = Date.now()
+    await persist(
+      runningStatus(lastStep || "Seeding tiles", lastDone, lastTotal),
+      true
+    )
   }
 
   const finish = async (
     state: "ready" | "error",
     extra: { dataset?: RoboflowDataset; error?: string }
   ) => {
+    const dataset = extra.dataset ?? lastDataset
     await persist(
       {
         slug,
@@ -162,13 +185,16 @@ export function progressWriter(
         done: 0,
         total: 0,
         updatedAt: new Date().toISOString(),
-        ...extra,
+        dataset,
+        availableImages: dataset?.imageCount,
+        sourceImages: dataset?.sourceImages,
+        error: extra.error,
       },
       true
     )
   }
 
-  return { report, finish }
+  return { report, snapshot, finish }
 }
 
 // Slugs whose ingest is running in this process.

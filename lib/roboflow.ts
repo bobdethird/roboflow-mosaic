@@ -139,14 +139,6 @@ export function universeUrl(ref: RoboflowRef & { version: number }): string {
 export const ROBOFLOW_ASSET_BASE = "/api/roboflow/asset"
 export const ROBOFLOW_INGEST_PATH = "/api/roboflow/ingest"
 
-// POST /ingest answers with this when the tab should build the tiles itself.
-export type PreparedExport = {
-  slug: string
-  exportUrl: string
-  iconUrl?: string
-  dataset: RoboflowDataset
-}
-
 export const MANIFEST_FILE = "manifest.json"
 export const COARSE_SIGNATURES_FILE = "signatures-coarse.bin"
 // The project's cover image, downloaded from Roboflow during the ingest.
@@ -196,21 +188,30 @@ export async function readJsonBody<T>(response: Response): Promise<T> {
 
 // ─── Ingest job status (shared by the route and the page) ────────────────────
 
-export type IngestState = "pending" | "running" | "prepared" | "ready" | "error"
+export type IngestState = "running" | "ready" | "error"
 
 export type IngestStatus = {
   slug: string
   state: IngestState
-  // Coarse stage label, e.g. "Downloading export".
+  // Coarse stage label, e.g. "Seeding tiles".
   step: string
   done: number
   total: number
   updatedAt: string
   error?: string
+  // Present once the first usable snapshot has been published, including while
+  // the job is still running and after a later failure that left a snapshot.
   dataset?: RoboflowDataset
-  // Same-origin proxy URL for the export zip. Present when the tab builds tiles.
-  exportUrl?: string
-  iconUrl?: string
+  // Tiles in the latest advertised snapshot. Same as `dataset.imageCount` when
+  // a dataset record is attached; kept on the status so a poll can show
+  // "N of M ready" before the rest of the record is filled in.
+  availableImages?: number
+  sourceImages?: number
+}
+
+// Filesystem-safe directory for one immutable manifest/signature snapshot.
+export function snapshotDir(version: string): string {
+  return `snapshots/${version.replace(/:/g, "-")}`
 }
 
 // Two records of the same ingest — one instance's local file and the durable

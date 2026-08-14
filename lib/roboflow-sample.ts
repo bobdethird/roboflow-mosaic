@@ -1,7 +1,7 @@
-// Shared sampling for a Roboflow export: which image entries become tiles.
+// Shared sampling: which images become tiles.
 //
-// Used by the serverless ingest and by the browser ingest. Nothing here does
-// I/O — the caller already has an index.
+// Used by the Roboflow API ingest and the local-directory ingest. Nothing here
+// does I/O — the caller already has the candidate list.
 
 import {
   TILE_BUDGET,
@@ -74,17 +74,21 @@ export type SampledIndex<T extends SampledEntry> = { entries: T[] }
 // set rather than cut off partway, so the mosaic still draws from all of it.
 export function planTileSample<T extends SampledEntry>(
   index: SampledIndex<T>,
-  options: { budget?: number; msAvailable?: number } = {}
+  options: { budget?: number; msAvailable?: number; msPerItem?: number } = {}
 ): T[] {
   const entries = index.entries
   if (!entries.length) return []
 
   let count = Math.min(entries.length, options.budget ?? TILE_BUDGET)
   if (options.msAvailable !== undefined) {
-    let bytes = 0
-    for (const entry of entries) bytes += entry.compressedSize
-    const averageBytes = bytes / entries.length
-    const msPerTile = averageBytes / TILE_FETCH_BYTES_PER_MS + TILE_DECODE_MS
+    const msPerTile =
+      options.msPerItem ??
+      (() => {
+        let bytes = 0
+        for (const entry of entries) bytes += entry.compressedSize
+        const averageBytes = bytes / entries.length
+        return averageBytes / TILE_FETCH_BYTES_PER_MS + TILE_DECODE_MS
+      })()
     const affordable = Math.floor(Math.max(0, options.msAvailable) / msPerTile)
     count = Math.max(1, Math.min(count, affordable))
   }
@@ -95,4 +99,20 @@ export function planTileSample<T extends SampledEntry>(
     sampled[i] = entries[Math.floor((i * entries.length) / count)]
   }
   return sampled
+}
+
+// Which global indices to keep when sampling `take` items out of `total`
+// without holding the whole list. Matches `planTileSample`'s stride.
+export function evenSampleIndices(total: number, take: number): Set<number> {
+  const wanted = new Set<number>()
+  if (total <= 0 || take <= 0) return wanted
+  const count = Math.min(total, take)
+  if (count >= total) {
+    for (let index = 0; index < total; index++) wanted.add(index)
+    return wanted
+  }
+  for (let i = 0; i < count; i++) {
+    wanted.add(Math.floor((i * total) / count))
+  }
+  return wanted
 }

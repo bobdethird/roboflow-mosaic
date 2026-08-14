@@ -16,7 +16,7 @@ export type HydrateItem = {
 }
 
 export type WorkerRequest =
-  | { type: "hydrate"; items: HydrateItem[] }
+  | { type: "hydrate"; items: HydrateItem[]; append?: boolean }
   | {
       type: "generate"
       reqId: number

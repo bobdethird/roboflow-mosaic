@@ -1,8 +1,8 @@
 // Browser-side loader for an ingested Roboflow dataset's tile library.
 //
-// Everything comes out of the one archive the pack module downloads — the
-// manifest, the concatenated coarse signatures, and the thumbnails, which are
-// object urls by the time they reach a LibraryItem rather than routes to fetch.
+// The pack module downloads the advertised snapshot — the manifest and the
+// concatenated coarse signatures. Thumbnails stay as asset URLs and are
+// fetched only when something actually draws them.
 
 import { COARSE_SIG_BYTES, type LibraryItem } from "./tile-library"
 import {
@@ -46,8 +46,8 @@ export async function loadRoboflowLibrary(
   for (let i = 0; i < photos.length; i++) {
     const { id, w, h } = photos[i]
     const url = pack.thumbUrl(id)
-    // A manifest entry whose thumbnail did not make it into the archive would
-    // otherwise become a tile the worker can never paint.
+    // A manifest entry whose thumbnail was never published would otherwise
+    // become a tile the worker can never paint.
     if (!url) continue
     const base = i * COARSE_SIG_BYTES
     items.push({
@@ -59,7 +59,7 @@ export async function loadRoboflowLibrary(
     })
   }
   if (!items.length) {
-    throw new Error("The dataset archive contained no usable thumbnails.")
+    throw new Error("The dataset snapshot contained no usable thumbnails.")
   }
 
   return { version: pack.version, items, pack }

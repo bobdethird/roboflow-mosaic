@@ -1,69 +1,41 @@
-// Ingesting a dataset export the way a deployment now does: read over HTTP,
-// written straight back out, with nothing on disk at either end.
-//
-// The fixtures are real zips served by a real server, one that honours `Range`
-// and one that refuses to, because which of those a host is decides which code
-// path an ingest takes. The output side is covered both ways too: the local
-// directory, and the multipart archive a serverless host uploads instead.
+// Ingesting a Roboflow project through the per-image API: paginated search,
+// thumbnail fetch, signature/thumb seeding, and versioned partial snapshots.
 
 import assert from "node:assert/strict"
-import { randomBytes } from "node:crypto"
-import { createServer, type Server } from "node:http"
 import { mkdtemp, readFile, readdir, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import test from "node:test"
 
-import type { Part } from "@vercel/blob"
-import { unzipSync } from "fflate"
 import sharp from "sharp"
-import { ZipFile, type EndOptions } from "yazl"
 
 import {
-  buildLibraryFromExport,
-  planTileSample,
+  buildLibraryFromImages,
+  buildLibraryFromSearch,
   resolveDataset,
 } from "../lib/roboflow-ingest"
 import { COARSE_SIG_BYTES } from "../lib/tile-library"
-import {
-  PART_BYTES,
-  directorySink,
-  multipartArchiveSink,
-  type PartUploader,
-} from "../lib/roboflow-sink"
+import { directorySink } from "../lib/roboflow-sink"
 import {
   COARSE_SIGNATURES_FILE,
-  ICON_FILE,
   MANIFEST_FILE,
+  newerStatus,
   roboflowThumbPath,
+  snapshotDir,
 } from "../lib/roboflow"
 import type { PackManifest } from "../lib/roboflow-pack"
-// The library reader, as distinct from the export reader below: one indexes the
-// archive an ingest produces, the other the export it consumes.
+import { EvenSample, evenSampleIndices, planTileSample } from "../lib/roboflow-sample"
 import {
-  readZipEntry as readLibraryEntry,
-  readZipIndex as readLibraryIndex,
-  type RangeReader,
-} from "../lib/zip-index"
-import { isAllowedProxyUrl } from "../lib/roboflow-proxy"
-import {
-  EvenSample,
-  READ_WINDOW,
-  readZipEntries,
-  readZipIndex,
-  streamZipEntries,
-  type ZipEntry,
-} from "../lib/roboflow-zip"
-import {
-  readZipIndex as readZipIndexWeb,
-  readZipEntries as readZipEntriesWeb,
-} from "../lib/roboflow-zip-web"
+  fetchImageDetails,
+  fetchThumbnailBatch,
+  listProjectImages,
+  searchProjectImages,
+  thumbUrlFromSource,
+} from "../lib/roboflow-api"
+import { MIN_PARTIAL_TILES } from "../lib/roboflow-limits"
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 
-// Distinct, decodable images. A different hue per image keeps the ids (and so
-// the deduplication) distinct, and the sizes vary so the manifest's dimensions
-// are worth asserting on.
 async function image(index: number): Promise<Buffer> {
   const width = 64 + (index % 5) * 8
   return sharp({
@@ -78,108 +50,8 @@ async function image(index: number): Promise<Buffer> {
     .toBuffer()
 }
 
-type Fixture = { zip: Buffer; images: Map<string, Buffer> }
-
-// A Roboflow-shaped export: images nested under splits, annotation sidecars
-// alongside them, and both stored and deflated entries so the reader has to
-// handle each.
-async function exportZip(
-  count: number,
-  options: { zip64?: boolean } = {}
-): Promise<Fixture> {
-  const zip64 = options.zip64 ?? false
-  const zipfile = new ZipFile()
-  const images = new Map<string, Buffer>()
-  const chunks: Buffer[] = []
-  const done = new Promise<void>((resolve, reject) => {
-    zipfile.outputStream.on("data", (chunk: Buffer) => chunks.push(chunk))
-    zipfile.outputStream.on("end", resolve)
-    zipfile.outputStream.on("error", reject)
-  })
-
-  zipfile.addBuffer(Buffer.from("{}"), "train/_annotations.coco.json", {
-    forceZip64Format: zip64,
-  })
-  for (let index = 0; index < count; index++) {
-    const split = index % 3 === 0 ? "valid" : "train"
-    const name = `${split}/image-${String(index).padStart(4, "0")}.jpg`
-    const bytes = await image(index)
-    images.set(name, bytes)
-    // Half the entries stored, half deflated.
-    zipfile.addBuffer(bytes, name, {
-      compress: index % 2 === 0,
-      forceZip64Format: zip64,
-    })
-  }
-  zipfile.addBuffer(Buffer.from("names: []\n"), "data.yaml", {
-    forceZip64Format: zip64,
-  })
-  // @types/yazl requires every EndOptions field; only this one matters here.
-  zipfile.end({ forceZip64Format: zip64 } as EndOptions)
-  await done
-  return { zip: Buffer.concat(chunks), images }
-}
-
-type Host = {
-  url: string
-  requests: () => number
-  // Length of every ranged read, in request order.
-  reads: () => number[]
-  close: () => Promise<void>
-}
-
-// Serves one buffer. `ranges: false` is a host that answers every request with
-// the whole body, which is what the sequential fallback exists for.
-async function serve(body: Buffer, ranges = true): Promise<Host> {
-  let requests = 0
-  const reads: number[] = []
-  const server: Server = createServer((request, response) => {
-    requests += 1
-    const header = ranges ? request.headers.range : undefined
-    const match = /^bytes=(\d*)-(\d*)$/.exec(header ?? "")
-    if (!match) {
-      response.writeHead(200, {
-        "content-type": "application/zip",
-        "content-length": String(body.length),
-        "accept-ranges": ranges ? "bytes" : "none",
-      })
-      response.end(body)
-      return
-    }
-    const [, rawStart, rawEnd] = match
-    // "bytes=-500" is the last 500 bytes, which is how the reader finds the
-    // central directory without knowing the archive's size.
-    const start = rawStart
-      ? Number(rawStart)
-      : Math.max(0, body.length - Number(rawEnd))
-    const end = rawStart
-      ? Math.min(body.length - 1, rawEnd ? Number(rawEnd) : body.length - 1)
-      : body.length - 1
-    const slice = body.subarray(start, end + 1)
-    reads.push(slice.length)
-    response.writeHead(206, {
-      "content-type": "application/zip",
-      "content-length": String(slice.length),
-      "content-range": `bytes ${start}-${end}/${body.length}`,
-    })
-    response.end(slice)
-  })
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve))
-  const address = server.address()
-  if (!address || typeof address === "string") throw new Error("no address")
-  return {
-    url: `http://127.0.0.1:${address.port}/export.zip`,
-    requests: () => requests,
-    reads: () => reads,
-    close: () =>
-      new Promise<void>((resolve, reject) =>
-        server.close((error) => (error ? reject(error) : resolve()))
-      ),
-  }
-}
-
 async function withTempDir<T>(run: (dir: string) => Promise<T>): Promise<T> {
-  const dir = await mkdtemp(path.join(tmpdir(), "roboflow-export-test-"))
+  const dir = await mkdtemp(path.join(tmpdir(), "roboflow-ingest-test-"))
   try {
     return await run(dir)
   } finally {
@@ -188,211 +60,219 @@ async function withTempDir<T>(run: (dir: string) => Promise<T>): Promise<T> {
 }
 
 const silent = () => {}
+const projectRef = { workspace: "workspace", project: "project", version: 1 }
 
-// ─── The index ───────────────────────────────────────────────────────────────
-
-test("the export index lists image entries without downloading the export", async () => {
-  const fixture = await exportZip(6)
-  const host = await serve(fixture.zip)
-  try {
-    const index = await readZipIndex(host.url, { maxEntries: 100 })
-    assert.ok(index, "expected an index from a host that serves ranges")
-    assert.equal(index.imageCount, 6)
-    assert.equal(index.stride, 1)
-    assert.deepEqual(
-      index.entries.map((entry) => entry.name).sort(),
-      [...fixture.images.keys()].sort()
-    )
-    // The central directory and its locator only: nowhere near the whole zip.
-    const fetched = index.entries.reduce(
-      (total, entry) => total + entry.compressedSize,
-      0
-    )
-    assert.ok(fetched > 0)
-    assert.ok(host.requests() <= 3, `took ${host.requests()} requests`)
-  } finally {
-    await host.close()
-  }
-})
-
-test("a zip64 export is indexed by range rather than streamed whole", async () => {
-  // Past 65,535 entries a writer has to emit zip64, and the real directory
-  // offset moves out of the classic record into one reached through a locator.
-  // Failing to follow it is invisible from the outside: the index just comes
-  // back null and the ingest quietly falls back to pulling the whole export —
-  // on precisely the datasets that are too big for that to be acceptable.
-  const fixture = await exportZip(6, { zip64: true })
-  const host = await serve(fixture.zip)
-  try {
-    const index = await readZipIndex(host.url, { maxEntries: 100 })
-    assert.ok(index, "expected an index from a zip64 export")
-    assert.deepEqual(
-      index.entries.map((entry) => entry.name).sort(),
-      [...fixture.images.keys()].sort()
-    )
-
-    const seen = new Map<string, Buffer>()
-    await readZipEntries(
-      host.url,
-      index.entries,
-      async (entry, bytes) => {
-        seen.set(entry.name, bytes)
-      },
-      { concurrency: 2 }
-    )
-    for (const [name, bytes] of fixture.images) {
-      assert.deepEqual(seen.get(name), bytes, `${name} read back wrong`)
-    }
-  } finally {
-    await host.close()
-  }
-})
-
-test("a host that ignores range requests has no index", async () => {
-  const fixture = await exportZip(3)
-  const host = await serve(fixture.zip, false)
-  try {
-    assert.equal(await readZipIndex(host.url, { maxEntries: 100 }), null)
-  } finally {
-    await host.close()
-  }
-})
-
-test("indexed entries read back byte for byte, stored or deflated", async () => {
-  const fixture = await exportZip(8)
-  const host = await serve(fixture.zip)
-  try {
-    const index = await readZipIndex(host.url, { maxEntries: 100 })
-    assert.ok(index)
-    const seen = new Map<string, Buffer>()
-    await readZipEntries(
-      host.url,
-      index.entries,
-      async (entry, bytes) => {
-        seen.set(entry.name, bytes)
-      },
-      { concurrency: 3 }
-    )
-    assert.equal(seen.size, fixture.images.size)
-    for (const [name, bytes] of fixture.images) {
-      assert.ok(seen.get(name)?.equals(bytes), `${name} did not round-trip`)
-    }
-  } finally {
-    await host.close()
-  }
-})
-
-// An export several read windows long, out of images too noisy to compress. The
-// point is the total size, so these are bigger and fewer than the other fixture.
-async function bulkyExportZip(count: number, edge: number): Promise<Fixture> {
-  const zipfile = new ZipFile()
-  const images = new Map<string, Buffer>()
-  const chunks: Buffer[] = []
-  const done = new Promise<void>((resolve, reject) => {
-    zipfile.outputStream.on("data", (chunk: Buffer) => chunks.push(chunk))
-    zipfile.outputStream.on("end", resolve)
-    zipfile.outputStream.on("error", reject)
-  })
-  for (let index = 0; index < count; index++) {
-    const name = `train/bulky-${String(index).padStart(4, "0")}.jpg`
-    const bytes = await sharp(randomBytes(edge * edge * 3), {
-      raw: { width: edge, height: edge, channels: 3 },
-    })
-      .jpeg({ quality: 92 })
-      .toBuffer()
-    images.set(name, bytes)
-    zipfile.addBuffer(bytes, name, { compress: false })
-  }
-  zipfile.end()
-  await done
-  return { zip: Buffer.concat(chunks), images }
+type ApiImage = {
+  id: string
+  name: string
+  bytes: Buffer
+  broken?: boolean
 }
 
-test("an export many times a read window long is still read one window at a time", async () => {
-  // ~12 MB of images, so several windows' worth however they are grouped.
-  const fixture = await bulkyExportZip(24, 800)
-  assert.ok(
-    fixture.zip.length > 2 * READ_WINDOW,
-    `fixture was only ${fixture.zip.length} bytes`
-  )
-  const host = await serve(fixture.zip)
-  try {
-    const index = await readZipIndex(host.url, { maxEntries: 1000 })
-    assert.ok(index)
-    let seen = 0
-    await readZipEntries(
-      host.url,
-      index.entries,
-      async (entry, bytes) => {
-        assert.ok(fixture.images.get(entry.name)?.equals(bytes))
-        seen += 1
-      },
-      { concurrency: 3 }
-    )
-    assert.equal(seen, fixture.images.size)
-
-    // What the reader holds is a window per worker, so no single read may exceed
-    // one — that, and not the export's size, is the ingest's memory footprint.
-    // A dense export is read in several windows rather than one large range.
-    const reads = host.reads()
-    const biggest = Math.max(...reads)
-    assert.ok(biggest <= READ_WINDOW, `one read was ${biggest} bytes`)
-    assert.ok(
-      reads.filter((length) => length > READ_WINDOW / 2).length >= 2,
-      `reads were ${reads.join(", ")}`
-    )
-  } finally {
-    await host.close()
+async function makeImages(count: number): Promise<ApiImage[]> {
+  const images: ApiImage[] = []
+  for (let index = 0; index < count; index++) {
+    images.push({
+      id: `img-${String(index).padStart(4, "0")}`,
+      name: `image-${String(index).padStart(4, "0")}.jpg`,
+      bytes: await image(index),
+    })
   }
-})
+  return images
+}
 
-test("reading a sample touches only the sampled entries", async () => {
-  const fixture = await exportZip(12)
-  const host = await serve(fixture.zip)
-  try {
-    const index = await readZipIndex(host.url, { maxEntries: 100 })
-    assert.ok(index)
-    const ordered = [...index.entries].sort((a, b) => a.offset - b.offset)
-    const wanted = [ordered[0], ordered[5], ordered[11]]
-    const seen: string[] = []
-    await readZipEntries(
-      host.url,
-      wanted,
-      async (entry, bytes) => {
-        assert.ok(fixture.images.get(entry.name)?.equals(bytes))
-        seen.push(entry.name)
-      },
-      { concurrency: 2 }
-    )
-    assert.deepEqual(seen.sort(), wanted.map((entry) => entry.name).sort())
-  } finally {
-    await host.close()
-  }
-})
+function stubRoboflow(
+  images: ApiImage[],
+  options: {
+    pageSize?: number
+    failThumbTimes?: number
+    failSearchTimes?: number
+  } = {}
+): {
+  restore: () => void
+  requested: string[]
+} {
+  const original = globalThis.fetch
+  const pageSize = options.pageSize ?? 250
+  const requested: string[] = []
+  let remainingThumbFailures = options.failThumbTimes ?? 0
+  let remainingSearchFailures = options.failSearchTimes ?? 0
+  process.env.ROBOFLOW_API_KEY ??= "test-key"
 
-test("the sequential reader keeps what it is asked for and skips the rest", async () => {
-  const fixture = await exportZip(6)
-  const host = await serve(fixture.zip, false)
-  try {
-    const seen: string[] = []
-    // A decode outlives the chunk the entry arrived in, so a caller counts what
-    // it accepted here rather than what has finished.
-    let taken = 0
-    await streamZipEntries(
-      host.url,
-      async (entry, bytes) => {
-        assert.ok(fixture.images.get(entry.name)?.equals(bytes))
-        seen.push(entry.name)
-      },
-      {
-        want: () => taken < 3 && Boolean(++taken),
-        concurrency: 2,
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : String(input)
+    requested.push(url)
+    if (url.includes("/search")) {
+        if (remainingSearchFailures > 0) {
+          remainingSearchFailures -= 1
+          return new Response("try again", { status: 503 })
+        }
+        const body = init?.body ? JSON.parse(String(init.body)) : {}
+        const offset = Number(body.offset ?? 0)
+        const limit = Math.min(Number(body.limit ?? pageSize), pageSize)
+        const slice = images.slice(offset, offset + limit)
+        return Response.json({
+          offset,
+          total: images.length,
+          results: slice.map((image) => ({
+            id: image.id,
+            name: image.name,
+            url: `https://source.roboflow.com/owner/${image.id}/original.jpg`,
+          })),
+        })
       }
+
+      const detail = /\/images\/([^/?]+)/.exec(url)
+      if (detail && url.includes("api.roboflow.com")) {
+        const id = decodeURIComponent(detail[1])
+        const found = images.find((image) => image.id === id)
+        if (!found) return new Response("missing", { status: 404 })
+        return Response.json({
+          image: {
+            id: found.id,
+            name: found.name,
+            urls: {
+              original: `https://source.roboflow.com/owner/${found.id}/original.jpg`,
+              thumb: `https://source.roboflow.com/owner/${found.id}/thumb.jpg`,
+            },
+          },
+        })
+      }
+
+      const thumb = /\/owner\/([^/]+)\/thumb\.jpg/.exec(url)
+      if (thumb) {
+        if (remainingThumbFailures > 0) {
+          remainingThumbFailures -= 1
+          return new Response("busy", { status: 429 })
+        }
+        const found = images.find((image) => image.id === thumb[1])
+        if (!found) return new Response("missing", { status: 404 })
+        if (found.broken) {
+          return new Response("not an image at all", {
+            headers: { "content-type": "text/plain" },
+          })
+        }
+        return new Response(found.bytes as BodyInit, {
+          headers: { "content-type": "image/jpeg" },
+        })
+      }
+
+      if (url.includes("api.roboflow.com") && !url.includes("/search")) {
+        return Response.json({
+          project: { name: "Test Project", type: "object-detection" },
+          versions: [{ id: "workspace/project/1", images: images.length }],
+        })
+      }
+
+    return new Response("Not found", { status: 404 })
+  }) as typeof globalThis.fetch
+
+  return {
+    restore: () => {
+      globalThis.fetch = original
+    },
+    requested,
+  }
+}
+
+type Library = {
+  manifest: PackManifest
+  signatures: Uint8Array
+  thumb: (id: string) => Promise<Uint8Array | null>
+}
+
+async function readBuiltLibrary(
+  directory: string,
+  version: string
+): Promise<Library> {
+  const file = (name: string) => path.join(directory, name)
+  const library: Library = {
+    manifest: JSON.parse(
+      await readFile(file(MANIFEST_FILE), "utf8")
+    ) as PackManifest,
+    signatures: await readFile(file(COARSE_SIGNATURES_FILE)),
+    thumb: (id) => readFile(file(roboflowThumbPath(id))).catch(() => null),
+  }
+  assert.equal(library.manifest.version, version)
+  const snap = snapshotDir(version)
+  assert.equal(
+    JSON.parse(await readFile(path.join(directory, snap, MANIFEST_FILE), "utf8"))
+      .version,
+    version
+  )
+  return library
+}
+
+// ─── API client ──────────────────────────────────────────────────────────────
+
+test("search pages through a project and lists every image", async () => {
+  const images = await makeImages(6)
+  const stub = stubRoboflow(images, { pageSize: 2 })
+  try {
+    const first = await searchProjectImages(projectRef, { offset: 0, limit: 2 })
+    assert.equal(first.total, 6)
+    assert.equal(first.results.length, 2)
+    const listed = await listProjectImages(projectRef)
+    assert.equal(listed.total, 6)
+    assert.deepEqual(
+      listed.images.map((image) => image.id),
+      images.map((image) => image.id)
     )
-    assert.equal(seen.length, 3)
-    assert.deepEqual(seen.sort(), [...fixture.images.keys()].slice(0, 3).sort())
   } finally {
-    await host.close()
+    stub.restore()
+  }
+})
+
+test("a transient search failure is retried", async () => {
+  const images = await makeImages(2)
+  const stub = stubRoboflow(images, { failSearchTimes: 1 })
+  try {
+    const page = await searchProjectImages(projectRef)
+    assert.equal(page.results.length, 2)
+    assert.ok(stub.requested.filter((url) => url.includes("/search")).length >= 2)
+  } finally {
+    stub.restore()
+  }
+})
+
+test("a page of thumbnails is requested together", async () => {
+  const images = await makeImages(4)
+  const stub = stubRoboflow(images)
+  try {
+    const batch = await fetchThumbnailBatch(
+      projectRef,
+      images.map(({ id, name }) => ({
+        id,
+        name,
+        url: `https://source.roboflow.com/owner/${id}/original.jpg`,
+      }))
+    )
+    assert.equal(batch.length, 4)
+    assert.equal(batch.filter((item) => item.bytes).length, 4)
+    const thumbs = stub.requested.filter((url) => url.includes("/thumb.jpg"))
+    assert.equal(thumbs.length, 4)
+    assert.deepEqual(
+      thumbs.map((url) => /\/owner\/([^/]+)\//.exec(url)?.[1]).sort(),
+      images.map((image) => image.id).sort()
+    )
+  } finally {
+    stub.restore()
+  }
+})
+
+test("image details expose original and thumb URLs", async () => {
+  const images = await makeImages(1)
+  const stub = stubRoboflow(images)
+  try {
+    const details = await fetchImageDetails(projectRef, images[0].id)
+    assert.equal(details.id, images[0].id)
+    assert.match(details.urls.thumb ?? "", /\/thumb\.jpg$/)
+    assert.equal(
+      thumbUrlFromSource(`https://source.roboflow.com/owner/${images[0].id}/original.jpg`),
+      `https://source.roboflow.com/owner/${images[0].id}/thumb.jpg`
+    )
+  } finally {
+    stub.restore()
   }
 })
 
@@ -406,116 +286,71 @@ test("an even sample stays spread as the sequence outgrows its cap", () => {
   assert.deepEqual(sample.items, [0, 8, 16, 24])
 })
 
-test("the tile plan strides across the whole export, and shrinks for a deadline", () => {
-  const entries: ZipEntry[] = Array.from({ length: 1000 }, (_, index) => ({
+test("the tile plan strides across the whole set, and shrinks for a deadline", () => {
+  const entries = Array.from({ length: 1000 }, (_, index) => ({
     name: `image-${index}.jpg`,
-    offset: index * 200_000,
-    compressedSize: 100_000,
-    uncompressedSize: 100_000,
-    method: 0,
+    compressedSize: 15_000,
   }))
-  const index = { entries, imageCount: 1000, stride: 1 }
 
-  const capped = planTileSample(index, { budget: 100 })
+  const capped = planTileSample({ entries }, { budget: 100 })
   assert.equal(capped.length, 100)
   assert.equal(capped[0].name, "image-0.jpg")
   assert.equal(capped[99].name, "image-990.jpg")
 
-  // 100 KB per image at the assumed throughput is ~5.5 ms of work, so a second
-  // buys a couple of hundred tiles, not a thousand.
-  const rushed = planTileSample(index, { budget: 1000, msAvailable: 1000 })
-  assert.ok(rushed.length > 0 && rushed.length < 1000, `${rushed.length} tiles`)
+  const rushed = planTileSample(
+    { entries },
+    { budget: 1000, msAvailable: 400, msPerItem: 40 }
+  )
+  assert.equal(rushed.length, 10)
   assert.equal(rushed[0].name, "image-0.jpg")
 
-  // A plan that fits keeps every entry, in order.
-  const whole = planTileSample(index, { budget: 1000, msAvailable: 60_000 })
+  const whole = planTileSample({ entries }, { budget: 1000, msAvailable: 60_000 })
   assert.equal(whole.length, 1000)
 })
 
-// ─── The library a build produces ────────────────────────────────────────────
+test("even sample indices match the tile plan's stride", () => {
+  const wanted = evenSampleIndices(1000, 100)
+  assert.equal(wanted.size, 100)
+  assert.equal(wanted.has(0), true)
+  assert.equal(wanted.has(990), true)
+  assert.equal(wanted.has(1), false)
+})
 
-// A built library, read the way it is actually served: the manifest and the
-// signature blob up front, and single thumbnails by id. Nothing downloads a
-// library whole any more, so nothing here does either.
-type Library = {
-  manifest: PackManifest
-  signatures: Uint8Array
-  thumb: (id: string) => Promise<Uint8Array | null>
-  has: (name: string) => Promise<boolean>
-}
+// ─── Seeding ─────────────────────────────────────────────────────────────────
 
-// A local build, which the asset route serves straight off the cache directory.
-async function readBuiltLibrary(
-  directory: string,
-  version: string
-): Promise<Library> {
-  const file = (name: string) => path.join(directory, name)
-  const library: Library = {
-    manifest: JSON.parse(
-      await readFile(file(MANIFEST_FILE), "utf8")
-    ) as PackManifest,
-    signatures: await readFile(file(COARSE_SIGNATURES_FILE)),
-    thumb: (id) => readFile(file(roboflowThumbPath(id))).catch(() => null),
-    has: (name) =>
-      readFile(file(name)).then(
-        () => true,
-        () => false
-      ),
-  }
-  assert.equal(library.manifest.version, version)
-  return library
-}
-
-// A serverless build, which lands in Blob as one archive the asset route reads
-// with range requests — so read it here with the very same index.
-async function readUploadedLibrary(
-  archive: Buffer,
-  version: string
-): Promise<Library> {
-  const read: RangeReader = async (start, end) =>
-    archive.subarray(start, Math.min(end, archive.length - 1) + 1)
-  const index = await readLibraryIndex(read, archive.length)
-  const entry = async (name: string) => {
-    const found = index.get(name)
-    return found ? await readLibraryEntry(read, found) : null
-  }
-
-  const manifest = await entry(MANIFEST_FILE)
-  const signatures = await entry(COARSE_SIGNATURES_FILE)
-  assert.ok(manifest, "expected a manifest in the archive")
-  assert.ok(signatures, "expected a signature blob in the archive")
-
-  const library: Library = {
-    manifest: JSON.parse(manifest.toString("utf8")) as PackManifest,
-    signatures,
-    thumb: (id) => entry(roboflowThumbPath(id)),
-    has: async (name) => index.has(name),
-  }
-  assert.equal(library.manifest.version, version)
-  return library
-}
-
-test("a build turns a remote export into a library the browser can unpack", async () => {
-  const fixture = await exportZip(9)
-  const host = await serve(fixture.zip)
+test("a build turns project thumbnails into a library the browser can load", async () => {
+  const images = await makeImages(9)
+  const stub = stubRoboflow(images)
   try {
     await withTempDir(async (dir) => {
       const sink = await directorySink(dir)
-      const built = await buildLibraryFromExport(host.url, sink, silent)
+      const snapshots: number[] = []
+      const built = await buildLibraryFromImages(
+        projectRef,
+        images.map(({ id, name }) => ({ id, name })),
+        sink,
+        silent,
+        {
+          directory: dir,
+          sourceImages: 9,
+          onSnapshot: (snapshot) => {
+            snapshots.push(snapshot.photoCount)
+          },
+        }
+      )
       await sink.finish()
 
       assert.equal(built.photoCount, 9)
       assert.equal(built.skipped, 0)
       assert.equal(built.sampled, false)
       assert.equal(built.sourceImages, 9)
+      assert.ok(snapshots.at(-1) === 9)
 
-      // Nothing but the library: no spooled export, no scratch files.
       const written = await readdir(dir)
-      assert.deepEqual(written.sort(), [
-        "manifest.json",
-        "signatures-coarse.bin",
-        "thumbs",
-      ])
+      assert.ok(written.includes("manifest.json"))
+      assert.ok(written.includes("signatures-coarse.bin"))
+      assert.ok(written.includes("thumbs"))
+      assert.ok(written.includes("snapshots"))
 
       const library = await readBuiltLibrary(dir, built.version)
       assert.equal(library.manifest.photos.length, 9)
@@ -524,31 +359,54 @@ test("a build turns a remote export into a library the browser can unpack", asyn
         assert.ok(await library.thumb(photo.id), `no thumbnail for ${photo.id}`)
         assert.ok(photo.w > 0 && photo.h > 0)
       }
-      // Manifest order follows the entry paths inside the export, not the order
-      // parallel reads happened to finish in, so the signature offsets a rebuild
-      // produces line up with the same photos.
-      const expected = [...fixture.images.keys()]
-        .sort()
-        .map((name) => path.basename(name))
       assert.deepEqual(
         library.manifest.photos.map((photo) => photo.file),
-        expected
+        images.map((image) => image.name).sort()
       )
     })
   } finally {
-    await host.close()
+    stub.restore()
+  }
+})
+
+test("search pages seed their thumbnails as a batch", async () => {
+  const images = await makeImages(6)
+  const stub = stubRoboflow(images, { pageSize: 2 })
+  try {
+    await withTempDir(async (dir) => {
+      const sink = await directorySink(dir)
+      const built = await buildLibraryFromSearch(projectRef, sink, silent, {
+        directory: dir,
+      })
+      await sink.finish()
+      assert.equal(built.photoCount, 6)
+
+      const thumbIds = stub.requested
+        .map((url) => /\/owner\/([^/]+)\/thumb\.jpg/.exec(url)?.[1])
+        .filter((id): id is string => Boolean(id))
+      assert.deepEqual(thumbIds.slice(0, 2).sort(), ["img-0000", "img-0001"])
+      assert.deepEqual(thumbIds.slice(2, 4).sort(), ["img-0002", "img-0003"])
+      assert.deepEqual(thumbIds.slice(4, 6).sort(), ["img-0004", "img-0005"])
+    })
+  } finally {
+    stub.restore()
   }
 })
 
 test("a dataset larger than the tile budget is sampled, not truncated", async () => {
-  const fixture = await exportZip(12)
-  const host = await serve(fixture.zip)
+  const images = await makeImages(12)
+  const stub = stubRoboflow(images)
   try {
     await withTempDir(async (dir) => {
       const sink = await directorySink(dir)
-      const built = await buildLibraryFromExport(host.url, sink, silent, {
-        budget: 4,
-      })
+      const selected = images.filter((_, index) => index % 3 === 0)
+      const built = await buildLibraryFromImages(
+        projectRef,
+        selected.map(({ id, name }) => ({ id, name })),
+        sink,
+        silent,
+        { directory: dir, budget: 4, sourceImages: 12 }
+      )
       await sink.finish()
 
       assert.equal(built.photoCount, 4)
@@ -557,229 +415,150 @@ test("a dataset larger than the tile budget is sampled, not truncated", async ()
 
       const library = await readBuiltLibrary(dir, built.version)
       assert.equal(library.manifest.photos.length, 4)
-      assert.equal(library.signatures.length, 4 * COARSE_SIG_BYTES)
-      // Spread across the export rather than taken off the front of it.
       const indices = library.manifest.photos.map((photo) =>
         Number(/image-(\d+)/.exec(photo.file ?? "")?.[1] ?? -1)
       )
       assert.ok(Math.max(...indices) >= 8, `sampled ${indices.join(", ")}`)
     })
   } finally {
-    await host.close()
-  }
-})
-
-test("a build works against a host that will not serve ranges", async () => {
-  const fixture = await exportZip(7)
-  const host = await serve(fixture.zip, false)
-  try {
-    await withTempDir(async (dir) => {
-      const sink = await directorySink(dir)
-      const built = await buildLibraryFromExport(host.url, sink, silent)
-      await sink.finish()
-      assert.equal(built.photoCount, 7)
-      const library = await readBuiltLibrary(dir, built.version)
-      assert.equal(library.manifest.photos.length, 7)
-    })
-  } finally {
-    await host.close()
+    stub.restore()
   }
 })
 
 test("an unreadable image costs its own tile and nothing else", async () => {
-  const fixture = await exportZip(5)
-  // Slip a file that is named like an image but is not one into the export.
-  const zipfile = new ZipFile()
-  const chunks: Buffer[] = []
-  const done = new Promise<void>((resolve, reject) => {
-    zipfile.outputStream.on("data", (chunk: Buffer) => chunks.push(chunk))
-    zipfile.outputStream.on("end", resolve)
-    zipfile.outputStream.on("error", reject)
+  const images = await makeImages(5)
+  images.push({
+    id: "broken",
+    name: "broken.jpg",
+    bytes: Buffer.from("not an image at all"),
+    broken: true,
   })
-  for (const [name, bytes] of fixture.images) {
-    zipfile.addBuffer(bytes, name, { compress: false })
-  }
-  zipfile.addBuffer(Buffer.from("not an image at all"), "train/broken.jpg")
-  zipfile.end()
-  await done
-
-  const host = await serve(Buffer.concat(chunks))
+  const stub = stubRoboflow(images)
   try {
     await withTempDir(async (dir) => {
       const sink = await directorySink(dir)
-      const built = await buildLibraryFromExport(host.url, sink, silent)
+      const built = await buildLibraryFromImages(
+        projectRef,
+        images.map(({ id, name }) => ({ id, name })),
+        sink,
+        silent,
+        { directory: dir }
+      )
       await sink.finish()
       assert.equal(built.photoCount, 5)
       assert.equal(built.skipped, 1)
     })
   } finally {
-    await host.close()
+    stub.restore()
   }
 })
 
-// ─── The archive a serverless host uploads ───────────────────────────────────
-
-// Stands in for the multipart half of a Blob store, keeping every part so the
-// archive they add up to can be read back.
-function collectingUploader() {
-  const uploaded: { partNumber: number; body: Buffer }[] = []
-  let completed: Part[] | null = null
-
-  const uploader: PartUploader = {
-    uploadPart: async (partNumber, body) => {
-      uploaded.push({ partNumber, body })
-      return { partNumber, etag: `etag-${partNumber}` }
-    },
-    complete: async (parts) => {
-      completed = parts
-      return {}
-    },
-  }
-
-  const ordered = () =>
-    [...uploaded].sort((a, b) => a.partNumber - b.partNumber)
-
-  return {
-    uploader,
-    uploaded: () => uploaded,
-    completed: () => completed,
-    // The blob the store would end up holding.
-    archive: () => Buffer.concat(ordered().map((part) => part.body)),
-  }
-}
-
-test("the archive a serverless build uploads is one the browser can unpack", async () => {
-  const fixture = await exportZip(9)
-  const host = await serve(fixture.zip)
+test("a transient thumbnail failure is retried", async () => {
+  const images = await makeImages(2)
+  const stub = stubRoboflow(images, { failThumbTimes: 1 })
   try {
-    const store = collectingUploader()
-    // What the ingest records about a finished library, gathered the way the
-    // Blob sink's own callback does.
-    const published = new Set<string>()
-    const sink = multipartArchiveSink(store.uploader, {
-      onComplete: async (names) => {
-        for (const name of names) published.add(name)
-      },
+    await withTempDir(async (dir) => {
+      const sink = await directorySink(dir)
+      const built = await buildLibraryFromImages(
+        projectRef,
+        images.map(({ id, name }) => ({ id, name })),
+        sink,
+        silent,
+        { directory: dir }
+      )
+      assert.equal(built.photoCount, 2)
     })
-
-    // The cover goes in first, as the ingest does it.
-    await sink.add("icon.jpg", await image(99))
-    const built = await buildLibraryFromExport(host.url, sink, silent)
-    await sink.finish()
-
-    assert.equal(built.photoCount, 9)
-
-    // Every part accounted for, numbered from one, and handed to `complete` in
-    // order — Blob stitches the archive back together from exactly this.
-    const parts = store.completed()
-    assert.ok(parts, "expected the upload to be completed")
-    assert.deepEqual(
-      parts.map((part) => part.partNumber),
-      store.uploaded().map((_, index) => index + 1)
-    )
-    assert.ok(published.has("manifest.json"))
-    assert.ok(published.has("icon.jpg"))
-
-    const library = await readUploadedLibrary(store.archive(), built.version)
-    assert.equal(library.manifest.photos.length, 9)
-    assert.equal(library.signatures.length, 9 * COARSE_SIG_BYTES)
-    assert.ok(await library.has(ICON_FILE), "expected the cover in the archive")
-    for (const photo of library.manifest.photos) {
-      assert.ok(await library.thumb(photo.id), `no thumbnail for ${photo.id}`)
-    }
   } finally {
-    await host.close()
+    stub.restore()
   }
 })
 
-test("a library past one part is uploaded in whole parts as it is built", async () => {
-  const store = collectingUploader()
-  const sink = multipartArchiveSink(store.uploader)
-
-  // Incompressible, and stored rather than deflated, so the archive is a known
-  // size: past two parts with a short one to finish.
-  const files = 3
-  const each = 7 * 1024 * 1024
-  for (let index = 0; index < files; index++) {
-    await sink.add(`thumbs/${index}.jpg`, randomBytes(each))
-  }
-  // Uploads start before the library is closed out, or the whole thing would
-  // have been held in memory first — which is the entire point of this path.
-  assert.ok(store.uploaded().length >= 2, "expected parts during the build")
-  await sink.finish()
-
-  const sizes = store.uploaded().map((part) => part.body.length)
-  assert.equal(
-    sizes.slice(0, -1).every((size) => size === PART_BYTES),
-    true,
-    `parts were ${sizes.join(", ")}`
-  )
-  // Blob rejects any part but the last under 5 MB.
-  assert.ok(sizes[sizes.length - 1] > 0)
-  assert.ok(sizes.length >= 3, `only ${sizes.length} parts`)
-
-  const archive = store.archive()
-  assert.equal(
-    archive.length,
-    sizes.reduce((total, size) => total + size, 0)
-  )
-  // A zip reader has to accept the result, which it only does if the parts were
-  // ordered and none were dropped or doubled.
-  const entries = unzipSync(new Uint8Array(archive))
-  assert.deepEqual(
-    Object.keys(entries).sort(),
-    Array.from({ length: files }, (_, index) => `thumbs/${index}.jpg`).sort()
-  )
-  for (const bytes of Object.values(entries)) {
-    assert.equal(bytes.length, each)
+test("snapshots are published at the minimum batch and the end", async () => {
+  const images = await makeImages(MIN_PARTIAL_TILES + 4)
+  const stub = stubRoboflow(images)
+  try {
+    await withTempDir(async (dir) => {
+      const sink = await directorySink(dir)
+      const snapshots: number[] = []
+      const built = await buildLibraryFromImages(
+        projectRef,
+        images.map(({ id, name }) => ({ id, name })),
+        sink,
+        silent,
+        {
+          directory: dir,
+          onSnapshot: (snapshot) => {
+            snapshots.push(snapshot.photoCount)
+          },
+        }
+      )
+      assert.ok(snapshots[0] >= MIN_PARTIAL_TILES)
+      assert.equal(snapshots.at(-1), built.photoCount)
+      assert.ok(snapshots.length >= 2)
+    })
+  } finally {
+    stub.restore()
   }
 })
 
-test("an abandoned build leaves no archive behind", async () => {
-  const store = collectingUploader()
-  const sink = multipartArchiveSink(store.uploader)
-  await sink.add("thumbs/0.jpg", randomBytes(2 * 1024 * 1024))
-  await sink.abort()
-
-  // Parts that were already uploaded are never completed, so the store has
-  // nothing that could be mistaken for a finished library.
-  assert.equal(store.completed(), null)
-  await assert.rejects(sink.add("thumbs/1.jpg", Buffer.alloc(8)), /closed/i)
+test("a deadline after a usable snapshot still publishes what it has", async () => {
+  const images = await makeImages(MIN_PARTIAL_TILES + 8)
+  const original = globalThis.fetch
+  const inner = stubRoboflow(images)
+  let thumbs = 0
+  const wrapped = globalThis.fetch
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : String(input)
+    if (url.includes("/thumb.jpg")) {
+      thumbs += 1
+      if (thumbs > MIN_PARTIAL_TILES) {
+        const error = new Error("Aborted")
+        error.name = "AbortError"
+        throw error
+      }
+    }
+    return wrapped(input, init)
+  }) as typeof globalThis.fetch
+  try {
+    await withTempDir(async (dir) => {
+      const sink = await directorySink(dir)
+      const built = await buildLibraryFromImages(
+        projectRef,
+        images.map(({ id, name }) => ({ id, name })),
+        sink,
+        silent,
+        { directory: dir, sourceImages: images.length }
+      )
+      assert.ok(built.photoCount >= MIN_PARTIAL_TILES)
+      assert.ok(built.photoCount < images.length)
+      const library = await readBuiltLibrary(dir, built.version)
+      assert.equal(library.manifest.photos.length, built.photoCount)
+    })
+  } finally {
+    inner.restore()
+    globalThis.fetch = original
+  }
 })
 
-test("an export with no images fails with a message about the export", async () => {
-  const zipfile = new ZipFile()
-  const chunks: Buffer[] = []
-  const done = new Promise<void>((resolve, reject) => {
-    zipfile.outputStream.on("data", (chunk: Buffer) => chunks.push(chunk))
-    zipfile.outputStream.on("end", resolve)
-    zipfile.outputStream.on("error", reject)
-  })
-  zipfile.addBuffer(Buffer.from("{}"), "train/_annotations.coco.json")
-  zipfile.end()
-  await done
-
-  const host = await serve(Buffer.concat(chunks))
+test("a project with no images fails with a message about the project", async () => {
+  const stub = stubRoboflow([])
   try {
     await withTempDir(async (dir) => {
       const sink = await directorySink(dir)
       await assert.rejects(
-        buildLibraryFromExport(host.url, sink, silent),
-        /contained no images/i
+        buildLibraryFromImages(projectRef, [], sink, silent, {
+          directory: dir,
+        }),
+        /none of the dataset's images/i
       )
     })
   } finally {
-    await host.close()
+    stub.restore()
   }
 })
 
 // ─── Choosing a version ──────────────────────────────────────────────────────
 
-// Roboflow keeps versions whose generation never produced anything. They sit at
-// the top of the list with the highest numbers, report zero images, and export
-// as a zip holding two README files and nothing else — which is how
-// "beverage-containers-3atxb", whose images all live in version 3, reached the
-// empty-export failure above from a URL that named no version at all.
 function stubProjectInfo(
   versions: { version: number; images?: number }[]
 ): () => void {
@@ -798,8 +577,6 @@ function stubProjectInfo(
   }
 }
 
-const projectRef = { workspace: "workspace", project: "project" }
-
 test("an empty version is not what a project URL without a version means", async () => {
   const restore = stubProjectInfo([
     { version: 1, images: 6519 },
@@ -808,7 +585,7 @@ test("an empty version is not what a project URL without a version means", async
     { version: 8, images: 0 },
   ])
   try {
-    const resolved = await resolveDataset({ ...projectRef, version: null })
+    const resolved = await resolveDataset({ workspace: "workspace", project: "project", version: null })
     assert.equal(resolved.ref.version, 3)
     assert.equal(resolved.images, 15645)
   } finally {
@@ -823,7 +600,7 @@ test("a version asked for by name that holds nothing says so", async () => {
   ])
   try {
     await assert.rejects(
-      resolveDataset({ ...projectRef, version: 8 }),
+      resolveDataset({ workspace: "workspace", project: "project", version: 8 }),
       /Version 8 .* contains no images\. Versions with images: 3\./
     )
   } finally {
@@ -831,58 +608,35 @@ test("a version asked for by name that holds nothing says so", async () => {
   }
 })
 
-// Only a reported zero means empty: a version Roboflow says nothing about is
-// still the newest one.
-test("the browser zip reader indexes the same export as the server reader", async () => {
-  const fixture = await exportZip(6)
-  const host = await serve(fixture.zip)
-  try {
-    const index = await readZipIndexWeb(host.url, { maxEntries: 100 })
-    assert.ok(index)
-    assert.equal(index.imageCount, 6)
-    const names = index.entries.map((entry) => entry.name).sort()
-    assert.deepEqual(names, [...fixture.images.keys()].sort())
-
-    const recovered = new Map<string, Uint8Array>()
-    await readZipEntriesWeb(
-      host.url,
-      index.entries,
-      async (entry, bytes) => {
-        recovered.set(entry.name, bytes)
-      },
-      { concurrency: 2 }
-    )
-    assert.equal(recovered.size, 6)
-    for (const [name, bytes] of fixture.images) {
-      assert.deepEqual(Buffer.from(recovered.get(name) ?? []), bytes)
-    }
-  } finally {
-    await host.close()
-  }
-})
-
-test("the export proxy only forwards Roboflow export and cover URLs", () => {
-  assert.equal(
-    isAllowedProxyUrl("https://app.roboflow.com/ds/BR0q3xji5s?key=abc"),
-    true
-  )
-  assert.equal(
-    isAllowedProxyUrl(
-      "https://source.roboflow.com/workspace/project/original.jpg"
-    ),
-    true
-  )
-  assert.equal(isAllowedProxyUrl("https://app.roboflow.com/other/path"), false)
-  assert.equal(isAllowedProxyUrl("https://evil.example/ds/nope"), false)
-  assert.equal(isAllowedProxyUrl("http://app.roboflow.com/ds/open"), false)
-})
-
 test("a version with no reported image count is still the latest", async () => {
   const restore = stubProjectInfo([{ version: 1, images: 10 }, { version: 2 }])
   try {
-    const resolved = await resolveDataset({ ...projectRef, version: null })
+    const resolved = await resolveDataset({
+      workspace: "workspace",
+      project: "project",
+      version: null,
+    })
     assert.equal(resolved.ref.version, 2)
   } finally {
     restore()
   }
+})
+
+test("the newer of two status records wins, whichever side it came from", () => {
+  const record = (state: "running" | "error", updatedAt: string) => ({
+    slug: "workspace--dataset--v1",
+    state,
+    step: state === "error" ? "Failed" : "Seeding tiles",
+    done: 0,
+    total: 0,
+    updatedAt,
+  })
+  const abandoned = record("running", "2026-08-13T07:30:00.000Z")
+  const live = record("running", "2026-08-13T07:41:00.000Z")
+
+  assert.equal(newerStatus(abandoned, live), live)
+  assert.equal(newerStatus(live, abandoned), live)
+  assert.equal(newerStatus(null, live), live)
+  assert.equal(newerStatus(live, null), live)
+  assert.equal(newerStatus(null, null), null)
 })

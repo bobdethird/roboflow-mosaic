@@ -1,22 +1,28 @@
 // Durable copy of an ingested dataset, for serverless hosts.
 //
-// A Vercel instance cannot keep the library it builds, so the library is
-// streamed to Blob as it is produced (lib/roboflow-sink.ts) and this module
-// covers everything else the Blob copy is used for: durable ingest status,
-// existence checks, and the keys the rest of the code addresses it by.
+// A Vercel instance cannot keep the library it builds, so each thumbnail and
+// each immutable snapshot is written to Blob as its own object. This module
+// covers the keys the rest of the code addresses those objects by, plus durable
+// ingest status and existence checks.
 //
-// Nothing downloads that zip in full, on either side. The asset route reads
-// single files out of it with byte-range requests (lib/roboflow-archive.ts), so
-// no instance ever needs the dataset on disk except the one that built it, and
-// the browser only ever receives the tiles it actually draws.
+// Nothing downloads a library whole, on either side. The asset route reads
+// single files; the browser only ever receives the tiles it actually draws.
+
+import { mkdir, rename, writeFile } from "node:fs/promises"
+import path from "node:path"
 
 import { head, put } from "@vercel/blob"
 
-import { ICON_FILE, type IngestStatus } from "./roboflow"
-import { STATUS_FILE } from "./roboflow-store"
+import {
+  COARSE_SIGNATURES_FILE,
+  ICON_FILE,
+  MANIFEST_FILE,
+  snapshotDir,
+  type IngestStatus,
+} from "./roboflow"
+import { STATUS_FILE, datasetDir } from "./roboflow-store"
 
 const PREFIX = "roboflow"
-export const ARCHIVE_FILE = "library.zip"
 export const PUBLISHED_FILE = "published.json"
 
 // Short: a re-ingest overwrites these keys in place, and every asset the
@@ -44,7 +50,7 @@ export async function blobHasFile(
 }
 
 export function blobHasDataset(slug: string): Promise<boolean> {
-  return blobHasFile(slug, ARCHIVE_FILE)
+  return blobHasFile(slug, MANIFEST_FILE)
 }
 
 export async function blobHasIcon(slug: string): Promise<boolean> {
@@ -62,6 +68,14 @@ export async function readBlobText(
   slug: string,
   relativePath: string
 ): Promise<string | null> {
+  const bytes = await readBlobBytes(slug, relativePath)
+  return bytes ? new TextDecoder().decode(bytes) : null
+}
+
+export async function readBlobBytes(
+  slug: string,
+  relativePath: string
+): Promise<Uint8Array | null> {
   try {
     const meta = await head(blobKey(slug, relativePath))
     const url = new URL(meta.url)
@@ -69,7 +83,8 @@ export async function readBlobText(
     // cache with the current ETag so mutable status/manifest reads are fresh.
     url.searchParams.set("v", meta.etag)
     const response = await fetch(url, { cache: "no-store" })
-    return response.ok ? await response.text() : null
+    if (!response.ok) return null
+    return new Uint8Array(await response.arrayBuffer())
   } catch {
     return null
   }
@@ -103,7 +118,59 @@ export async function writeBlobStatus(
   })
 }
 
-// Building an archive from a directory used to live here, for the disk-based
-// publish and for the route that zipped the cache on demand. Neither exists
-// now: `blobArchiveSink` writes the archive as the library is produced, and the
-// asset route reads single files rather than whole archives.
+export type LibrarySnapshot = {
+  version: string
+  manifest: Buffer
+  signatures: Buffer
+}
+
+async function writeAtomic(file: string, bytes: Buffer): Promise<void> {
+  await mkdir(path.dirname(file), { recursive: true })
+  const tmp = `${file}.tmp`
+  await writeFile(tmp, bytes)
+  await rename(tmp, file)
+}
+
+// Write one complete manifest + signature pair, then the latest pointers.
+// Clients are told about `version` only after this resolves, so they never
+// observe a torn snapshot.
+export async function publishLibrarySnapshot(
+  slug: string,
+  snapshot: LibrarySnapshot,
+  options: { abortSignal?: AbortSignal; directory?: string } = {}
+): Promise<void> {
+  const dir = snapshotDir(snapshot.version)
+  const files: [string, Buffer, string][] = [
+    [`${dir}/${MANIFEST_FILE}`, snapshot.manifest, "application/json"],
+    [
+      `${dir}/${COARSE_SIGNATURES_FILE}`,
+      snapshot.signatures,
+      "application/octet-stream",
+    ],
+    [MANIFEST_FILE, snapshot.manifest, "application/json"],
+    [
+      COARSE_SIGNATURES_FILE,
+      snapshot.signatures,
+      "application/octet-stream",
+    ],
+  ]
+
+  if (blobEnabled() && !options.directory) {
+    for (const [name, bytes, contentType] of files) {
+      await put(blobKey(slug, name), bytes, {
+        access: "public",
+        addRandomSuffix: false,
+        allowOverwrite: true,
+        contentType,
+        cacheControlMaxAge: STORE_MAX_AGE,
+        abortSignal: options.abortSignal,
+      })
+    }
+    return
+  }
+
+  const root = options.directory ?? datasetDir(slug)
+  for (const [name, bytes] of files) {
+    await writeAtomic(path.join(root, name), bytes)
+  }
+}

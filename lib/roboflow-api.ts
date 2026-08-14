@@ -1,18 +1,17 @@
-// Thin client for the two Roboflow REST endpoints this app needs: project info
-// (to resolve the latest version and the project type) and a version export (to
-// get a zip download link).
+// Thin client for the Roboflow REST endpoints this app needs: project info
+// (to resolve a cache identity and the project cover) and the per-image search
+// + detail calls that feed the ingest.
 //
-//   GET https://api.roboflow.com/<workspace>/<project>?api_key=…
-//   GET https://api.roboflow.com/<workspace>/<project>/<version>/<format>?api_key=…
-//
-// The export endpoint answers either with `{ export: { link } }` or, while
-// Roboflow is still generating the zip, `{ ready: false, progress }` — so the
-// call polls until the link appears.
+//   GET  https://api.roboflow.com/<workspace>/<project>?api_key=…
+//   POST https://api.roboflow.com/<workspace>/<project>/search?api_key=…
+//   GET  https://api.roboflow.com/<workspace>/<project>/images/<id>?api_key=…
 
 import type { RoboflowRef } from "./roboflow"
+import { SEARCH_PAGE_SIZE } from "./roboflow-limits"
 
 const API_URL = "https://api.roboflow.com"
 const REQUEST_TIMEOUT_MS = 20_000
+const MAX_RETRIES = 3
 
 export class RoboflowApiError extends Error {
   constructor(
@@ -48,8 +47,8 @@ export type ProjectInfo = {
   type?: string
   // Newest version that holds images, or null when the project has no generated
   // versions. A version whose generation never finished stays in the list
-  // reporting zero images, and its export is a zip of two README files, so it is
-  // never what a project URL without a version means.
+  // reporting zero images; it is never what a project URL without a version
+  // means, because the slug still keys the cache on a version number.
   latestVersion: number | null
   versions: number[]
   imagesByVersion: Map<number, number>
@@ -69,69 +68,138 @@ function iconUrl(icon: unknown): string | undefined {
   return undefined
 }
 
-// Roboflow rejects an unknown export format outright, and the valid set depends
-// on the project type. These are the formats that simply contain the images.
-const FORMATS_BY_TYPE: Record<string, string[]> = {
-  "object-detection": ["coco", "yolov8", "voc"],
-  "instance-segmentation": ["coco-segmentation", "coco", "yolov8"],
-  "semantic-segmentation": ["png-mask-semantic", "coco-segmentation", "coco"],
-  classification: ["folder", "multiclass", "clip"],
-  "single-label-classification": ["folder", "multiclass"],
-  "multi-label-classification": ["multiclass", "folder"],
-  keypoint: ["coco-keypoints", "coco", "yolov8"],
+function isTimeoutError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    (error.name === "AbortError" || error.name === "TimeoutError")
+  )
 }
 
-const FALLBACK_FORMATS = ["coco", "yolov8", "folder", "voc", "multiclass"]
-
-// Candidate export formats for a project, best guess first. Every one of them
-// ships the same images; only the annotation sidecars differ, and the ingest
-// ignores those.
-export function exportFormats(type: string | undefined): string[] {
-  const preferred = type ? (FORMATS_BY_TYPE[type] ?? []) : []
-  return [...new Set([...preferred, ...FALLBACK_FORMATS])]
-}
-
-async function getJson(url: string): Promise<Record<string, unknown>> {
-  let response: Response
-  try {
-    response = await fetch(url, {
-      cache: "no-store",
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    })
-  } catch (error) {
-    if (
-      error instanceof Error &&
-      (error.name === "AbortError" || error.name === "TimeoutError")
-    ) {
-      throw new RoboflowApiError("The Roboflow API request timed out.")
+function retryDelayMs(attempt: number, retryAfter: string | null): number {
+  if (retryAfter) {
+    const seconds = Number(retryAfter)
+    if (Number.isFinite(seconds) && seconds >= 0) {
+      return Math.min(10_000, seconds * 1000)
     }
-    throw error
   }
-  const text = await response.text()
-  let body: Record<string, unknown> = {}
+  return Math.min(8_000, 400 * 2 ** attempt)
+}
+
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(signal.reason ?? new Error("Aborted"))
+      return
+    }
+    const timer = setTimeout(resolve, ms)
+    const onAbort = () => {
+      clearTimeout(timer)
+      reject(signal?.reason ?? new Error("Aborted"))
+    }
+    signal?.addEventListener("abort", onAbort, { once: true })
+  })
+}
+
+function parseJsonBody(text: string): Record<string, unknown> {
   try {
-    body = JSON.parse(text) as Record<string, unknown>
+    return JSON.parse(text) as Record<string, unknown>
   } catch {
-    // Non-JSON body (an HTML error page); fall through to the status handling.
+    return {}
   }
-  if (!response.ok) {
-    const detail =
-      (typeof body.message === "string" && body.message) ||
-      (typeof body.error === "string" && body.error) ||
-      text.slice(0, 200) ||
-      response.statusText
-    if (response.status === 401 || response.status === 403) {
-      throw new RoboflowApiError(
-        `Roboflow rejected the API key (${response.status}). Check ROBOFLOW_API_KEY in .env.local.`,
-        response.status
-      )
+}
+
+function errorDetail(body: Record<string, unknown>, text: string, fallback: string) {
+  return (
+    (typeof body.message === "string" && body.message) ||
+    (typeof body.error === "string" && body.error) ||
+    text.slice(0, 200) ||
+    fallback
+  )
+}
+
+type ApiRequestOptions = {
+  method?: string
+  body?: unknown
+  signal?: AbortSignal
+  timeoutMs?: number
+}
+
+async function apiRequest(
+  url: string,
+  options: ApiRequestOptions = {}
+): Promise<Record<string, unknown>> {
+  const {
+    method = "GET",
+    body,
+    signal,
+    timeoutMs = REQUEST_TIMEOUT_MS,
+  } = options
+  let lastError: unknown = null
+
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    if (signal?.aborted) {
+      throw signal.reason instanceof Error
+        ? signal.reason
+        : new RoboflowApiError("The Roboflow API request was cancelled.")
     }
-    throw new RoboflowApiError(
-      `Roboflow API ${response.status}: ${detail}`,
-      response.status
-    )
+    const timeout = AbortSignal.timeout(timeoutMs)
+    const combined = signal ? AbortSignal.any([signal, timeout]) : timeout
+    try {
+      const response = await fetch(url, {
+        method,
+        cache: "no-store",
+        signal: combined,
+        headers:
+          body !== undefined
+            ? { "content-type": "application/json" }
+            : undefined,
+        body: body !== undefined ? JSON.stringify(body) : undefined,
+      })
+      const text = await response.text()
+      const parsed = parseJsonBody(text)
+      if (response.status === 429 || response.status >= 500) {
+        lastError = new RoboflowApiError(
+          `Roboflow API ${response.status}: ${errorDetail(parsed, text, response.statusText)}`,
+          response.status
+        )
+        if (attempt === MAX_RETRIES) throw lastError
+        await sleep(retryDelayMs(attempt, response.headers.get("retry-after")), signal)
+        continue
+      }
+      if (!response.ok) {
+        if (response.status === 401 || response.status === 403) {
+          throw new RoboflowApiError(
+            `Roboflow rejected the API key (${response.status}). Check ROBOFLOW_API_KEY in .env.local.`,
+            response.status
+          )
+        }
+        throw new RoboflowApiError(
+          `Roboflow API ${response.status}: ${errorDetail(parsed, text, response.statusText)}`,
+          response.status
+        )
+      }
+      return parsed
+    } catch (error) {
+      if (signal?.aborted) throw error
+      if (error instanceof RoboflowApiError && error.status !== 429 && (error.status ?? 0) < 500) {
+        throw error
+      }
+      lastError = error
+      if (isTimeoutError(error) && attempt < MAX_RETRIES) {
+        await sleep(retryDelayMs(attempt, null), signal)
+        continue
+      }
+      if (error instanceof RoboflowApiError) throw error
+      if (isTimeoutError(error)) {
+        throw new RoboflowApiError("The Roboflow API request timed out.")
+      }
+      throw error
+    }
   }
-  return body
+
+  throw lastError instanceof Error
+    ? lastError
+    : new RoboflowApiError("The Roboflow API request failed.")
 }
 
 function versionNumber(version: ProjectVersion): number | null {
@@ -143,7 +211,7 @@ function versionNumber(version: ProjectVersion): number | null {
 
 export async function fetchProjectInfo(ref: RoboflowRef): Promise<ProjectInfo> {
   const key = roboflowApiKey()
-  const body = await getJson(
+  const body = await apiRequest(
     `${API_URL}/${encodeURIComponent(ref.workspace)}/${encodeURIComponent(ref.project)}?api_key=${encodeURIComponent(key)}`
   )
   const project = (body.project ?? {}) as Record<string, unknown>
@@ -178,57 +246,278 @@ export async function fetchProjectInfo(ref: RoboflowRef): Promise<ProjectInfo> {
   }
 }
 
-export type ExportLink = { link: string; format: string }
+export type ProjectImage = {
+  id: string
+  name?: string
+  url?: string
+}
 
-// Ask for a version export and wait for the zip link. Roboflow generates the
-// export on demand, so a not-ready response is normal on the first call. An
-// already-generated export is reused — forcing a rebuild (`nocache`) made every
-// ingest wait on Roboflow's zip job before the download even started.
-export async function fetchExportLink(
-  ref: RoboflowRef & { version: number },
-  formats: string[],
-  onProgress: (message: string) => void,
-  timeoutMs = 180_000
-): Promise<ExportLink> {
+export type ImageSearchPage = {
+  offset: number
+  total: number
+  results: ProjectImage[]
+}
+
+function asProjectImage(value: unknown): ProjectImage | null {
+  if (!value || typeof value !== "object") return null
+  const record = value as Record<string, unknown>
+  if (typeof record.id !== "string" || !record.id) return null
+  return {
+    id: record.id,
+    name: typeof record.name === "string" ? record.name : undefined,
+    url: typeof record.url === "string" && record.url ? record.url : undefined,
+  }
+}
+
+export async function searchProjectImages(
+  ref: RoboflowRef,
+  options: {
+    offset?: number
+    limit?: number
+    signal?: AbortSignal
+  } = {}
+): Promise<ImageSearchPage> {
   const key = roboflowApiKey()
-  const deadline = Date.now() + timeoutMs
+  const offset = Math.max(0, options.offset ?? 0)
+  const limit = Math.min(
+    SEARCH_PAGE_SIZE,
+    Math.max(1, options.limit ?? SEARCH_PAGE_SIZE)
+  )
+  const body = await apiRequest(
+    `${API_URL}/${encodeURIComponent(ref.workspace)}/${encodeURIComponent(ref.project)}/search?api_key=${encodeURIComponent(key)}`,
+    {
+      method: "POST",
+      signal: options.signal,
+      body: {
+        in_dataset: true,
+        offset,
+        limit,
+        fields: ["id", "name", "url"],
+      },
+    }
+  )
+  const results = Array.isArray(body.results)
+    ? body.results.map(asProjectImage).filter((image): image is ProjectImage => image !== null)
+    : []
+  return {
+    offset: typeof body.offset === "number" ? body.offset : offset,
+    total: typeof body.total === "number" ? body.total : results.length,
+    results,
+  }
+}
+
+export async function listProjectImages(
+  ref: RoboflowRef,
+  options: {
+    max?: number
+    signal?: AbortSignal
+    onPage?: (loaded: number, total: number) => void
+  } = {}
+): Promise<{ images: ProjectImage[]; total: number }> {
+  const images: ProjectImage[] = []
+  const seen = new Set<string>()
+  let total = 0
+  let offset = 0
+
+  for (;;) {
+    const page = await searchProjectImages(ref, {
+      offset,
+      limit: SEARCH_PAGE_SIZE,
+      signal: options.signal,
+    })
+    total = page.total
+    for (const image of page.results) {
+      if (seen.has(image.id)) continue
+      seen.add(image.id)
+      images.push(image)
+      if (options.max && images.length >= options.max) {
+        options.onPage?.(images.length, total)
+        return { images, total }
+      }
+    }
+    options.onPage?.(images.length, total)
+    if (!page.results.length) break
+    offset = page.offset + page.results.length
+    if (offset >= total) break
+  }
+
+  return { images, total }
+}
+
+export type ImageDetails = {
+  id: string
+  name?: string
+  urls: {
+    original?: string
+    thumb?: string
+  }
+}
+
+export async function fetchImageDetails(
+  ref: RoboflowRef,
+  imageId: string,
+  signal?: AbortSignal
+): Promise<ImageDetails> {
+  const key = roboflowApiKey()
+  const body = await apiRequest(
+    `${API_URL}/${encodeURIComponent(ref.workspace)}/${encodeURIComponent(ref.project)}/images/${encodeURIComponent(imageId)}?api_key=${encodeURIComponent(key)}`,
+    { signal }
+  )
+  const image = (body.image ?? {}) as Record<string, unknown>
+  const urls = (image.urls ?? {}) as Record<string, unknown>
+  return {
+    id: typeof image.id === "string" && image.id ? image.id : imageId,
+    name: typeof image.name === "string" ? image.name : undefined,
+    urls: {
+      original:
+        typeof urls.original === "string" && urls.original
+          ? urls.original
+          : undefined,
+      thumb: typeof urls.thumb === "string" && urls.thumb ? urls.thumb : undefined,
+    },
+  }
+}
+
+// Search returns the original file URL. Roboflow's hosted originals are paired
+// with a `thumb` sibling that the detail endpoint also reports.
+export function thumbUrlFromSource(url: string): string | null {
+  if (url.includes("/original.")) return url.replace("/original.", "/thumb.")
+  if (url.endsWith("/original")) return `${url.slice(0, -"/original".length)}/thumb`
+  return null
+}
+
+export async function resolveThumbUrl(
+  ref: RoboflowRef,
+  image: ProjectImage,
+  signal?: AbortSignal
+): Promise<string | null> {
+  if (image.url) {
+    const derived = thumbUrlFromSource(image.url)
+    if (derived) return derived
+  }
+  const details = await fetchImageDetails(ref, image.id, signal)
+  return details.urls.thumb ?? details.urls.original ?? image.url ?? null
+}
+
+export type ThumbnailBatchItem = {
+  image: ProjectImage
+  bytes: Buffer | null
+}
+
+function isFatalThumbError(error: unknown, signal?: AbortSignal): boolean {
+  if (signal?.aborted) return true
+  if (
+    error instanceof Error &&
+    (error.name === "AbortError" || error.name === "TimeoutError")
+  ) {
+    return true
+  }
+  return error instanceof RoboflowApiError && /timed out/i.test(error.message)
+}
+
+// Every thumbnail on a search page, requested together. Isolated missing or
+// corrupt images come back as `bytes: null`. A cancelled or timed-out page
+// fails only when none of the page's thumbnails arrived.
+export async function fetchThumbnailBatch(
+  ref: RoboflowRef,
+  images: ProjectImage[],
+  options: { signal?: AbortSignal } = {}
+): Promise<ThumbnailBatchItem[]> {
+  const results = await Promise.all(
+    images.map(async (image) => {
+      try {
+        const url = await resolveThumbUrl(ref, image, options.signal)
+        if (!url) return { image, bytes: null, fatal: null }
+        return {
+          image,
+          bytes: await fetchBinary(url, { signal: options.signal }),
+          fatal: null,
+        }
+      } catch (error) {
+        if (isFatalThumbError(error, options.signal)) {
+          return { image, bytes: null, fatal: error }
+        }
+        return { image, bytes: null, fatal: null }
+      }
+    })
+  )
+  const fatal = results.find((item) => item.fatal)?.fatal
+  if (fatal && results.every((item) => !item.bytes)) throw fatal
+  return results.map(({ image, bytes }) => ({ image, bytes }))
+}
+
+const MAX_BINARY_BYTES = 8 * 1024 * 1024
+
+export async function fetchBinary(
+  url: string,
+  options: { signal?: AbortSignal; maxBytes?: number } = {}
+): Promise<Buffer> {
+  const maxBytes = options.maxBytes ?? MAX_BINARY_BYTES
   let lastError: unknown = null
 
-  for (const format of formats) {
-    const url =
-      `${API_URL}/${encodeURIComponent(ref.workspace)}/${encodeURIComponent(ref.project)}` +
-      `/${ref.version}/${encodeURIComponent(format)}?api_key=${encodeURIComponent(key)}`
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    if (options.signal?.aborted) {
+      throw options.signal.reason instanceof Error
+        ? options.signal.reason
+        : new RoboflowApiError("The image download was cancelled.")
+    }
+    const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS)
+    const combined = options.signal
+      ? AbortSignal.any([options.signal, timeout])
+      : timeout
     try {
-      while (Date.now() < deadline) {
-        const body = await getJson(url)
-        const exportBlock = body.export as { link?: string } | undefined
-        const link = exportBlock?.link
-        if (typeof link === "string" && link) return { link, format }
-        if (body.ready === false) {
-          const pct =
-            typeof body.progress === "number"
-              ? ` (${Math.round(body.progress * 100)}%)`
-              : ""
-          onProgress(`Roboflow is generating the ${format} export${pct}`)
-          await new Promise((resolve) => setTimeout(resolve, 1500))
-          continue
-        }
+      const response = await fetch(url, {
+        cache: "no-store",
+        redirect: "follow",
+        signal: combined,
+      })
+      if (response.status === 429 || response.status >= 500) {
+        lastError = new RoboflowApiError(
+          `Downloading an image failed (${response.status} ${response.statusText}).`,
+          response.status
+        )
+        if (attempt === MAX_RETRIES) throw lastError
+        await sleep(
+          retryDelayMs(attempt, response.headers.get("retry-after")),
+          options.signal
+        )
+        continue
+      }
+      if (!response.ok) {
         throw new RoboflowApiError(
-          `Roboflow returned no export link for format "${format}".`
+          `Downloading an image failed (${response.status} ${response.statusText}).`,
+          response.status
         )
       }
-      throw new RoboflowApiError(
-        `Timed out waiting for Roboflow to generate the ${format} export.`
-      )
+      const length = Number(response.headers.get("content-length") ?? 0)
+      if (length > maxBytes) {
+        await response.body?.cancel()
+        throw new RoboflowApiError("An image was unexpectedly large.")
+      }
+      const bytes = Buffer.from(await response.arrayBuffer())
+      if (bytes.length > maxBytes) {
+        throw new RoboflowApiError("An image was unexpectedly large.")
+      }
+      return bytes
     } catch (error) {
-      // An unsupported format for this project type is a 4xx; try the next one.
+      if (options.signal?.aborted) throw error
+      if (error instanceof RoboflowApiError && error.status !== 429 && (error.status ?? 0) < 500) {
+        throw error
+      }
       lastError = error
-      if (error instanceof RoboflowApiError && error.status === 401) throw error
-      if (error instanceof RoboflowApiError && error.status === 403) throw error
+      if (isTimeoutError(error) && attempt < MAX_RETRIES) {
+        await sleep(retryDelayMs(attempt, null), options.signal)
+        continue
+      }
+      if (error instanceof RoboflowApiError) throw error
+      if (isTimeoutError(error)) {
+        throw new RoboflowApiError("The image download timed out.")
+      }
+      throw error
     }
   }
 
   throw lastError instanceof Error
     ? lastError
-    : new RoboflowApiError("Could not export this dataset in any known format.")
+    : new RoboflowApiError("The image download failed.")
 }

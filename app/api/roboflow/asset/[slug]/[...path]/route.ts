@@ -1,19 +1,14 @@
 // Serves one file of an ingested dataset: manifest.json, signatures-coarse.bin,
 // icon.jpg, or thumbs/<id>.jpg.
 //
-// The browser used to download the whole library as a single zip before it
-// could draw anything. A mosaic only paints a fraction of a large dataset's
-// images, so tiles are fetched through here instead, one at a time and only
-// when a tile is actually placed.
+// Tiles are fetched through here one at a time and only when a tile is actually
+// placed. Two backings, in order: the local cache directory (the normal case in
+// development, and on the instance that ran the ingest), then the individual
+// objects published to Blob.
 //
-// Two backings, in order: the local cache directory (the normal case in
-// development, and on the instance that ran the ingest), then a byte-range read
-// into the archive published to Blob, which is the only copy a serverless
-// instance can reach.
-//
-// Thumbnail filenames are a hash of the image bytes, so those responses are
-// immutable and the CDN can keep them; the function is not invoked again for a
-// tile that has already been served.
+// Thumbnail filenames are a hash of a stable image id, so those responses are
+// immutable. Manifest and signature files are served from a revision-addressed
+// snapshot when the caller pinned a library version on the URL.
 
 import { readFile, stat } from "node:fs/promises"
 import path from "node:path"
@@ -23,9 +18,9 @@ import {
   ICON_FILE,
   MANIFEST_FILE,
   isDatasetSlug,
+  snapshotDir,
 } from "@/lib/roboflow"
-import { readArchiveFile } from "@/lib/roboflow-archive"
-import { blobEnabled } from "@/lib/roboflow-blob"
+import { blobEnabled, readBlobBytes } from "@/lib/roboflow-blob"
 import { datasetFile } from "@/lib/roboflow-store"
 
 export const runtime = "nodejs"
@@ -37,9 +32,8 @@ const CONTENT_TYPES: Record<string, string> = {
 }
 
 const FIXED_FILES = new Set([MANIFEST_FILE, COARSE_SIGNATURES_FILE, ICON_FILE])
-// Thumbnails are named for the hash of their bytes; nothing else is servable
-// out of a dataset directory (`source/` and `status.json` are deliberately not).
 const THUMB_RE = /^thumbs\/[a-f0-9]{16}\.jpg$/i
+const SNAPSHOT_FILES = new Set([MANIFEST_FILE, COARSE_SIGNATURES_FILE])
 
 function notFound(): Response {
   return new Response("Not found", { status: 404 })
@@ -72,6 +66,16 @@ async function localBytes(
   }
 }
 
+async function readAsset(
+  slug: string,
+  relativePath: string
+): Promise<Uint8Array | null> {
+  return (
+    (await localBytes(slug, relativePath)) ??
+    (blobEnabled() ? await readBlobBytes(slug, relativePath) : null)
+  )
+}
+
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ slug: string; path?: string[] }> }
@@ -87,15 +91,21 @@ export async function GET(
   const isThumb = THUMB_RE.test(relativePath)
   if (!isThumb && !FIXED_FILES.has(relativePath)) return notFound()
 
+  const version = new URL(request.url).searchParams.get("v")
+  const versionedPath =
+    version && SNAPSHOT_FILES.has(relativePath)
+      ? `${snapshotDir(version)}/${relativePath}`
+      : null
+
   const bytes =
-    (await localBytes(slug, relativePath)) ??
-    (blobEnabled() ? await readArchiveFile(slug, relativePath) : null)
+    (versionedPath ? await readAsset(slug, versionedPath) : null) ??
+    (await readAsset(slug, relativePath))
   if (!bytes) return notFound()
 
   // A thumbnail's name already identifies its bytes. The manifest, signatures,
   // and cover change on re-ingest, so they are only cacheable when the caller
   // pinned a library version on the URL.
-  const versioned = isThumb || new URL(request.url).searchParams.has("v")
+  const versioned = isThumb || Boolean(version)
 
   return new Response(bytes as BodyInit, {
     headers: {

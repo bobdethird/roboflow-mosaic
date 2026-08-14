@@ -3,7 +3,13 @@ export const MIB = 1024 * 1024
 // Leave 30 seconds for final status persistence before the route's five-minute
 // maxDuration is reached.
 export const VERCEL_INGEST_DEADLINE_MS = 270_000
-export const MAX_EXPORT_WAIT_MS = 90_000
+
+// Roboflow's project search page size. The documented maximum is 250.
+export const SEARCH_PAGE_SIZE = 250
+
+// How many newly seeded tiles accumulate before the next snapshot is published.
+// The first snapshot is published at MIN_PARTIAL_TILES instead.
+export const SNAPSHOT_BATCH = 64
 
 // Time held back from the deadline so the library that has been built can always
 // be finished and published: the last multipart part, the manifest, the status
@@ -37,3 +43,11 @@ export const MIN_PARTIAL_TILES = 32
 // ingest stops early with the tiles it has.
 export const TILE_FETCH_BYTES_PER_MS = 40_000
 export const TILE_DECODE_MS = 3
+// Wall-clock cost of one thumbnail once SEED_CONCURRENCY requests overlap.
+// Used when the ingest is planning a sample against the remaining deadline.
+export const TILE_REQUEST_MS = 8
+export const ESTIMATED_THUMB_BYTES = 15_000
+
+// In-flight thumbnail fetches + decodes. Thumbs are ~15 KB and the work is
+// waiting on Roboflow's CDN, so this is much wider than a CPU-sized pool.
+export const SEED_CONCURRENCY = 32

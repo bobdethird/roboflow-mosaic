@@ -1,32 +1,23 @@
 // Turns a Roboflow Universe dataset into the mosaic's tile library.
 //
 // Pipeline:
-//   1. resolve the dataset version and ask Roboflow for a zip export link
-//   2. read the export's index (its central directory) over HTTP and choose
-//      which image entries this deployment can afford to build tiles from
-//   3. pull those entries straight out of the remote zip — one decode per image →
-//      content-addressed id, 16×16 colour signature, and a thumbnail
-//   4. write manifest.json + signatures-coarse.bin + thumbs/ into a sink
-//
-// Nothing along that path is staged on disk. The export is never spooled, the
-// thumbnails are never written on a serverless host: they are zipped and pushed
-// to Blob as they are produced (lib/roboflow-sink.ts). That is deliberate —
-// `/tmp` is ~500 MB, datasets are not, and the size of the dataset should not
-// decide whether the site works.
+//   1. resolve the dataset version (cache identity) and list project images
+//   2. sample up to the tile budget, then fetch each image's thumbnail
+//   3. decode each thumbnail into a stable id, 16×16 colour signature, and
+//      normalized 192px JPEG, writing the thumb as soon as it is ready
+//   4. publish immutable manifest + signature snapshots in batches so the
+//      mosaic can open before the whole project has been seeded
 //
 // Steps 3–4 are shared with the local-directory ingest (scripts/ingest-dir.mts),
 // so any folder of images can be mosaicked the same way.
 //
 // What the mosaic reproduces is chosen in the browser afterwards — the project
-// cover, or any single image out of the dataset — so the ingest does not build a
-// reference image of its own.
-//
-// Everything written here ends up in one zip that the browser downloads whole
-// (lib/roboflow-pack.ts), which is why the thumbnails are sized for the client
-// rather than for an image CDN.
+// cover, or any single image out of the dataset — so the ingest does not build
+// a reference image of its own.
 
 import { createHash } from "node:crypto"
 import { readdir, readFile, stat } from "node:fs/promises"
+import { availableParallelism } from "node:os"
 import path from "node:path"
 
 import sharp from "sharp"
@@ -42,32 +33,38 @@ import {
   type RoboflowRef,
 } from "./roboflow"
 import {
-  exportFormats,
-  fetchExportLink,
+  fetchBinary,
   fetchProjectInfo,
+  fetchThumbnailBatch,
+  RoboflowApiError,
+  searchProjectImages,
+  type ProjectImage,
 } from "./roboflow-api"
-import { blobEnabled, blobHasDataset, blobHasIcon } from "./roboflow-blob"
 import {
-  blobArchiveSink,
-  directorySink,
-  publishManifest,
-  type LibrarySink,
-} from "./roboflow-sink"
-import { IS_VERCEL, datasetDir, type ProgressReporter } from "./roboflow-store"
+  blobEnabled,
+  blobHasDataset,
+  blobHasIcon,
+  publishLibrarySnapshot,
+  readBlobStatus,
+} from "./roboflow-blob"
+import { blobFileSink, directorySink, type LibrarySink } from "./roboflow-sink"
 import {
-  MAX_EXPORT_WAIT_MS,
+  IS_VERCEL,
+  datasetDir,
+  readStatus,
+  type ProgressReporter,
+} from "./roboflow-store"
+import {
   MAX_INDEXED_IMAGES,
   MIN_PARTIAL_TILES,
   PUBLISH_RESERVE_MS,
+  SEARCH_PAGE_SIZE,
+  SNAPSHOT_BATCH,
   TILE_BUDGET,
+  TILE_REQUEST_MS,
   VERCEL_INGEST_DEADLINE_MS,
 } from "./roboflow-limits"
-import { planTileSample } from "./roboflow-sample"
-import {
-  readZipEntries,
-  readZipIndex,
-  streamZipEntries,
-} from "./roboflow-zip"
+import { evenSampleIndices } from "./roboflow-sample"
 
 export { planTileSample } from "./roboflow-sample"
 export { VERCEL_INGEST_DEADLINE_MS } from "./roboflow-limits"
@@ -80,22 +77,17 @@ const SIG_GRID = 16
 const COARSE_GRID = SIG_GRID >> 1
 const COARSE_VALUES = COARSE_GRID * COARSE_GRID * 3
 
-// Thumbnails are the only image the browser ever gets: the whole library ships
-// as one zip and every consumer reads it locally. 192px covers all of them —
-// the mosaic canvas downsamples to 128, and the hover popup shows ~224 CSS px.
-// Going higher multiplies the download for pixels only a retina hover would
-// notice (a 3,995-image dataset: 15 MB at 128, 30 MB at 192, 81 MB at 384).
+// Thumbnails are the only image the browser ever gets. 192px covers all of
+// them — the mosaic canvas downsamples to 128, and the hover popup shows
+// ~224 CSS px.
 const THUMB_LONG_EDGE = 192
 const THUMB_QUALITY = 80
 // Long edge the project cover image is stored at. Matches the mosaic frame in
 // lib/mosaic-bake.ts — the engine never draws the reference bigger than this.
 const ICON_MAX_EDGE = 1600
-// Ranged reads of the export overlap the network with the decode, so a serverless
-// function can keep more in flight than it has cores. A local machine reading
-// files off its own disk is purely CPU-bound.
-const READ_CONCURRENCY = IS_VERCEL ? 6 : 8
-// A sequential read is one connection, so extra slots only queue decodes.
-const STREAM_CONCURRENCY = IS_VERCEL ? 3 : 8
+// Local-folder ingest reads full-size files off disk, so that pool follows
+// the CPU. API seeding fetches a search page of thumbnails together.
+const DECODE_CONCURRENCY = Math.max(2, availableParallelism())
 
 export class IngestError extends Error {}
 
@@ -104,7 +96,7 @@ class IngestDeadlineError extends IngestError {}
 function assertBeforeDeadline(deadline?: number): void {
   if (deadline && Date.now() >= deadline) {
     throw new IngestDeadlineError(
-      "This dataset could not be prepared within the deployment time limit. Try again — a second run reuses the export Roboflow has already generated."
+      "This dataset could not be prepared within the deployment time limit. Try again — a second run continues from the images already published."
     )
   }
 }
@@ -120,6 +112,11 @@ function isTimeoutError(error: unknown): boolean {
     error instanceof Error &&
     (error.name === "AbortError" || error.name === "TimeoutError")
   )
+}
+
+function isDeadlineError(error: unknown): boolean {
+  if (error instanceof IngestDeadlineError || isTimeoutError(error)) return true
+  return error instanceof RoboflowApiError && /timed out/i.test(error.message)
 }
 
 // ─── Per-image work ──────────────────────────────────────────────────────────
@@ -142,7 +139,7 @@ async function signatureGrid(pipeline: sharp.Sharp): Promise<Buffer> {
 // thumbnail. Both are cloned off one Sharp instance — that does not share the
 // JPEG decode (measured: it is no faster than two independent pipelines), but
 // libvips shrinks on load for both targets, so neither ever decodes full size.
-async function decodeOutputs(bytes: Buffer): Promise<{
+export async function decodeOutputs(bytes: Buffer): Promise<{
   width: number
   height: number
   signature: Buffer
@@ -193,7 +190,7 @@ function coarseSignature(sig: Buffer): Buffer {
 }
 
 // Run `task` over `items` with a bounded number in flight.
-async function pooled<T>(
+export async function pooled<T>(
   items: T[],
   limit: number,
   task: (item: T, index: number) => Promise<void>
@@ -227,16 +224,24 @@ export type LibraryResult = {
   version: string
 }
 
+export type LibrarySnapshotResult = LibraryResult & {
+  manifest: Buffer
+  signatures: Buffer
+}
+
 // ─── Building a library into a sink ──────────────────────────────────────────
 
-// Turns image bytes into tiles and hands each one to the sink as it is built.
-// Nothing accumulates here except the manifest rows and their signatures — 200
-// bytes or so per tile, which is why the ceiling on tiles is about what the
-// mosaic can draw rather than what the host can hold.
+// Turns image bytes into tiles and hands each thumbnail to the sink as it is
+// built. Nothing accumulates here except the manifest rows and their
+// signatures — 200 bytes or so per tile.
 type TileBuilder = {
   // Turn one source image into a tile. Never throws for a bad image: a dataset
   // with one unreadable file still mosaics.
-  add: (name: string, bytes: Buffer) => Promise<void>
+  add: (
+    name: string,
+    bytes: Buffer,
+    options?: { id?: string }
+  ) => Promise<boolean>
   // Note an image that could not be read at all, so progress stays honest.
   drop: () => void
   readonly count: number
@@ -244,8 +249,8 @@ type TileBuilder = {
   readonly skipped: number
   readonly full: boolean
   setTotal: (total: number) => void
-  // Write manifest.json and signatures-coarse.bin, closing the library out.
-  write: () => Promise<{ version: string; manifest: Buffer }>
+  // Current manifest + signatures, without requiring the run to be finished.
+  snapshot: () => LibrarySnapshotResult
 }
 
 function tileBuilder(
@@ -253,8 +258,6 @@ function tileBuilder(
   report: ProgressReporter,
   options: { budget: number }
 ): TileBuilder {
-  // Keyed by source name so the manifest can be ordered independently of the
-  // order the reader happened to produce entries in.
   const kept = new Map<string, { photo: ManifestPhoto; signature: Buffer }>()
   const seen = new Set<string>()
   let processed = 0
@@ -263,16 +266,39 @@ function tileBuilder(
 
   const tick = () => {
     processed += 1
-    report("Building tiles", processed, total)
+    report("Seeding tiles", processed, total)
+  }
+
+  const serialize = (): LibrarySnapshotResult => {
+    if (!kept.size) {
+      throw new IngestError("None of the dataset's images could be read.")
+    }
+    const version = new Date().toISOString()
+    const photos: ManifestPhoto[] = []
+    const signatures: Buffer[] = []
+    for (const name of [...kept.keys()].sort()) {
+      const entry = kept.get(name)
+      if (!entry) continue
+      photos.push(entry.photo)
+      signatures.push(entry.signature)
+    }
+    const manifest = Buffer.from(JSON.stringify({ version, photos }))
+    return {
+      version,
+      manifest,
+      signatures: Buffer.concat(signatures),
+      photoCount: photos.length,
+      skipped,
+    }
   }
 
   return {
-    add: async (name, bytes) => {
+    add: async (name, bytes, addOptions) => {
       try {
-        const id = createHash("sha1").update(bytes).digest("hex").slice(0, 16)
-        // Roboflow exports the same image into several splits, and augmented
-        // copies alongside it; a byte-identical duplicate already has a tile.
-        if (seen.has(id)) return
+        const id =
+          addOptions?.id ??
+          createHash("sha1").update(bytes).digest("hex").slice(0, 16)
+        if (seen.has(id)) return false
         seen.add(id)
 
         const decoded = await decodeOutputs(bytes)
@@ -286,8 +312,10 @@ function tileBuilder(
           },
           signature: decoded.signature,
         })
+        return true
       } catch {
         skipped += 1
+        return false
       } finally {
         tick()
       }
@@ -311,26 +339,12 @@ function tileBuilder(
     setTotal: (value) => {
       total = value
     },
-    write: async () => {
-      if (!kept.size) {
-        throw new IngestError("None of the dataset's images could be read.")
-      }
-      report("Writing library", 0, 0)
-      const version = new Date().toISOString()
-      const photos: ManifestPhoto[] = []
-      const signatures: Buffer[] = []
-      for (const name of [...kept.keys()].sort()) {
-        const entry = kept.get(name)
-        if (!entry) continue
-        photos.push(entry.photo)
-        signatures.push(entry.signature)
-      }
-      const manifest = Buffer.from(JSON.stringify({ version, photos }))
-      await sink.add(COARSE_SIGNATURES_FILE, Buffer.concat(signatures))
-      await sink.add(MANIFEST_FILE, manifest)
-      return { version, manifest }
-    },
+    snapshot: serialize,
   }
+}
+
+function tileIdFor(imageId: string): string {
+  return createHash("sha1").update(imageId).digest("hex").slice(0, 16)
 }
 
 // Build the tile library from a directory of images and write it into
@@ -346,156 +360,267 @@ export async function buildLibrary(
   const builder = tileBuilder(sink, report, { budget: TILE_BUDGET })
   builder.setTotal(files.length)
 
-  await pooled(files, READ_CONCURRENCY, async (file) => {
+  await pooled(files, DECODE_CONCURRENCY, async (file) => {
     assertBeforeDeadline(limits.deadline)
     if (builder.full) return
     await builder.add(file, await readFile(file))
   })
 
-  const { version } = await builder.write()
+  const built = builder.snapshot()
+  await publishLibrarySnapshot(path.basename(outputDir), built, {
+    directory: outputDir,
+  })
   await sink.finish()
-  return { photoCount: builder.count, skipped: builder.skipped, version }
+  return { photoCount: builder.count, skipped: builder.skipped, version: built.version }
 }
 
-type CollectResult = {
-  // Image entries the export holds, as far as the reader could tell.
+export type ImageBuild = LibrarySnapshotResult & {
   sourceImages: number
-  // The library is a subset of the export: more images than the mosaic can use,
-  // or more than this run had time for.
   sampled: boolean
 }
 
-async function collectTiles(
-  link: string,
-  builder: TileBuilder,
+export async function buildLibraryFromImages(
+  ref: RoboflowRef,
+  images: ProjectImage[],
+  sink: LibrarySink,
   report: ProgressReporter,
-  options: { deadline?: number; budget: number }
-): Promise<CollectResult> {
-  // Everything up to here is interruptible; the reserve is what publishes the
-  // library that has been built, so reads never run into the hard deadline.
+  options: {
+    budget?: number
+    deadline?: number
+    sourceImages?: number
+    slug?: string
+    directory?: string
+    onSnapshot?: (built: ImageBuild) => Promise<void> | void
+  } = {}
+): Promise<ImageBuild> {
+  const budget = options.budget ?? TILE_BUDGET
   const readDeadline = options.deadline
     ? options.deadline - PUBLISH_RESERVE_MS
     : undefined
-  assertBeforeDeadline(readDeadline)
+  const sourceImages = options.sourceImages ?? images.length
+  const builder = tileBuilder(sink, report, { budget })
+  builder.setTotal(images.length)
+  report("Seeding tiles", 0, images.length)
+
+  let lastPublished = 0
+  let lastBuilt: ImageBuild | undefined
+  let snapshotting = Promise.resolve()
+  const publish = async (force: boolean) => {
+    if (!builder.count) return
+    const due =
+      force ||
+      (lastPublished === 0 && builder.count >= MIN_PARTIAL_TILES) ||
+      (lastPublished > 0 && builder.count - lastPublished >= SNAPSHOT_BATCH)
+    if (!due) return
+    const built: ImageBuild = {
+      ...builder.snapshot(),
+      sourceImages,
+      sampled: sourceImages > builder.count,
+    }
+    if (options.slug || options.directory) {
+      await publishLibrarySnapshot(options.slug ?? "local--dataset--v1", built, {
+        abortSignal: deadlineSignal(options.deadline),
+        directory: options.directory,
+      })
+    }
+    lastPublished = built.photoCount
+    lastBuilt = built
+    await options.onSnapshot?.(built)
+  }
+  const queuePublish = (force: boolean) => {
+    snapshotting = snapshotting.then(
+      () => publish(force),
+      () => publish(force)
+    )
+    return snapshotting
+  }
+
   const stop = () =>
     builder.full || Boolean(readDeadline && Date.now() >= readDeadline)
 
-  report("Reading export index", 0, 0)
-  const index = await readZipIndex(link, {
-    maxEntries: MAX_INDEXED_IMAGES,
-    signal: deadlineSignal(readDeadline),
-  })
+  try {
+    for (let start = 0; start < images.length && !stop(); start += SEARCH_PAGE_SIZE) {
+      assertBeforeDeadline(readDeadline)
+      const page = images.slice(start, start + SEARCH_PAGE_SIZE)
+      const batch = await fetchThumbnailBatch(ref, page, {
+        signal: deadlineSignal(readDeadline),
+      })
+      for (const item of batch) {
+        if (stop()) break
+        if (!item.bytes) {
+          builder.drop()
+          continue
+        }
+        await builder.add(item.image.name ?? item.image.id, item.bytes, {
+          id: tileIdFor(item.image.id),
+        })
+      }
+      await queuePublish(false)
+    }
+  } catch (error) {
+    if (!isDeadlineError(error) || builder.count < MIN_PARTIAL_TILES) throw error
+  }
 
-  const finished = (sampled: boolean, sourceImages: number): CollectResult => {
-    if (builder.count) return { sourceImages, sampled }
-    // Nothing usable came back, so whatever stopped the read is the failure.
+  await queuePublish(true)
+  if (!lastBuilt || !builder.count) {
     assertBeforeDeadline(readDeadline)
     throw new IngestError("None of the dataset's images could be read.")
   }
-
-  const enough = () => builder.count >= MIN_PARTIAL_TILES
-
-  if (index) {
-    const plan = planTileSample(index, {
-      budget: options.budget,
-      msAvailable: readDeadline ? readDeadline - Date.now() : undefined,
-    })
-    if (!plan.length) {
-      throw new IngestError("The dataset export contained no images.")
-    }
-    builder.setTotal(plan.length)
-    report("Building tiles", 0, plan.length)
-    try {
-      await readZipEntries(
-        link,
-        plan,
-        (entry, bytes) => builder.add(entry.name, bytes),
-        {
-          concurrency: READ_CONCURRENCY,
-          signal: deadlineSignal(readDeadline),
-          stop,
-          // One unreadable entry in a 20,000-image export is not a failed
-          // ingest; it is a tile the mosaic does without.
-          onEntryError: () => builder.drop(),
-        }
-      )
-    } catch (error) {
-      // A read that ran out of time still leaves a usable library behind.
-      if (!isTimeoutError(error) || !enough()) throw error
-      return finished(true, index.imageCount)
-    }
-    return finished(
-      plan.length < index.imageCount || builder.processed < plan.length,
-      index.imageCount
-    )
+  return {
+    ...lastBuilt,
+    sampled:
+      lastBuilt.sampled ||
+      lastBuilt.sourceImages > lastBuilt.photoCount ||
+      builder.processed < images.length,
   }
-
-  // No index: the host will not serve ranges, so the export can only be read in
-  // order. Every entry costs its bytes whether or not it becomes a tile, so this
-  // takes images until the budget is met and then stops the download rather than
-  // striding across a dataset it would have to read all of anyway.
-  let images = 0
-  // Counted as entries are accepted rather than as tiles land: a decode takes
-  // long enough that `builder.count` would still read zero after a hundred
-  // small entries have gone past.
-  let taken = 0
-  builder.setTotal(options.budget)
-  report("Building tiles", 0, options.budget)
-  try {
-    await streamZipEntries(
-      link,
-      (entry, bytes) => builder.add(entry.name, bytes),
-      {
-        want: () => {
-          images += 1
-          if (taken >= options.budget) return false
-          taken += 1
-          return true
-        },
-        concurrency: STREAM_CONCURRENCY,
-        signal: deadlineSignal(readDeadline),
-        stop: () => taken >= options.budget || stop(),
-      }
-    )
-  } catch (error) {
-    if (!isTimeoutError(error) || !enough()) throw error
-    return finished(true, images)
-  }
-  return finished(taken >= options.budget, images)
 }
 
-export type ExportBuild = LibraryResult & {
-  // Images the export holds, whether or not each became a tile.
-  sourceImages: number
-  // The library is an even sample of the export rather than all of it.
-  sampled: boolean
-  // manifest.json, so a caller that publishes can do so without rereading it.
-  manifest: Buffer
-}
-
-// Build a whole tile library out of a remote export zip, writing it into `sink`
-// as it goes. The export is never held anywhere: entries are read from the
-// remote zip, turned into tiles, and handed straight on.
-export async function buildLibraryFromExport(
-  link: string,
+export async function buildLibraryFromSearch(
+  ref: RoboflowRef,
   sink: LibrarySink,
   report: ProgressReporter,
-  options: { budget?: number; deadline?: number } = {}
-): Promise<ExportBuild> {
+  options: {
+    budget?: number
+    deadline?: number
+    slug?: string
+    directory?: string
+    onSnapshot?: (built: ImageBuild) => Promise<void> | void
+  } = {}
+): Promise<ImageBuild> {
   const budget = options.budget ?? TILE_BUDGET
+  const readDeadline = options.deadline
+    ? options.deadline - PUBLISH_RESERVE_MS
+    : undefined
   const builder = tileBuilder(sink, report, { budget })
-  const collected = await collectTiles(link, builder, report, {
-    deadline: options.deadline,
-    budget,
-  })
-  const { version, manifest } = await builder.write()
+  report("Searching images", 0, 0)
+
+  let lastPublished = 0
+  let lastBuilt: ImageBuild | undefined
+  let snapshotting = Promise.resolve()
+  let sourceImages = 0
+  const publish = async (force: boolean) => {
+    if (!builder.count) return
+    const due =
+      force ||
+      (lastPublished === 0 && builder.count >= MIN_PARTIAL_TILES) ||
+      (lastPublished > 0 && builder.count - lastPublished >= SNAPSHOT_BATCH)
+    if (!due) return
+    const built: ImageBuild = {
+      ...builder.snapshot(),
+      sourceImages,
+      sampled: sourceImages > builder.count,
+    }
+    if (options.slug || options.directory) {
+      await publishLibrarySnapshot(options.slug ?? "local--dataset--v1", built, {
+        abortSignal: deadlineSignal(options.deadline),
+        directory: options.directory,
+      })
+    }
+    lastPublished = built.photoCount
+    lastBuilt = built
+    await options.onSnapshot?.(built)
+  }
+  const queuePublish = (force: boolean) => {
+    snapshotting = snapshotting.then(
+      () => publish(force),
+      () => publish(force)
+    )
+    return snapshotting
+  }
+
+  const stop = () =>
+    builder.full || Boolean(readDeadline && Date.now() >= readDeadline)
+
+  try {
+    let index = 0
+    let wanted: Set<number> | null = null
+    let pending = searchProjectImages(ref, {
+      offset: 0,
+      limit: SEARCH_PAGE_SIZE,
+      signal: deadlineSignal(readDeadline),
+    })
+
+    for (;;) {
+      assertBeforeDeadline(readDeadline)
+      if (stop()) break
+      const page = await pending
+      sourceImages = Math.max(page.total, sourceImages)
+      if (!page.results.length) break
+
+      if (!wanted) {
+        if (!page.total && !page.results.length) break
+        const total = Math.max(page.total, page.results.length)
+        const affordable =
+          readDeadline !== undefined
+            ? Math.max(
+                1,
+                Math.floor(Math.max(0, readDeadline - Date.now()) / TILE_REQUEST_MS)
+              )
+            : budget
+        const take = Math.min(budget, MAX_INDEXED_IMAGES, total, affordable)
+        wanted = evenSampleIndices(total, take)
+        builder.setTotal(wanted.size)
+        report("Seeding tiles", 0, wanted.size)
+      }
+
+      const nextOffset = page.offset + page.results.length
+      const hasMore = nextOffset < Math.max(page.total, nextOffset)
+      pending = hasMore
+        ? searchProjectImages(ref, {
+            offset: nextOffset,
+            limit: SEARCH_PAGE_SIZE,
+            signal: deadlineSignal(readDeadline),
+          })
+        : Promise.resolve({
+            offset: nextOffset,
+            total: page.total,
+            results: [],
+          })
+
+      const selected: ProjectImage[] = []
+      for (const image of page.results) {
+        if (wanted.has(index++)) selected.push(image)
+      }
+      report("Searching images", Math.min(index, page.total || index), page.total)
+
+      if (selected.length) {
+        const batch = await fetchThumbnailBatch(ref, selected, {
+          signal: deadlineSignal(readDeadline),
+        })
+        for (const item of batch) {
+          if (stop()) break
+          if (!item.bytes) {
+            builder.drop()
+            continue
+          }
+          await builder.add(item.image.name ?? item.image.id, item.bytes, {
+            id: tileIdFor(item.image.id),
+          })
+        }
+        await queuePublish(false)
+      }
+
+      if (!hasMore) break
+    }
+  } catch (error) {
+    if (!isDeadlineError(error) || builder.count < MIN_PARTIAL_TILES) throw error
+  }
+
+  await queuePublish(true)
+  if (!lastBuilt || !builder.count) {
+    assertBeforeDeadline(readDeadline)
+    throw new IngestError(
+      sourceImages
+        ? "None of the dataset's images could be read."
+        : "The project contained no images."
+    )
+  }
   return {
-    version,
-    manifest,
-    photoCount: builder.count,
-    skipped: builder.skipped,
-    sourceImages: Math.max(collected.sourceImages, builder.count),
-    sampled: collected.sampled,
+    ...lastBuilt,
+    sampled:
+      lastBuilt.sampled ||
+      lastBuilt.sourceImages > lastBuilt.photoCount ||
+      builder.full,
   }
 }
 
@@ -503,22 +628,15 @@ export async function buildLibraryFromExport(
 
 // The project's cover image — whatever single image the dataset's author picked
 // to represent it, and the default thing the mosaic reproduces.
-//
-// Capped at the mosaic's own frame size (no crop, aspect preserved) because the
-// originals run to several megapixels and the engine never draws the reference
-// larger than this. A failure here is not fatal: the picker can still offer any
-// image out of the dataset.
 async function downloadIcon(
   url: string,
   deadline?: number
 ): Promise<Buffer | null> {
   try {
     const remaining = deadline ? deadline - Date.now() : 10_000
-    const response = await fetch(url, {
+    const bytes = await fetchBinary(url, {
       signal: AbortSignal.timeout(Math.max(1, Math.min(10_000, remaining))),
     })
-    if (!response.ok) return null
-    const bytes = Buffer.from(await response.arrayBuffer())
     return await sharp(bytes, { failOn: "none" })
       .rotate() // honour EXIF orientation before the dimensions are baked in
       .resize(ICON_MAX_EDGE, ICON_MAX_EDGE, {
@@ -558,9 +676,8 @@ export async function resolveDataset(
     )
   }
   // Roboflow keeps versions whose generation never produced anything; they
-  // report zero images and export as a zip holding nothing but README files.
-  // Reaching one means it was asked for by name, or that the project has no
-  // other kind — either way, saying so beats failing on the empty export.
+  // report zero images. Reaching one means it was asked for by name, or that
+  // the project has no other kind — either way, saying so beats failing later.
   if (info.imagesByVersion.get(version) === 0) {
     const usable = info.versions.filter(
       (n) => info.imagesByVersion.get(n) !== 0
@@ -587,6 +704,28 @@ export type IngestOptions = {
   deadline?: number
   // Tiles to build at most. Defaults to the deployment's budget.
   budget?: number
+  onSnapshot?: (dataset: RoboflowDataset) => Promise<void> | void
+}
+
+function datasetRecord(
+  resolved: ResolvedDataset,
+  slug: string,
+  built: ImageBuild,
+  hasIcon: boolean
+): RoboflowDataset {
+  return {
+    ...resolved.ref,
+    slug,
+    name: resolved.name,
+    type: resolved.type,
+    imageCount: built.photoCount,
+    sourceImages: built.sampled
+      ? Math.max(built.sourceImages, resolved.images)
+      : undefined,
+    universeUrl: universeUrl(resolved.ref),
+    hasIcon,
+    libraryVersion: built.version,
+  }
 }
 
 export async function ingestDataset(
@@ -606,26 +745,15 @@ export async function ingestDataset(
     (IS_VERCEL ? Date.now() + VERCEL_INGEST_DEADLINE_MS : undefined)
   assertBeforeDeadline(deadline)
   const slug = datasetSlug(resolved.ref)
-
-  report("Requesting export", 0, 0)
-  const exportWait = deadline
-    ? Math.min(MAX_EXPORT_WAIT_MS, Math.max(1, deadline - Date.now() - 120_000))
-    : undefined
-  const { link } = await fetchExportLink(
-    resolved.ref,
-    exportFormats(resolved.type),
-    (message) => report(message, 0, 0),
-    exportWait
-  )
-  assertBeforeDeadline(deadline)
+  const budget = options.budget ?? TILE_BUDGET
 
   const publishing = blobEnabled()
   const sink = publishing
-    ? await blobArchiveSink(slug, { abortSignal: deadlineSignal(deadline) })
+    ? await blobFileSink(slug, { abortSignal: deadlineSignal(deadline) })
     : await directorySink(datasetDir(slug))
 
+  let lastDataset: RoboflowDataset | undefined
   try {
-    // The cover goes in first so a run that stops early still has one.
     let hasIcon = false
     if (resolved.iconUrl) {
       report("Fetching project cover image", 0, 0)
@@ -636,33 +764,33 @@ export async function ingestDataset(
       }
     }
 
-    const built = await buildLibraryFromExport(link, sink, report, {
-      budget: options.budget,
-      deadline,
-    })
+    const built = await buildLibraryFromSearch(
+      resolved.ref,
+      sink,
+      report,
+      {
+        budget,
+        deadline,
+        slug,
+        directory: publishing ? undefined : datasetDir(slug),
+        onSnapshot: async (snapshot) => {
+          lastDataset = datasetRecord(resolved, slug, snapshot, hasIcon)
+          await options.onSnapshot?.(lastDataset)
+        },
+      }
+    )
 
     report("Publishing library", 0, 0)
     await sink.finish()
-    if (publishing) {
-      await publishManifest(slug, built.manifest, deadlineSignal(deadline))
-    }
-
-    return {
-      ...resolved.ref,
-      slug,
-      name: resolved.name,
-      type: resolved.type,
-      imageCount: built.photoCount,
-      // Only set when the library really is a subset, so the page can say so.
-      sourceImages: built.sampled
-        ? Math.max(built.sourceImages, resolved.images)
-        : undefined,
-      universeUrl: universeUrl(resolved.ref),
-      hasIcon,
-      libraryVersion: built.version,
-    }
+    const dataset = datasetRecord(resolved, slug, built, hasIcon)
+    lastDataset = dataset
+    await options.onSnapshot?.(dataset)
+    return dataset
   } catch (error) {
     await sink.abort().catch(() => undefined)
+    if (lastDataset && isDeadlineError(error) && lastDataset.imageCount >= MIN_PARTIAL_TILES) {
+      return lastDataset
+    }
     throw error
   }
 }
@@ -691,8 +819,15 @@ async function isIngestedLocally(slug: string): Promise<boolean> {
 
 // Has this dataset already been ingested? Used to short-circuit a repeat
 // request. A published dataset counts even on an instance whose cache is
-// empty — that is the whole point of publishing it.
+// empty — that is the whole point of publishing it. A snapshot written while
+// the job is still running does not count: another caller should join that
+// job rather than treat the library as finished.
 export async function isIngested(slug: string): Promise<boolean> {
+  const status = blobEnabled()
+    ? await readBlobStatus(slug)
+    : await readStatus(slug)
+  if (status?.state === "running") return false
+  if (status?.state === "ready") return true
   if (await isIngestedLocally(slug)) return true
   return blobEnabled() ? blobHasDataset(slug) : false
 }

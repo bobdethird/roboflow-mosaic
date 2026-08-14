@@ -1,9 +1,10 @@
-// Prepare (POST) a Roboflow Universe dataset for the browser to ingest, and
-// poll (GET) a library that was previously published to this host.
+// Start (POST) and poll (GET) the server-side ingest of a Roboflow dataset.
 //
-// Tile decode used to run in this function. It now runs in the tab: POST only
-// resolves the version and asks Roboflow for an export link. GET remains for
-// datasets that already have a published library on disk or Blob.
+// The browser displays status and can open a partial library as soon as the
+// first snapshot is published. Search, thumbnail fetch, decode, and snapshot
+// publication run in the background job kept alive by Next's `after` API.
+
+import { after } from "next/server"
 
 import {
   MANIFEST_FILE,
@@ -14,35 +15,48 @@ import {
   parseRoboflowUrl,
   universeUrl,
   type IngestStatus,
-  type PreparedExport,
   type RoboflowDataset,
 } from "@/lib/roboflow"
-import { exportFormats, fetchExportLink, RoboflowApiError } from "@/lib/roboflow-api"
-import { IngestError, hasIconFile, isIngested, resolveDataset } from "@/lib/roboflow-ingest"
+import { RoboflowApiError } from "@/lib/roboflow-api"
 import {
+  IngestError,
+  VERCEL_INGEST_DEADLINE_MS,
+  hasIconFile,
+  ingestDataset,
+  isIngested,
+  resolveDataset,
+} from "@/lib/roboflow-ingest"
+import {
+  acquireIngestLease,
   consumeGlobalIngestRateLimit,
   consumeIngestRateLimit,
   ingestLeaseHeld,
+  releaseIngestLease,
+  type IngestLease,
 } from "@/lib/roboflow-control"
 import {
   blobEnabled,
   readBlobStatus,
   readBlobText,
+  writeBlobStatus,
 } from "@/lib/roboflow-blob"
-import { exportProxyUrl, isAllowedProxyUrl } from "@/lib/roboflow-proxy"
 import {
   IS_VERCEL,
   datasetDir,
   isRunning,
+  progressWriter,
   readStatus,
+  releaseJobReservation,
+  reserveJob,
+  trackJob,
+  writeStatus,
 } from "@/lib/roboflow-store"
 import { readFile } from "node:fs/promises"
 import path from "node:path"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
-// Waiting on Roboflow to generate an export can take a couple of minutes.
-export const maxDuration = 120
+export const maxDuration = 300
 
 // How long a "running" status may sit untouched before it stops being believed.
 // A running ingest refreshes the durable copy every 10 seconds, so this allows
@@ -88,6 +102,11 @@ function isSameOrigin(request: Request): boolean {
   } catch {
     return false
   }
+}
+
+async function persistStatus(status: IngestStatus): Promise<void> {
+  await writeStatus(status)
+  if (blobEnabled()) await writeBlobStatus(status.slug, status)
 }
 
 // The freshest record of this ingest, then a reconstructed one from a published
@@ -183,6 +202,9 @@ export async function GET(request: Request): Promise<Response> {
 }
 
 export async function POST(request: Request): Promise<Response> {
+  const deadline = IS_VERCEL
+    ? Date.now() + VERCEL_INGEST_DEADLINE_MS
+    : undefined
   let body: { url?: string; refresh?: boolean }
   try {
     body = (await request.json()) as { url?: string; refresh?: boolean }
@@ -190,10 +212,22 @@ export async function POST(request: Request): Promise<Response> {
     return json({ error: "Expected a JSON body with a `url`." }, 400)
   }
 
+  if (IS_VERCEL && !blobEnabled()) {
+    return json(
+      {
+        error:
+          "Dataset storage is not configured. Connect a Vercel Blob store and redeploy.",
+      },
+      503
+    )
+  }
   if (IS_VERCEL && !isSameOrigin(request)) {
     return json({ error: "Cross-origin ingest requests are not allowed." }, 403)
   }
 
+  let reservedSlug: string | null = null
+  let distributedLease: IngestLease | null = null
+  let started: IngestStatus
   try {
     const ref = parseRoboflowUrl(body.url ?? "")
 
@@ -207,7 +241,7 @@ export async function POST(request: Request): Promise<Response> {
       }
     }
 
-    if (IS_VERCEL && blobEnabled()) {
+    if (IS_VERCEL) {
       const rate = await consumeIngestRateLimit(clientAddress(request))
       if (!rate.allowed) {
         return json(
@@ -239,46 +273,99 @@ export async function POST(request: Request): Promise<Response> {
     const resolved = await resolveDataset(ref)
     const slug = datasetSlug(resolved.ref)
 
+    if (isRunning(slug)) {
+      const current = await loadStatus(slug)
+      return json(
+        current ?? {
+          slug,
+          state: "running",
+          step: "Working",
+          done: 0,
+          total: 0,
+          updatedAt: new Date().toISOString(),
+        },
+        202
+      )
+    }
     if (!body.refresh && (await isIngested(slug))) {
       const cached = await loadStatus(slug)
       if (cached?.state === "ready") return json(cached)
     }
 
-    const { link } = await fetchExportLink(
-      resolved.ref,
-      exportFormats(resolved.type),
-      () => undefined
-    )
+    if (!reserveJob(slug)) {
+      return json(
+        {
+          error:
+            "Another dataset is already being prepared on this server. Try again shortly.",
+        },
+        429
+      )
+    }
+    reservedSlug = slug
 
-    const iconUrl =
-      resolved.iconUrl && isAllowedProxyUrl(resolved.iconUrl)
-        ? exportProxyUrl(resolved.iconUrl)
-        : undefined
-
-    const dataset: RoboflowDataset = {
-      ...resolved.ref,
-      slug,
-      name: resolved.name,
-      type: resolved.type,
-      imageCount: 0,
-      sourceImages: resolved.images || undefined,
-      universeUrl: universeUrl(resolved.ref),
-      hasIcon: Boolean(iconUrl),
+    if (IS_VERCEL) {
+      distributedLease = await acquireIngestLease(slug)
+      if (!distributedLease) {
+        releaseJobReservation(slug)
+        reservedSlug = null
+        const current = await loadStatus(slug)
+        return json(
+          current ?? {
+            slug,
+            state: "running",
+            step: "Starting on another server",
+            done: 0,
+            total: 0,
+            updatedAt: new Date().toISOString(),
+          },
+          202
+        )
+      }
     }
 
-    const prepared: PreparedExport & IngestStatus = {
+    started = {
       slug,
-      state: "prepared",
-      step: "Preparing export",
+      state: "running",
+      step: "Starting",
       done: 0,
       total: 0,
       updatedAt: new Date().toISOString(),
-      exportUrl: exportProxyUrl(link),
-      iconUrl,
-      dataset,
     }
-    return json(prepared)
+    await persistStatus(started)
+
+    const { report, snapshot, finish } = progressWriter(slug, {
+      durable: blobEnabled()
+        ? (status) => writeBlobStatus(status.slug, status)
+        : undefined,
+    })
+    const lease = distributedLease
+    distributedLease = null
+    const job = ingestDataset(resolved.ref, report, {
+      resolved,
+      deadline,
+      onSnapshot: (dataset) => snapshot(dataset),
+    })
+      .then(async (dataset) => {
+        await finish("ready", { dataset })
+      })
+      .catch(async (error: unknown) => {
+        await finish("error", { error: errorMessage(error) })
+      })
+      .finally(async () => {
+        if (lease) await releaseIngestLease(lease).catch(() => undefined)
+      })
+    trackJob(slug, job)
+    reservedSlug = null
+    after(async () => {
+      await job
+    })
   } catch (error) {
+    if (reservedSlug) releaseJobReservation(reservedSlug)
+    if (distributedLease) {
+      await releaseIngestLease(distributedLease).catch(() => undefined)
+    }
     return json({ error: errorMessage(error) }, 400)
   }
+
+  return json(started, 202)
 }

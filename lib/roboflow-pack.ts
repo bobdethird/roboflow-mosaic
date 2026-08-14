@@ -280,6 +280,7 @@ type LivePack = {
   refs: number
   listeners: Set<(progress: PackProgress) => void>
   controller: AbortController
+  version: string | null
 }
 
 const live = new Map<string, LivePack>()
@@ -312,7 +313,9 @@ export function acquirePack(
   }
 
   const { onProgress, ...rest } = options
-  let entry = live.get(slug)
+  const version = rest.expectedVersion ?? null
+  const key = version ? `${slug}::${version}` : slug
+  let entry = live.get(key)
 
   if (entry) {
     entry.refs += 1
@@ -326,6 +329,7 @@ export function acquirePack(
       listeners,
       refs: 1,
       controller,
+      version,
       promise: loadPack(slug, {
         ...rest,
         signal,
@@ -334,10 +338,10 @@ export function acquirePack(
         },
       }),
     }
-    live.set(slug, created)
+    live.set(key, created)
     // A failed load must not stay cached, or every later caller gets the error.
     void created.promise.catch(() => {
-      if (live.get(slug) === created) live.delete(slug)
+      if (live.get(key) === created) live.delete(key)
     })
     entry = created
   }
@@ -354,11 +358,12 @@ export function acquirePack(
 }
 
 export function releasePack(slug: string): void {
-  const entry = live.get(slug)
-  if (!entry) return
-  entry.refs -= 1
-  if (entry.refs > 0) return
-  live.delete(slug)
-  // Stop a download nobody can use. If it already finished, abort is a no-op.
-  entry.controller.abort(new DOMException("Pack released", "AbortError"))
+  for (const [key, entry] of live) {
+    if (key !== slug && !key.startsWith(`${slug}::`)) continue
+    entry.refs -= 1
+    if (entry.refs > 0) continue
+    live.delete(key)
+    // Stop a download nobody can use. If it already finished, abort is a no-op.
+    entry.controller.abort(new DOMException("Pack released", "AbortError"))
+  }
 }

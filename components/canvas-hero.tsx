@@ -604,6 +604,11 @@ type CanvasHeroProps = {
   hideIntroCopy?: boolean
   // Hide the small current-collection label above the controls.
   hideCollectionLabel?: boolean
+  // Growing ingest snapshots. When this changes the worker is appended to,
+  // without remounting the engine or discarding a generated mosaic.
+  libraryRevision?: string | null
+  // Photo count of the advertised snapshot, used to size pack download guards.
+  expectedPhotoCount?: number | null
 }
 
 export function CanvasHero({
@@ -614,6 +619,8 @@ export function CanvasHero({
   minCellSize = DENSITY_MIN,
   hideIntroCopy = false,
   hideCollectionLabel = false,
+  libraryRevision = null,
+  expectedPhotoCount = null,
 }: CanvasHeroProps) {
   const densityMin = clampDensity(minCellSize, 1, DENSITY_MAX)
   const [reference, setReference] = React.useState<ReferenceImage | null>(null)
@@ -710,57 +717,94 @@ export function CanvasHero({
   const generateTokenRef = React.useRef(0)
 
   // Spin up the mosaic worker once on mount and hydrate it with the tile library
-  // (signatures + thumbnail URLs). The worker owns matching and base-canvas
-  // rendering off the main thread, fetching thumbnails lazily for placed tiles.
+  // (signatures + thumbnail URLs). Later snapshots append rather than replacing
+  // the store, so a generated mosaic stays put while more tiles arrive.
+  const applyLibraryRef = React.useRef<
+    (version?: string | null, photoCount?: number | null) => void
+  >(() => {})
   React.useEffect(() => {
     let cancelled = false
     let release: (() => void) | null = null
     const controller = new AbortController()
     const engine = new MosaicEngine()
     engineRef.current = engine
-    void (async () => {
-      try {
-        const library = await collection.loadLibrary({
-          onProgress: (progress) => {
-            if (!cancelled) setLibraryProgress(progress)
-          },
-          signal: controller.signal,
-        })
-        // The cleanup below has already run if we were cancelled while the
-        // download was in flight, so let go of the pack here instead.
-        if (cancelled) {
-          library.release()
-          return
+    const known = new Set<string>()
+    let chain = Promise.resolve()
+
+    const apply = (version?: string | null, photoCount?: number | null) => {
+      chain = chain.then(async () => {
+        if (cancelled) return
+        try {
+          const library = await collection.loadLibrary({
+            expectedVersion: version ?? libraryRevision ?? null,
+            expectedPhotoCount: photoCount ?? expectedPhotoCount,
+            onProgress: (progress) => {
+              if (!cancelled) setLibraryProgress(progress)
+            },
+            signal: controller.signal,
+          })
+          if (cancelled) {
+            library.release()
+            return
+          }
+          release = library.release
+          const added = library.items.filter((item) => !known.has(item.id))
+          for (const item of added) known.add(item.id)
+          if (!added.length) {
+            libraryVersionRef.current = library.version
+            return
+          }
+          engine.hydrate(added, { append: known.size > added.length })
+          libraryVersionRef.current = library.version
+          tileIdsRef.current = [...known]
+          setLibraryById((current) => {
+            const next = new Map(current)
+            for (const item of added) next.set(item.id, item)
+            return next
+          })
+          setTileCount(known.size)
+        } catch (loadError) {
+          if (!cancelled) {
+            setLibraryError(
+              loadError instanceof Error
+                ? loadError.message
+                : "Could not load this dataset."
+            )
+          }
+        } finally {
+          if (!cancelled) setLibraryProgress(null)
         }
-        release = library.release
-        if (library.items.length === 0) return
-        libraryVersionRef.current = library.version
-        engine.hydrate(library.items)
-        tileIdsRef.current = library.items.map((it) => it.id)
-        setLibraryById(new Map(library.items.map((it) => [it.id, it])))
-        setTileCount(library.items.length)
-      } catch (loadError) {
-        if (!cancelled) {
-          setLibraryError(
-            loadError instanceof Error
-              ? loadError.message
-              : "Could not load this dataset."
-          )
-        }
-      } finally {
-        if (!cancelled) setLibraryProgress(null)
-      }
-    })()
+      })
+      return chain
+    }
+
+    applyLibraryRef.current = (version, photoCount) => {
+      if (cancelled) return
+      if (version && version === libraryVersionRef.current) return
+      void apply(version, photoCount)
+    }
+
+    void apply(libraryRevision)
     return () => {
       cancelled = true
       controller.abort()
       engine.terminate()
       engineRef.current = null
+      applyLibraryRef.current = () => {}
       // Frees the tiles' object urls; nothing on screen may reference them
       // after this, which is why it runs with the engine teardown.
       release?.()
     }
+    // libraryRevision is applied by the effect below so a growing ingest
+    // appends tiles instead of remounting the worker.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- see above
   }, [collection, maxTileReuse])
+
+  React.useEffect(() => {
+    if (libraryRevision) {
+      applyLibraryRef.current(libraryRevision, expectedPhotoCount)
+    }
+  }, [libraryRevision, expectedPhotoCount])
 
   React.useEffect(() => {
     let cancelled = false

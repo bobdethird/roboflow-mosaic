@@ -17,7 +17,6 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Progress } from "@/components/ui/progress"
 import { Spinner } from "@/components/ui/spinner"
-import { ingestExportInBrowser } from "@/lib/roboflow-client-ingest"
 import { roboflowSource } from "@/lib/mosaic-source"
 import {
   ROBOFLOW_INGEST_PATH,
@@ -34,24 +33,20 @@ const MIN_CELL_SIZE = 8
 const EXAMPLE_URL =
   "https://universe.roboflow.com/joseph-nelson/chess-pieces-new"
 
-// An ingest walks a fixed sequence of stages, and only the long one — building
+const DatasetContext = React.createContext<RoboflowDataset | null>(null)
+
+// An ingest walks a fixed sequence of stages, and only the long one — seeding
 // tiles — reports counts. Giving every stage its own share of the bar turns
 // that into one percentage for the whole load, instead of a number that exists
 // for a single stage and restarts at the next. Weights are rough durations and
 // sum to 100, but an uncounted stage only parks at its own start, so the bar
 // fills all the way just for a dataset that reports itself ready.
-// Matched by prefix: the export-wait step carries Roboflow's own percentage in
-// its label, and each ingest path (browser, server) reports only a subset.
 const INGEST_STAGES: { step: string; weight: number }[] = [
   { step: "resolving dataset", weight: 4 },
-  { step: "requesting export", weight: 6 },
-  { step: "roboflow is generating", weight: 9 },
-  { step: "downloading export", weight: 8 },
-  { step: "reading export index", weight: 8 },
-  { step: "building tiles", weight: 57 },
+  { step: "searching images", weight: 10 },
   { step: "fetching project cover image", weight: 3 },
-  { step: "writing library", weight: 3 },
-  { step: "publishing library", weight: 2 },
+  { step: "seeding tiles", weight: 75 },
+  { step: "publishing library", weight: 8 },
 ]
 
 // Null is "nothing to say": an unrecognized stage with no counts, which leaves
@@ -84,11 +79,18 @@ async function startIngest(url: string): Promise<IngestStatus> {
   return body
 }
 
+type PollResult = {
+  dataset: RoboflowDataset
+  complete: boolean
+}
+
 async function pollIngest(
   slug: string,
   onStatus: (status: IngestStatus) => void,
-  signal: AbortSignal
-): Promise<RoboflowDataset> {
+  signal: AbortSignal,
+  options: { until?: "partial" | "complete" } = {}
+): Promise<PollResult> {
+  const until = options.until ?? "complete"
   const startedAt = Date.now()
   for (;;) {
     if (signal.aborted) throw new Error("Cancelled")
@@ -109,13 +111,18 @@ async function pollIngest(
     if (!response.ok)
       throw new Error(status.error ?? "Lost track of the ingest.")
     onStatus(status)
-    if (status.state === "error")
+    if (status.state === "error") {
+      if (status.dataset) return { dataset: status.dataset, complete: true }
       throw new Error(status.error ?? "Ingest failed.")
+    }
     if (status.state === "ready") {
       if (!status.dataset) {
         throw new Error("The ingest finished without a dataset record.")
       }
-      return status.dataset
+      return { dataset: status.dataset, complete: true }
+    }
+    if (until === "partial" && status.dataset) {
+      return { dataset: status.dataset, complete: false }
     }
     await new Promise((resolve) => setTimeout(resolve, 700))
   }
@@ -147,25 +154,29 @@ export function RoboflowMosaic() {
   }, [])
 
   // CanvasHero uses this as an effect dependency, so it has to be stable across
-  // renders — otherwise the tile library reloads on every keystroke.
+  // snapshot updates — otherwise the tile library remounts on every batch.
   const collection = React.useMemo(
     () => (dataset ? roboflowSource(dataset) : null),
-    [dataset]
+    // Snapshot updates must not remount CanvasHero; later revisions are
+    // loaded through `libraryRevision` / `loadLibrary({ expectedVersion })`.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on slug
+    [dataset?.slug]
   )
 
-  // Also memoized: CanvasHero renders this as a component, so a fresh identity
-  // each render would remount the picker and drop its state (the loaded image
-  // list, whether the grid dialog is open).
+  // Stable identity: CanvasHero renders this as a component, so a fresh
+  // function each render would remount the picker and drop its state.
   const ReferencePicker = React.useMemo(() => {
-    if (!dataset) return undefined
+    if (!dataset?.slug) return undefined
     function DatasetReferencePicker(props: {
       onSelect: (file: File) => void
       variant: "hero" | "panel"
     }) {
-      return <RoboflowReferencePicker dataset={dataset!} {...props} />
+      const current = React.useContext(DatasetContext)
+      if (!current) return null
+      return <RoboflowReferencePicker dataset={current} {...props} />
     }
     return DatasetReferencePicker
-  }, [dataset])
+  }, [dataset?.slug])
 
   const handleLoad = React.useCallback(async () => {
     // Capture the submitted value. The field intentionally remains editable
@@ -191,7 +202,7 @@ export function RoboflowMosaic() {
       report({
         slug: "",
         state: "running",
-        step: "Requesting export",
+        step: "Resolving dataset",
         done: 0,
         total: 0,
         updatedAt: new Date().toISOString(),
@@ -202,31 +213,24 @@ export function RoboflowMosaic() {
         setDataset(started.dataset)
         return
       }
-      if (started.exportUrl && started.dataset) {
-        const built = await ingestExportInBrowser(
-          {
-            dataset: started.dataset,
-            exportUrl: started.exportUrl,
-            iconUrl: started.iconUrl,
-          },
-          (stage) => {
-            if (controller.signal.aborted) return
-            report({
-              slug: started.slug,
-              state: "running",
-              step: stage.step,
-              done: stage.done,
-              total: stage.total,
-              updatedAt: new Date().toISOString(),
-            })
-          },
-          controller.signal
-        )
-        setDataset(built.dataset)
-        return
+      if (started.state === "error") {
+        throw new Error(started.error ?? "Ingest failed.")
       }
-      const resolved = await pollIngest(started.slug, report, controller.signal)
-      setDataset(resolved)
+      const first = await pollIngest(
+        started.slug,
+        report,
+        controller.signal,
+        { until: "partial" }
+      )
+      setDataset(first.dataset)
+      if (first.complete) return
+      const finished = await pollIngest(
+        started.slug,
+        report,
+        controller.signal,
+        { until: "complete" }
+      )
+      setDataset(finished.dataset)
     } catch (runError) {
       if (controller.signal.aborted) return
       setError(runError instanceof Error ? runError.message : "Ingest failed.")
@@ -236,6 +240,24 @@ export function RoboflowMosaic() {
   }, [url, report])
 
   const shownPercent = progress ? Math.round(progress.percent) : 0
+  const readyCount =
+    dataset?.imageCount ??
+    progress?.status.availableImages ??
+    progress?.status.dataset?.imageCount
+  const sourceCount =
+    dataset?.sourceImages ??
+    progress?.status.sourceImages ??
+    progress?.status.dataset?.sourceImages ??
+    progress?.status.total
+  const seedingCount =
+    progress?.status.step.toLowerCase().startsWith("seeding tiles") &&
+    progress.status.total > 0
+      ? `${progress.status.done.toLocaleString()} / ${progress.status.total.toLocaleString()} images`
+      : readyCount && sourceCount && sourceCount > readyCount
+        ? `${readyCount.toLocaleString()} of ${sourceCount.toLocaleString()} images ready`
+        : readyCount
+          ? `${readyCount.toLocaleString()} images ready`
+          : null
 
   // The URL, with the action tucked into the right end.
   const datasetBar = (
@@ -287,7 +309,9 @@ export function RoboflowMosaic() {
             aria-label="Dataset load progress"
           />
           <p className="text-center text-xs text-muted-foreground tabular-nums">
-            {progress.status.step} — {shownPercent}%
+            {progress.status.step} —{" "}
+            {seedingCount && `${seedingCount} — `}
+            {shownPercent}%
           </p>
         </div>
       )}
@@ -302,15 +326,19 @@ export function RoboflowMosaic() {
         // library, reference, cached mosaic — resets with the collection.
         // The dataset field is hosted as CanvasHero's top bar so it lives on
         // the mosaic canvas and recenters with the image when the sidebar opens.
-        <CanvasHero
-          key={collection.id}
-          collection={collection}
-          topBarSlot={datasetBar}
-          maxTileReuse={MAX_TILE_REUSE}
-          minCellSize={MIN_CELL_SIZE}
-          hideCollectionLabel
-          referencePicker={ReferencePicker}
-        />
+        <DatasetContext.Provider value={dataset}>
+          <CanvasHero
+            key={collection.id}
+            collection={collection}
+            topBarSlot={datasetBar}
+            maxTileReuse={MAX_TILE_REUSE}
+            minCellSize={MIN_CELL_SIZE}
+            hideCollectionLabel
+            referencePicker={ReferencePicker}
+            libraryRevision={dataset.libraryVersion}
+            expectedPhotoCount={dataset.imageCount}
+          />
+        </DatasetContext.Provider>
       ) : (
         // Before a dataset is loaded there is no CanvasHero to host the bar, so
         // it gets its own centered landing state.

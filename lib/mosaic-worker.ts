@@ -220,6 +220,24 @@ function coarseError(
   return sum
 }
 
+function mergePrepared(
+  existing: PreparedLibrary | null,
+  added: PreparedLibrary
+): PreparedLibrary {
+  if (!existing) return added
+  const ids = existing.ids.concat(added.ids)
+  const coarse = existing.coarse.concat(added.coarse)
+  const means = new Float32Array(ids.length * 3)
+  means.set(existing.means)
+  means.set(added.means, existing.ids.length * 3)
+  return {
+    ids,
+    coarse,
+    means,
+    meanBins: buildMeanBinIndex(means, ids.length),
+  }
+}
+
 function prepareLibrary(items: HydrateItem[]): PreparedLibrary {
   const ids = new Array<string>(items.length)
   const coarse = new Array<Float32Array>(items.length)
@@ -684,24 +702,34 @@ scope.onmessage = (e: MessageEvent<WorkerRequest>) => {
         })
       })
       break
-    case "hydrate":
+    case "hydrate": {
       // Restore library tiles into the store so they're usable immediately. The
       // expensive comparison data is derived once here; image bytes are fetched
-      // lazily when a tile is placed.
-      preparedLibrary = prepareLibrary(msg.items as HydrateItem[])
-      store.clear()
-      for (let i = 0; i < preparedLibrary.ids.length; i++) {
-        const it = msg.items[i]
+      // lazily when a tile is placed. `append` keeps already-hydrated tiles so
+      // a growing ingest can add snapshots without clearing the store.
+      const incoming = msg.items as HydrateItem[]
+      const items = msg.append
+        ? incoming.filter((item) => !store.has(item.id))
+        : incoming
+      if (!msg.append) store.clear()
+      if (!items.length) break
+      const added = prepareLibrary(items)
+      for (let i = 0; i < added.ids.length; i++) {
+        const it = items[i]
         store.set(it.id, {
-          coarse: preparedLibrary.coarse[i],
-          meanR: preparedLibrary.means[i * 3],
-          meanG: preparedLibrary.means[i * 3 + 1],
-          meanB: preparedLibrary.means[i * 3 + 2],
+          coarse: added.coarse[i],
+          meanR: added.means[i * 3],
+          meanG: added.means[i * 3 + 1],
+          meanB: added.means[i * 3 + 2],
           w: it.w,
           h: it.h,
           url: it.url,
         })
       }
+      preparedLibrary = msg.append
+        ? mergePrepared(preparedLibrary, added)
+        : added
       break
+    }
   }
 }

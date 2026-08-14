@@ -1,17 +1,8 @@
 // Random access into a zip by entry name.
 //
-// The published library archive holds every thumbnail, and a mosaic only ever
-// paints a fraction of them, so the server reads single entries out of the zip
-// instead of pulling the whole file. Read the central directory once, map each
-// name to its entry, and every later file costs one range request.
-//
-// This is the small half of the pair of readers over lib/zip-format.ts: the
-// other (lib/roboflow-zip.ts) sweeps a stride of images out of a remote export
-// and cares about windows and concurrency, while this one looks up a handful of
-// files by name and does not.
-//
-// Everything is driven through an injected `RangeReader`, so this file stays
-// free of both fetch and fs and can be exercised against a local file.
+// Read the central directory once, map each name to its entry, and every later
+// file costs one range request. Everything is driven through an injected
+// `RangeReader`, so this file stays free of both fetch and fs.
 
 import {
   EOCD_SEARCH_BYTES,

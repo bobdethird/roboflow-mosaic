@@ -1,9 +1,7 @@
 // Reading a zip without having the zip: the format parts, and nothing else.
 //
-// Two very different readers sit on top of this. One pulls a stride of images
-// out of a multi-gigabyte Roboflow export over HTTP (lib/roboflow-zip.ts); the
-// other pulls one named thumbnail out of the published library in Blob
-// (lib/roboflow-archive.ts). What they share is the awkward part of the format:
+// Readers sit on top of this when they need a named entry out of a zip without
+// holding the whole archive. What they share is the awkward part of the format:
 // the central directory lives at the end, behind a record that can be hidden
 // under a 64 KB comment, and every 32-bit field in it saturates on a large
 // archive and moves into a Zip64 record somewhere else.

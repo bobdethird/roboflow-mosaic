@@ -82,6 +82,7 @@ const status: IngestStatus = {
     name: `${workspace}/${project}`,
     imageCount: result.photoCount,
     universeUrl: universeUrl(ref),
+    libraryVersion: result.version,
   },
 }
 await writeFile(path.join(outputDir, "status.json"), JSON.stringify(status, null, 2))

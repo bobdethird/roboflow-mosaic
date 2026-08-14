@@ -265,6 +265,101 @@ test("the newer of two status records wins, whichever side it came from", () => 
   assert.equal(newerStatus(null, null), null)
 })
 
+test("hydrate can append unseen tiles without replacing the library", async () => {
+  const messages: { type: string; append?: boolean; items: { id: string }[] }[] =
+    []
+  class RecordingWorker {
+    onmessage: ((event: MessageEvent) => void) | null = null
+    onerror: ((event: ErrorEvent) => void) | null = null
+    onmessageerror: ((event: MessageEvent) => void) | null = null
+    postMessage(message: { type: string; append?: boolean; items: { id: string }[] }) {
+      messages.push(message)
+    }
+    terminate() {}
+  }
+
+  const item = (id: string) => ({
+    id,
+    sig: new Uint8Array(384),
+    w: 16,
+    h: 16,
+    url: `https://example.test/${id}.jpg`,
+  })
+  const engine = new MosaicEngine(new RecordingWorker() as unknown as Worker)
+  engine.hydrate([item("aaaaaaaaaaaaaaaa")])
+  engine.hydrate([item("bbbbbbbbbbbbbbbb")], { append: true })
+  assert.equal(messages[0]?.append, undefined)
+  assert.equal(messages[1]?.append, true)
+  assert.deepEqual(
+    messages.map((message) => message.items.map((entry) => entry.id)),
+    [["aaaaaaaaaaaaaaaa"], ["bbbbbbbbbbbbbbbb"]]
+  )
+  engine.terminate()
+})
+
+test("a running snapshot is remembered on later progress writes", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "roboflow-snapshot-test-"))
+  process.env.ROBOFLOW_CACHE_DIR = root
+  try {
+    const store = await import("../lib/roboflow-store")
+    const writer = store.progressWriter("workspace--snapshot--v1")
+    writer.report("Seeding tiles", 10, 40)
+    await writer.snapshot({
+      workspace: "workspace",
+      project: "snapshot",
+      version: 1,
+      slug: "workspace--snapshot--v1",
+      name: "Dataset",
+      imageCount: 32,
+      sourceImages: 80,
+      universeUrl: "https://universe.roboflow.com/workspace/snapshot/dataset/1",
+      libraryVersion: "2026-08-13T00:00:00.000Z",
+    })
+    writer.report("Seeding tiles", 20, 40)
+    await writer.finish("error", { error: "later failure" })
+    const status = await store.readStatus("workspace--snapshot--v1")
+    assert.equal(status?.state, "error")
+    assert.equal(status?.error, "later failure")
+    assert.equal(status?.dataset?.imageCount, 32)
+    assert.equal(status?.dataset?.libraryVersion, "2026-08-13T00:00:00.000Z")
+  } finally {
+    delete process.env.ROBOFLOW_CACHE_DIR
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("loader treats each snapshot version as its own pack", async () => {
+  const first = manifestBytes("2026-08-12T00:00:00.000Z", ["0123456789abcdef"])
+  const second = manifestBytes("2026-08-13T00:00:00.000Z", [
+    "0123456789abcdef",
+    "0123456789abcde0",
+  ])
+  const files: Record<string, Uint8Array> = {
+    "manifest.json": first,
+    "signatures-coarse.bin": new Uint8Array(384),
+  }
+  const stub = stubAssets(files)
+  try {
+    const slug = "workspace--growing--v1"
+    const pack1 = await acquirePack(slug, {
+      expectedVersion: "2026-08-12T00:00:00.000Z",
+      expectedPhotoCount: 1,
+    })
+    assert.equal(pack1.manifest.photos.length, 1)
+    files["manifest.json"] = second
+    files["signatures-coarse.bin"] = new Uint8Array(768)
+    const pack2 = await acquirePack(slug, {
+      expectedVersion: "2026-08-13T00:00:00.000Z",
+      expectedPhotoCount: 2,
+    })
+    assert.equal(pack2.manifest.photos.length, 2)
+    assert.notEqual(pack1.version, pack2.version)
+    releasePack(slug)
+  } finally {
+    stub.restore()
+  }
+})
+
 test("worker request errors reject generation instead of hanging", async () => {
   class ErrorWorker {
     onmessage: ((event: MessageEvent) => void) | null = null

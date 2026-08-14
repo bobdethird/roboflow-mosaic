@@ -29,6 +29,8 @@ export type MosaicSource = {
   loadLibrary: (options?: {
     onProgress?: (progress: PackProgress) => void
     signal?: AbortSignal
+    expectedVersion?: string | null
+    expectedPhotoCount?: number | null
   }) => Promise<LibraryLoad>
   // Current library version, for spotting a cached mosaic built from tiles that
   // no longer exist. Null when it can't be determined.
@@ -64,10 +66,11 @@ export function roboflowSource(dataset: RoboflowDataset): MosaicSource {
     },
     loadLibrary: async (options = {}) => {
       const library = await loadRoboflowLibrary(dataset.slug, {
-        expectedVersion: dataset.libraryVersion ?? null,
-        expectedPhotoCount: dataset.imageCount,
+        expectedVersion: options.expectedVersion ?? dataset.libraryVersion ?? null,
+        expectedPhotoCount: options.expectedPhotoCount ?? dataset.imageCount,
         hasIcon: dataset.hasIcon,
-        ...options,
+        onProgress: options.onProgress,
+        signal: options.signal,
       })
       pack = library.pack
       return {

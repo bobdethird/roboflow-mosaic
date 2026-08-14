@@ -1,6 +1,5 @@
-// The library archive is read with range requests rather than downloaded, so
-// these exercise the index against archives written by yazl — the same writer
-// `blobArchiveSink` uses — including the Zip64 layout a large dataset forces.
+// These exercise the zip index against archives written by yazl, including the
+// Zip64 layout a large archive forces.
 
 import assert from "node:assert/strict"
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
