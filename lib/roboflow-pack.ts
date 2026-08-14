@@ -298,6 +298,96 @@ export function registerPack(pack: RoboflowPack): void {
   localPacks.set(pack.slug, pack)
 }
 
+export type LocalTile = {
+  id: string
+  w: number
+  h: number
+  file?: string
+  signature: Uint8Array
+  thumbnail: Blob
+}
+
+export type LocalPack = RoboflowPack & {
+  readonly photoCount: number
+  readonly hasIcon: boolean
+  addTiles: (tiles: LocalTile[]) => void
+  setIcon: (icon: Blob) => void
+}
+
+// Mutable in-tab library. Tiles append in place so a growing ingest can
+// register once and keep the object URLs the mosaic is already painting.
+export function createLocalPack(slug: string): LocalPack {
+  const photos: PackManifest["photos"] = []
+  const urls = new Map<string, string>()
+  const chunks: Uint8Array[] = []
+  let signatures = new Uint8Array(0)
+  let iconUrl: string | null = null
+  let version = new Date().toISOString()
+
+  const pack: LocalPack = {
+    slug,
+    get version() {
+      return version
+    },
+    get manifest() {
+      return { version, photos }
+    },
+    get signatures() {
+      return signatures
+    },
+    get iconUrl() {
+      return iconUrl
+    },
+    get photoCount() {
+      return photos.length
+    },
+    get hasIcon() {
+      return iconUrl !== null
+    },
+    thumbUrl: (id) => urls.get(id) ?? null,
+    release: () => {
+      for (const url of urls.values()) URL.revokeObjectURL(url)
+      urls.clear()
+      if (iconUrl) {
+        URL.revokeObjectURL(iconUrl)
+        iconUrl = null
+      }
+    },
+    addTiles: (tiles) => {
+      if (!tiles.length) return
+      let added = 0
+      for (const tile of tiles) {
+        if (urls.has(tile.id)) continue
+        photos.push({
+          id: tile.id,
+          w: tile.w,
+          h: tile.h,
+          file: tile.file,
+        })
+        chunks.push(tile.signature)
+        urls.set(tile.id, URL.createObjectURL(tile.thumbnail))
+        added += 1
+      }
+      if (!added) return
+      const next = new Uint8Array(signatures.length + added * COARSE_SIG_BYTES)
+      next.set(signatures, 0)
+      let offset = signatures.length
+      for (const chunk of chunks.slice(chunks.length - added)) {
+        next.set(chunk, offset)
+        offset += chunk.length
+      }
+      signatures = next
+      version = new Date().toISOString()
+    },
+    setIcon: (icon) => {
+      if (iconUrl) URL.revokeObjectURL(iconUrl)
+      iconUrl = URL.createObjectURL(icon)
+    },
+  }
+
+  return pack
+}
+
 export function acquirePack(
   slug: string,
   options: LoadPackOptions = {}

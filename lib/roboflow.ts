@@ -138,6 +138,9 @@ export function universeUrl(ref: RoboflowRef & { version: number }): string {
 
 export const ROBOFLOW_ASSET_BASE = "/api/roboflow/asset"
 export const ROBOFLOW_INGEST_PATH = "/api/roboflow/ingest"
+export const ROBOFLOW_RESOLVE_PATH = "/api/roboflow/resolve"
+export const ROBOFLOW_IMAGES_PATH = "/api/roboflow/images"
+export const ROBOFLOW_THUMB_PATH = "/api/roboflow/thumb"
 
 export const MANIFEST_FILE = "manifest.json"
 export const COARSE_SIGNATURES_FILE = "signatures-coarse.bin"

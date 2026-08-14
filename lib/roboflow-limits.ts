@@ -4,8 +4,14 @@ export const MIB = 1024 * 1024
 // maxDuration is reached.
 export const VERCEL_INGEST_DEADLINE_MS = 270_000
 
-// Roboflow's project search page size. The documented maximum is 250.
+// Workspace search/v1 page size. The older project search maxes out at 250;
+// v1 does not document a max, so we stay on that same page size.
 export const SEARCH_PAGE_SIZE = 250
+
+// The project-scoped `/:project/search` endpoint rejects offsets at 10,000.
+// Workspace search/v1 uses a cursor and is not supposed to, but if a single
+// query still stops there we shard by split to walk the rest.
+export const SEARCH_RESULT_CAP = 10_000
 
 // How many newly seeded tiles accumulate before the next snapshot is published.
 // The first snapshot is published at MIN_PARTIAL_TILES instead.
@@ -51,3 +57,7 @@ export const ESTIMATED_THUMB_BYTES = 15_000
 // In-flight thumbnail fetches + decodes. Thumbs are ~15 KB and the work is
 // waiting on Roboflow's CDN, so this is much wider than a CPU-sized pool.
 export const SEED_CONCURRENCY = 64
+
+// Browser ingest: how many thumbnail downloads overlap. Decode fan-out follows
+// `navigator.hardwareConcurrency` in the seed worker pool.
+export const CLIENT_FETCH_CONCURRENCY = 48

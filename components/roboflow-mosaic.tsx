@@ -2,8 +2,9 @@
 
 // Paste a Roboflow Universe dataset URL; get a photo mosaic of that dataset.
 //
-// This component is only the front door: it takes the URL, drives the ingest,
-// and then hands off to CanvasHero — the same UI the rest of the site uses, with
+// This component is only the front door: it takes the URL, seeds the library
+// in the browser, and then hands off to CanvasHero — the same UI the rest of
+// the site uses, with
 // its pan/zoom viewer, hover-a-tile-to-see-its-source, density controls and
 // generated-mosaic cache. The two dataset-specific pieces are the tile source
 // (`roboflowSource`) and the reference picker (project cover, or any image out
@@ -19,12 +20,14 @@ import { Progress } from "@/components/ui/progress"
 import { Spinner } from "@/components/ui/spinner"
 import { roboflowSource } from "@/lib/mosaic-source"
 import {
-  ROBOFLOW_INGEST_PATH,
   parseRoboflowUrl,
-  readJsonBody,
   type IngestStatus,
   type RoboflowDataset,
 } from "@/lib/roboflow"
+import {
+  ingestDatasetInBrowser,
+  resolveRemoteDataset,
+} from "@/lib/roboflow-client-ingest"
 
 // A single dataset image should not be allowed to carpet the mosaic.
 const MAX_TILE_REUSE = 24
@@ -41,12 +44,12 @@ const DatasetContext = React.createContext<RoboflowDataset | null>(null)
 // for a single stage and restarts at the next. Weights are rough durations and
 // sum to 100, but an uncounted stage only parks at its own start, so the bar
 // fills all the way just for a dataset that reports itself ready.
+const API_KEY_STORAGE = "roboflow-mosaic:api-key"
+
 const INGEST_STAGES: { step: string; weight: number }[] = [
-  { step: "resolving dataset", weight: 4 },
-  { step: "searching images", weight: 10 },
-  { step: "fetching project cover image", weight: 3 },
-  { step: "seeding tiles", weight: 75 },
-  { step: "publishing library", weight: 8 },
+  { step: "resolving dataset", weight: 6 },
+  { step: "searching images", weight: 12 },
+  { step: "seeding tiles", weight: 82 },
 ]
 
 // Null is "nothing to say": an unrecognized stage with no counts, which leaves
@@ -68,64 +71,31 @@ function ingestPercent(status: IngestStatus): number | null {
     : null
 }
 
-async function startIngest(url: string): Promise<IngestStatus> {
-  const response = await fetch(ROBOFLOW_INGEST_PATH, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ url, refresh: true }),
-  })
-  const body = await readJsonBody<IngestStatus & { error?: string }>(response)
-  if (!response.ok) throw new Error(body.error ?? "Could not start the ingest.")
-  return body
-}
-
-type PollResult = {
-  dataset: RoboflowDataset
-  complete: boolean
-}
-
-async function pollIngest(
+function statusFromProgress(
   slug: string,
-  onStatus: (status: IngestStatus) => void,
-  signal: AbortSignal,
-  options: { until?: "partial" | "complete" } = {}
-): Promise<PollResult> {
-  const until = options.until ?? "complete"
-  const startedAt = Date.now()
-  for (;;) {
-    if (signal.aborted) throw new Error("Cancelled")
-    const response = await fetch(
-      `${ROBOFLOW_INGEST_PATH}?slug=${encodeURIComponent(slug)}`,
-      { signal }
-    )
-    const status = await readJsonBody<IngestStatus & { error?: string }>(
-      response
-    )
-    // A 404 is the poll landing on an instance that has not seen this job yet
-    // (status lives in /tmp). Give the durable copy a few seconds to show up
-    // rather than failing the default dataset on the first tick.
-    if (response.status === 404 && Date.now() - startedAt < 20_000) {
-      await new Promise((resolve) => setTimeout(resolve, 700))
-      continue
-    }
-    if (!response.ok)
-      throw new Error(status.error ?? "Lost track of the ingest.")
-    onStatus(status)
-    if (status.state === "error") {
-      if (status.dataset) return { dataset: status.dataset, complete: true }
-      throw new Error(status.error ?? "Ingest failed.")
-    }
-    if (status.state === "ready") {
-      if (!status.dataset) {
-        throw new Error("The ingest finished without a dataset record.")
-      }
-      return { dataset: status.dataset, complete: true }
-    }
-    if (until === "partial" && status.dataset) {
-      return { dataset: status.dataset, complete: false }
-    }
-    await new Promise((resolve) => setTimeout(resolve, 700))
+  step: string,
+  done: number,
+  total: number,
+  dataset?: RoboflowDataset
+): IngestStatus {
+  return {
+    slug,
+    state: "running",
+    step,
+    done,
+    total,
+    updatedAt: new Date().toISOString(),
+    dataset,
+    availableImages: dataset?.imageCount,
+    sourceImages: dataset?.sourceImages,
   }
+}
+
+function isAbortError(error: unknown): boolean {
+  return (
+    (error instanceof DOMException && error.name === "AbortError") ||
+    (error instanceof Error && error.name === "AbortError")
+  )
 }
 
 export function RoboflowMosaic() {
@@ -141,9 +111,17 @@ export function RoboflowMosaic() {
   } | null>(null)
   const [dataset, setDataset] = React.useState<RoboflowDataset | null>(null)
   const [error, setError] = React.useState<string | null>(null)
+  const [apiKey, setApiKey] = React.useState("")
   const abortRef = React.useRef<AbortController | null>(null)
 
-  React.useEffect(() => () => abortRef.current?.abort(), [])
+  React.useEffect(() => {
+    try {
+      setApiKey(localStorage.getItem(API_KEY_STORAGE) ?? "")
+    } catch {
+      // Private mode can block storage; the key is then session-only.
+    }
+    return () => abortRef.current?.abort()
+  }, [])
 
   const report = React.useCallback((status: IngestStatus) => {
     setProgress((current) => {
@@ -199,45 +177,52 @@ export function RoboflowMosaic() {
 
     setIngesting(true)
     try {
-      report({
-        slug: "",
-        state: "running",
-        step: "Resolving dataset",
-        done: 0,
-        total: 0,
-        updatedAt: new Date().toISOString(),
+      const key = apiKey.trim() || undefined
+      report(statusFromProgress("", "Resolving dataset", 0, 0))
+      const catalog = await resolveRemoteDataset(requestedUrl, {
+        apiKey: key,
+        signal: controller.signal,
       })
-      const started = await startIngest(requestedUrl)
-      report(started)
-      if (started.state === "ready" && started.dataset) {
-        setDataset(started.dataset)
-        return
-      }
-      if (started.state === "error") {
-        throw new Error(started.error ?? "Ingest failed.")
-      }
-      const first = await pollIngest(
-        started.slug,
-        report,
-        controller.signal,
-        { until: "partial" }
-      )
-      setDataset(first.dataset)
-      if (first.complete) return
-      const finished = await pollIngest(
-        started.slug,
-        report,
-        controller.signal,
-        { until: "complete" }
-      )
-      setDataset(finished.dataset)
+      report(statusFromProgress(catalog.slug, "Searching images", 0, 0))
+      const finished = await ingestDatasetInBrowser(catalog, {
+        apiKey: key,
+        signal: controller.signal,
+        onProgress: (next) => {
+          report(
+            statusFromProgress(catalog.slug, next.step, next.done, next.total)
+          )
+        },
+        onSnapshot: (snapshot) => {
+          setDataset(snapshot)
+          report(
+            statusFromProgress(
+              snapshot.slug,
+              "Seeding tiles",
+              snapshot.imageCount,
+              snapshot.sourceImages ?? snapshot.imageCount,
+              snapshot
+            )
+          )
+        },
+      })
+      setDataset(finished)
+      report({
+        ...statusFromProgress(
+          finished.slug,
+          "Ready",
+          finished.imageCount,
+          finished.sourceImages ?? finished.imageCount,
+          finished
+        ),
+        state: "ready",
+      })
     } catch (runError) {
-      if (controller.signal.aborted) return
+      if (controller.signal.aborted || isAbortError(runError)) return
       setError(runError instanceof Error ? runError.message : "Ingest failed.")
     } finally {
       setIngesting(false)
     }
-  }, [url, report])
+  }, [url, apiKey, report])
 
   const shownPercent = progress ? Math.round(progress.percent) : 0
   const readyCount =
@@ -303,6 +288,27 @@ export function RoboflowMosaic() {
           {ingesting ? <Spinner /> : "Load Dataset"}
         </Button>
       </div>
+      {!dataset && (
+        <Input
+          type="password"
+          value={apiKey}
+          onChange={(event) => {
+            const value = event.target.value
+            setApiKey(value)
+            try {
+              if (value.trim()) localStorage.setItem(API_KEY_STORAGE, value.trim())
+              else localStorage.removeItem(API_KEY_STORAGE)
+            } catch {
+              // Ignore quota / private-mode failures; the in-memory value still works.
+            }
+          }}
+          placeholder="Optional: your Roboflow API key"
+          autoComplete="off"
+          spellCheck={false}
+          className="h-8 w-full select-text border-border/60 bg-input/60 shadow-sm backdrop-blur"
+          aria-label="Optional Roboflow API key"
+        />
+      )}
       {ingesting && progress && (
         <div className="flex w-full min-w-0 flex-col gap-1.5">
           <Progress

@@ -36,12 +36,13 @@ import {
 } from "./roboflow"
 import {
   fetchBinary,
-  fetchProjectInfo,
   fetchThumbnail,
   RoboflowApiError,
   searchProjectImages,
   type ProjectImage,
 } from "./roboflow-api"
+import { IngestError, resolveDataset, type ResolvedDataset } from "./roboflow-resolve"
+import { packCoarseSignature, SIG_GRID } from "./roboflow-signature"
 import {
   blobEnabled,
   blobHasDataset,
@@ -71,14 +72,7 @@ import { evenSampleIndices } from "./roboflow-sample"
 
 export { planTileSample } from "./roboflow-sample"
 export { VERCEL_INGEST_DEADLINE_MS } from "./roboflow-limits"
-
-// Must match lib/mosaic.ts SIGNATURE_GRID and the worker's COARSE_GRID: the
-// browser compares tiles on 8×8×3 values stored as uint16 LE fixed-point, where
-// each stored value is the sum of a 2×2 block of the 16×16 uint8 signature
-// (the worker multiplies by 0.25 to recover the mean).
-const SIG_GRID = 16
-const COARSE_GRID = SIG_GRID >> 1
-const COARSE_VALUES = COARSE_GRID * COARSE_GRID * 3
+export { IngestError, resolveDataset, type ResolvedDataset } from "./roboflow-resolve"
 
 // Thumbnails are the only image the browser ever gets. 192px covers all of
 // them — the mosaic canvas downsamples to 128, and the hover popup shows
@@ -91,8 +85,6 @@ const ICON_MAX_EDGE = 1600
 // Local-folder ingest reads full-size files off disk, so that pool follows
 // the CPU. API seeding keeps SEED_CONCURRENCY fetches in flight across pages.
 const DECODE_CONCURRENCY = Math.max(2, availableParallelism())
-
-export class IngestError extends Error {}
 
 class IngestDeadlineError extends IngestError {}
 
@@ -171,24 +163,8 @@ export async function decodeOutputs(bytes: Buffer): Promise<{
   }
 }
 
-// Pack a 16×16×3 uint8 signature into the worker's coarse uint16 LE format.
 function coarseSignature(sig: Buffer): Buffer {
-  const out = Buffer.allocUnsafe(COARSE_VALUES * 2)
-  for (let by = 0; by < COARSE_GRID; by++) {
-    for (let bx = 0; bx < COARSE_GRID; bx++) {
-      for (let channel = 0; channel < 3; channel++) {
-        let sum = 0
-        for (let dy = 0; dy < 2; dy++) {
-          for (let dx = 0; dx < 2; dx++) {
-            sum += sig[((by * 2 + dy) * SIG_GRID + (bx * 2 + dx)) * 3 + channel]
-          }
-        }
-        // Stored as the exact 0..1020 sum; the worker scales by 0.25.
-        out.writeUInt16LE(sum, ((by * COARSE_GRID + bx) * 3 + channel) * 2)
-      }
-    }
-  }
-  return out
+  return Buffer.from(packCoarseSignature(sig))
 }
 
 // Run `task` over `items` with a bounded number in flight.
@@ -720,52 +696,6 @@ async function downloadIcon(
       .toBuffer()
   } catch {
     return null
-  }
-}
-
-export type ResolvedDataset = {
-  ref: RoboflowRef & { version: number }
-  name: string
-  type?: string
-  images: number
-  iconUrl?: string
-}
-
-export async function resolveDataset(
-  ref: RoboflowRef
-): Promise<ResolvedDataset> {
-  const info = await fetchProjectInfo(ref)
-  const version = ref.version ?? info.latestVersion
-  if (version === null) {
-    throw new IngestError(
-      `${info.name} has no generated dataset versions yet — open it on Roboflow ` +
-        "Universe and pick a version, then paste that URL."
-    )
-  }
-  if (ref.version !== null && !info.versions.includes(version)) {
-    throw new IngestError(
-      `Version ${version} does not exist. Available versions: ${info.versions.join(", ") || "none"}.`
-    )
-  }
-  // Roboflow keeps versions whose generation never produced anything; they
-  // report zero images. Reaching one means it was asked for by name, or that
-  // the project has no other kind — either way, saying so beats failing later.
-  if (info.imagesByVersion.get(version) === 0) {
-    const usable = info.versions.filter(
-      (n) => info.imagesByVersion.get(n) !== 0
-    )
-    throw new IngestError(
-      usable.length
-        ? `Version ${version} of ${info.name} contains no images. Versions with images: ${usable.join(", ")}.`
-        : `${info.name} has no version containing images yet.`
-    )
-  }
-  return {
-    ref: { ...ref, version },
-    name: info.name,
-    type: info.type,
-    images: info.imagesByVersion.get(version) ?? 0,
-    iconUrl: info.iconUrl,
   }
 }
 

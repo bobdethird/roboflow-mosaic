@@ -83,11 +83,16 @@ export function RoboflowReferencePicker({
       cancelled = true
       releasePack(slug)
     }
-  }, [slug, libraryVersion, imageCount, hasIcon])
+    // A growing in-tab ingest mutates the same pack object. Re-acquiring on
+    // every snapshot would setState the same reference and skip a render; the
+    // photo list below watches libraryVersion / imageCount instead.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on slug
+  }, [slug])
 
   const ids = React.useMemo(
     () => pack?.manifest.photos.map((photo) => photo.id) ?? null,
-    [pack]
+    // pack is mutated in place as tiles arrive; version/count force a reread.
+    [pack, libraryVersion, imageCount]
   )
 
   const chooseCover = React.useCallback(async () => {

@@ -3,11 +3,11 @@
 // + detail calls that feed the ingest.
 //
 //   GET  https://api.roboflow.com/<workspace>/<project>?api_key=…
-//   POST https://api.roboflow.com/<workspace>/<project>/search?api_key=…
+//   POST https://api.roboflow.com/<workspace>/search/v1?api_key=…
 //   GET  https://api.roboflow.com/<workspace>/<project>/images/<id>?api_key=…
 
 import type { RoboflowRef } from "./roboflow"
-import { SEARCH_PAGE_SIZE } from "./roboflow-limits"
+import { SEARCH_PAGE_SIZE, SEARCH_RESULT_CAP } from "./roboflow-limits"
 
 const API_URL = "https://api.roboflow.com"
 const REQUEST_TIMEOUT_MS = 20_000
@@ -22,14 +22,15 @@ export class RoboflowApiError extends Error {
   }
 }
 
-export function roboflowApiKey(): string {
+export function roboflowApiKey(override?: string | null): string {
   const key =
+    override?.trim() ||
     process.env.ROBOFLOW_API_KEY?.trim() ||
     process.env.NEXT_PUBLIC_ROBOFLOW_API_KEY?.trim()
   if (!key) {
     throw new RoboflowApiError(
       "ROBOFLOW_API_KEY is not set. Add it to .env.local — you can copy it from " +
-        "roboflow.com → Settings → API Keys."
+        "roboflow.com → Settings → API Keys — or paste your own key in the page."
     )
   }
   return key
@@ -209,10 +210,14 @@ function versionNumber(version: ProjectVersion): number | null {
   return tail && /^\d+$/.test(tail) ? Number(tail) : null
 }
 
-export async function fetchProjectInfo(ref: RoboflowRef): Promise<ProjectInfo> {
-  const key = roboflowApiKey()
+export async function fetchProjectInfo(
+  ref: RoboflowRef,
+  options: { apiKey?: string; signal?: AbortSignal } = {}
+): Promise<ProjectInfo> {
+  const key = roboflowApiKey(options.apiKey)
   const body = await apiRequest(
-    `${API_URL}/${encodeURIComponent(ref.workspace)}/${encodeURIComponent(ref.project)}?api_key=${encodeURIComponent(key)}`
+    `${API_URL}/${encodeURIComponent(ref.workspace)}/${encodeURIComponent(ref.project)}?api_key=${encodeURIComponent(key)}`,
+    { signal: options.signal }
   )
   const project = (body.project ?? {}) as Record<string, unknown>
   const rawVersions = Array.isArray(body.versions)
@@ -275,9 +280,10 @@ export async function searchProjectImages(
     offset?: number
     limit?: number
     signal?: AbortSignal
+    apiKey?: string
   } = {}
 ): Promise<ImageSearchPage> {
-  const key = roboflowApiKey()
+  const key = roboflowApiKey(options.apiKey)
   const offset = Math.max(0, options.offset ?? 0)
   const limit = Math.min(
     SEARCH_PAGE_SIZE,
@@ -311,6 +317,7 @@ export async function listProjectImages(
   options: {
     max?: number
     signal?: AbortSignal
+    apiKey?: string
     onPage?: (loaded: number, total: number) => void
   } = {}
 ): Promise<{ images: ProjectImage[]; total: number }> {
@@ -324,6 +331,7 @@ export async function listProjectImages(
       offset,
       limit: SEARCH_PAGE_SIZE,
       signal: options.signal,
+      apiKey: options.apiKey,
     })
     total = page.total
     for (const image of page.results) {
@@ -358,12 +366,12 @@ export type ImageDetails = {
 export async function fetchImageDetails(
   ref: RoboflowRef,
   imageId: string,
-  signal?: AbortSignal
+  options: { signal?: AbortSignal; apiKey?: string } = {}
 ): Promise<ImageDetails> {
-  const key = roboflowApiKey()
+  const key = roboflowApiKey(options.apiKey)
   const body = await apiRequest(
     `${API_URL}/${encodeURIComponent(ref.workspace)}/${encodeURIComponent(ref.project)}/images/${encodeURIComponent(imageId)}?api_key=${encodeURIComponent(key)}`,
-    { signal }
+    { signal: options.signal }
   )
   const image = (body.image ?? {}) as Record<string, unknown>
   const urls = (image.urls ?? {}) as Record<string, unknown>
@@ -391,13 +399,13 @@ export function thumbUrlFromSource(url: string): string | null {
 export async function resolveThumbUrl(
   ref: RoboflowRef,
   image: ProjectImage,
-  signal?: AbortSignal
+  options: { signal?: AbortSignal; apiKey?: string } = {}
 ): Promise<string | null> {
   if (image.url) {
     const derived = thumbUrlFromSource(image.url)
     if (derived) return derived
   }
-  const details = await fetchImageDetails(ref, image.id, signal)
+  const details = await fetchImageDetails(ref, image.id, options)
   return details.urls.thumb ?? details.urls.original ?? image.url ?? null
 }
 
@@ -420,10 +428,10 @@ function isFatalThumbError(error: unknown, signal?: AbortSignal): boolean {
 export async function fetchThumbnail(
   ref: RoboflowRef,
   image: ProjectImage,
-  options: { signal?: AbortSignal } = {}
+  options: { signal?: AbortSignal; apiKey?: string } = {}
 ): Promise<ThumbnailBatchItem> {
   try {
-    const url = await resolveThumbUrl(ref, image, options.signal)
+    const url = await resolveThumbUrl(ref, image, options)
     if (!url) return { image, bytes: null }
     return {
       image,
