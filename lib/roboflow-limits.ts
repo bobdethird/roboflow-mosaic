@@ -45,9 +45,9 @@ export const TILE_FETCH_BYTES_PER_MS = 40_000
 export const TILE_DECODE_MS = 3
 // Wall-clock cost of one thumbnail once SEED_CONCURRENCY requests overlap.
 // Used when the ingest is planning a sample against the remaining deadline.
-export const TILE_REQUEST_MS = 8
+export const TILE_REQUEST_MS = 5
 export const ESTIMATED_THUMB_BYTES = 15_000
 
 // In-flight thumbnail fetches + decodes. Thumbs are ~15 KB and the work is
 // waiting on Roboflow's CDN, so this is much wider than a CPU-sized pool.
-export const SEED_CONCURRENCY = 32
+export const SEED_CONCURRENCY = 64

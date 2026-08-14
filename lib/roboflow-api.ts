@@ -300,7 +300,7 @@ export async function searchProjectImages(
     ? body.results.map(asProjectImage).filter((image): image is ProjectImage => image !== null)
     : []
   return {
-    offset: typeof body.offset === "number" ? body.offset : offset,
+    offset,
     total: typeof body.total === "number" ? body.total : results.length,
     results,
   }
@@ -337,8 +337,10 @@ export async function listProjectImages(
     }
     options.onPage?.(images.length, total)
     if (!page.results.length) break
-    offset = page.offset + page.results.length
-    if (offset >= total) break
+    offset += page.results.length
+    if (total > 0 ? offset >= total : page.results.length < SEARCH_PAGE_SIZE) {
+      break
+    }
   }
 
   return { images, total }
@@ -415,6 +417,24 @@ function isFatalThumbError(error: unknown, signal?: AbortSignal): boolean {
   return error instanceof RoboflowApiError && /timed out/i.test(error.message)
 }
 
+export async function fetchThumbnail(
+  ref: RoboflowRef,
+  image: ProjectImage,
+  options: { signal?: AbortSignal } = {}
+): Promise<ThumbnailBatchItem> {
+  try {
+    const url = await resolveThumbUrl(ref, image, options.signal)
+    if (!url) return { image, bytes: null }
+    return {
+      image,
+      bytes: await fetchBinary(url, { signal: options.signal }),
+    }
+  } catch (error) {
+    if (isFatalThumbError(error, options.signal)) throw error
+    return { image, bytes: null }
+  }
+}
+
 // Every thumbnail on a search page, requested together. Isolated missing or
 // corrupt images come back as `bytes: null`. A cancelled or timed-out page
 // fails only when none of the page's thumbnails arrived.
@@ -426,18 +446,10 @@ export async function fetchThumbnailBatch(
   const results = await Promise.all(
     images.map(async (image) => {
       try {
-        const url = await resolveThumbUrl(ref, image, options.signal)
-        if (!url) return { image, bytes: null, fatal: null }
-        return {
-          image,
-          bytes: await fetchBinary(url, { signal: options.signal }),
-          fatal: null,
-        }
+        const item = await fetchThumbnail(ref, image, options)
+        return { ...item, fatal: null as unknown }
       } catch (error) {
-        if (isFatalThumbError(error, options.signal)) {
-          return { image, bytes: null, fatal: error }
-        }
-        return { image, bytes: null, fatal: null }
+        return { image, bytes: null, fatal: error }
       }
     })
   )

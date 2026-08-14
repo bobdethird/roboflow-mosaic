@@ -72,7 +72,7 @@ async function startIngest(url: string): Promise<IngestStatus> {
   const response = await fetch(ROBOFLOW_INGEST_PATH, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ url }),
+    body: JSON.stringify({ url, refresh: true }),
   })
   const body = await readJsonBody<IngestStatus & { error?: string }>(response)
   if (!response.ok) throw new Error(body.error ?? "Could not start the ingest.")
@@ -249,8 +249,10 @@ export function RoboflowMosaic() {
     progress?.status.sourceImages ??
     progress?.status.dataset?.sourceImages ??
     progress?.status.total
+  const step = progress?.status.step.toLowerCase() ?? ""
   const seedingCount =
-    progress?.status.step.toLowerCase().startsWith("seeding tiles") &&
+    (step.startsWith("seeding tiles") || step.startsWith("searching images")) &&
+    progress &&
     progress.status.total > 0
       ? `${progress.status.done.toLocaleString()} / ${progress.status.total.toLocaleString()} images`
       : readyCount && sourceCount && sourceCount > readyCount

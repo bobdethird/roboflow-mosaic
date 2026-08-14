@@ -1,8 +1,10 @@
 // Turns a Roboflow Universe dataset into the mosaic's tile library.
 //
 // Pipeline:
-//   1. resolve the dataset version (cache identity) and list project images
-//   2. sample up to the tile budget, then fetch each image's thumbnail
+//   1. resolve the dataset version (cache identity) and page through project
+//      search — later pages are requested while the current page's thumbnails
+//      download, so search is not stuck on the first 250
+//   2. sample up to the tile budget, then fetch each selected thumbnail
 //   3. decode each thumbnail into a stable id, 16×16 colour signature, and
 //      normalized 192px JPEG, writing the thumb as soon as it is ready
 //   4. publish immutable manifest + signature snapshots in batches so the
@@ -35,7 +37,7 @@ import {
 import {
   fetchBinary,
   fetchProjectInfo,
-  fetchThumbnailBatch,
+  fetchThumbnail,
   RoboflowApiError,
   searchProjectImages,
   type ProjectImage,
@@ -59,6 +61,7 @@ import {
   MIN_PARTIAL_TILES,
   PUBLISH_RESERVE_MS,
   SEARCH_PAGE_SIZE,
+  SEED_CONCURRENCY,
   SNAPSHOT_BATCH,
   TILE_BUDGET,
   TILE_REQUEST_MS,
@@ -86,7 +89,7 @@ const THUMB_QUALITY = 80
 // lib/mosaic-bake.ts — the engine never draws the reference bigger than this.
 const ICON_MAX_EDGE = 1600
 // Local-folder ingest reads full-size files off disk, so that pool follows
-// the CPU. API seeding fetches a search page of thumbnails together.
+// the CPU. API seeding keeps SEED_CONCURRENCY fetches in flight across pages.
 const DECODE_CONCURRENCY = Math.max(2, availableParallelism())
 
 export class IngestError extends Error {}
@@ -146,9 +149,8 @@ export async function decodeOutputs(bytes: Buffer): Promise<{
   thumbnail: Buffer
 }> {
   const image = sharp(bytes, { failOn: "none" })
-  const metadata = await image.metadata()
-
-  const [signature, thumbnail] = await Promise.all([
+  const [metadata, signature, thumbnail] = await Promise.all([
+    image.metadata(),
     signatureGrid(image.clone()).then(coarseSignature),
     image
       .clone()
@@ -213,6 +215,66 @@ export async function pooled<T>(
   )
   await Promise.all(workers)
   if (failure) throw failure
+}
+
+// Same bound as `pooled`, but items can arrive while workers are already
+// running, so a later search page does not wait for the current one to drain.
+function livePool<T>(
+  limit: number,
+  task: (item: T) => Promise<void>
+): {
+  push: (item: T) => void
+  end: () => Promise<void>
+} {
+  const queue: T[] = []
+  const waiters: Array<() => void> = []
+  let ended = false
+  let failure: unknown = null
+
+  const notify = () => {
+    while (waiters.length) waiters.pop()?.()
+  }
+
+  const take = async (): Promise<T | undefined> => {
+    for (;;) {
+      if (failure) return undefined
+      const item = queue.shift()
+      if (item) return item
+      if (ended) return undefined
+      await new Promise<void>((resolve) => {
+        waiters.push(resolve)
+      })
+    }
+  }
+
+  const workers = Array.from({ length: Math.max(1, limit) }, async () => {
+    for (;;) {
+      const item = await take()
+      if (!item) return
+      try {
+        await task(item)
+      } catch (error) {
+        failure ??= error
+        ended = true
+        notify()
+        return
+      }
+    }
+  })
+
+  return {
+    push(item) {
+      if (ended || failure) return
+      queue.push(item)
+      notify()
+    },
+    async end() {
+      ended = true
+      notify()
+      await Promise.all(workers)
+      if (failure) throw failure
+    },
+  }
 }
 
 export type ManifestPhoto = { id: string; w: number; h: number; file: string }
@@ -439,24 +501,21 @@ export async function buildLibraryFromImages(
     builder.full || Boolean(readDeadline && Date.now() >= readDeadline)
 
   try {
-    for (let start = 0; start < images.length && !stop(); start += SEARCH_PAGE_SIZE) {
-      assertBeforeDeadline(readDeadline)
-      const page = images.slice(start, start + SEARCH_PAGE_SIZE)
-      const batch = await fetchThumbnailBatch(ref, page, {
+    await pooled(images, SEED_CONCURRENCY, async (image) => {
+      if (stop()) return
+      const item = await fetchThumbnail(ref, image, {
         signal: deadlineSignal(readDeadline),
       })
-      for (const item of batch) {
-        if (stop()) break
-        if (!item.bytes) {
-          builder.drop()
-          continue
-        }
-        await builder.add(item.image.name ?? item.image.id, item.bytes, {
-          id: tileIdFor(item.image.id),
-        })
+      if (stop()) return
+      if (!item.bytes) {
+        builder.drop()
+        return
       }
-      await queuePublish(false)
-    }
+      await builder.add(item.image.name ?? item.image.id, item.bytes, {
+        id: tileIdFor(item.image.id),
+      })
+      queuePublish(false)
+    })
   } catch (error) {
     if (!isDeadlineError(error) || builder.count < MIN_PARTIAL_TILES) throw error
   }
@@ -531,24 +590,53 @@ export async function buildLibraryFromSearch(
   const stop = () =>
     builder.full || Boolean(readDeadline && Date.now() >= readDeadline)
 
-  try {
-    let index = 0
-    let wanted: Set<number> | null = null
-    let pending = searchProjectImages(ref, {
-      offset: 0,
-      limit: SEARCH_PAGE_SIZE,
+  const cancelSearch = new AbortController()
+  const searchSignal = () => {
+    const deadline = deadlineSignal(readDeadline)
+    return deadline
+      ? AbortSignal.any([cancelSearch.signal, deadline])
+      : cancelSearch.signal
+  }
+
+  const seeding = livePool(SEED_CONCURRENCY, async (image: ProjectImage) => {
+    if (stop()) {
+      cancelSearch.abort()
+      return
+    }
+    const item = await fetchThumbnail(ref, image, {
       signal: deadlineSignal(readDeadline),
     })
+    if (stop()) {
+      cancelSearch.abort()
+      return
+    }
+    if (!item.bytes) {
+      builder.drop()
+      return
+    }
+    await builder.add(item.image.name ?? item.image.id, item.bytes, {
+      id: tileIdFor(item.image.id),
+    })
+    queuePublish(false)
+  })
+
+  try {
+    let index = 0
+    let offset = 0
+    let wanted: Set<number> | null = null
 
     for (;;) {
       assertBeforeDeadline(readDeadline)
       if (stop()) break
-      const page = await pending
+      const page = await searchProjectImages(ref, {
+        offset,
+        limit: SEARCH_PAGE_SIZE,
+        signal: searchSignal(),
+      })
       sourceImages = Math.max(page.total, sourceImages)
       if (!page.results.length) break
 
       if (!wanted) {
-        if (!page.total && !page.results.length) break
         const total = Math.max(page.total, page.results.length)
         const affordable =
           readDeadline !== undefined
@@ -560,49 +648,33 @@ export async function buildLibraryFromSearch(
         const take = Math.min(budget, MAX_INDEXED_IMAGES, total, affordable)
         wanted = evenSampleIndices(total, take)
         builder.setTotal(wanted.size)
-        report("Seeding tiles", 0, wanted.size)
       }
 
-      const nextOffset = page.offset + page.results.length
-      const hasMore = nextOffset < Math.max(page.total, nextOffset)
-      pending = hasMore
-        ? searchProjectImages(ref, {
-            offset: nextOffset,
-            limit: SEARCH_PAGE_SIZE,
-            signal: deadlineSignal(readDeadline),
-          })
-        : Promise.resolve({
-            offset: nextOffset,
-            total: page.total,
-            results: [],
-          })
-
-      const selected: ProjectImage[] = []
       for (const image of page.results) {
-        if (wanted.has(index++)) selected.push(image)
+        if (wanted.has(index++)) seeding.push(image)
       }
-      report("Searching images", Math.min(index, page.total || index), page.total)
-
-      if (selected.length) {
-        const batch = await fetchThumbnailBatch(ref, selected, {
-          signal: deadlineSignal(readDeadline),
-        })
-        for (const item of batch) {
-          if (stop()) break
-          if (!item.bytes) {
-            builder.drop()
-            continue
-          }
-          await builder.add(item.image.name ?? item.image.id, item.bytes, {
-            id: tileIdFor(item.image.id),
-          })
-        }
-        await queuePublish(false)
+      if (builder.processed === 0) {
+        report(
+          "Searching images",
+          Math.min(index, page.total || index),
+          page.total
+        )
       }
 
-      if (!hasMore) break
+      offset += page.results.length
+      if (
+        page.total > 0
+          ? offset >= page.total
+          : page.results.length < SEARCH_PAGE_SIZE
+      ) {
+        break
+      }
     }
+
+    await seeding.end()
   } catch (error) {
+    cancelSearch.abort()
+    await seeding.end().catch(() => undefined)
     if (!isDeadlineError(error) || builder.count < MIN_PARTIAL_TILES) throw error
   }
 

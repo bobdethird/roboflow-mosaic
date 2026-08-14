@@ -369,6 +369,55 @@ test("a build turns project thumbnails into a library the browser can load", asy
   }
 })
 
+test("search keeps paging while a page of thumbnails is in flight", async () => {
+  const images = await makeImages(6)
+  const inner = stubRoboflow(images, { pageSize: 2 })
+  const searchOffsets: number[] = []
+  let sawSecondPage: () => void = () => {}
+  const secondPage = new Promise<void>((resolve) => {
+    sawSecondPage = resolve
+  })
+  let firstThumb = true
+  const wrapped = globalThis.fetch
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : String(input)
+    if (url.includes("/search")) {
+      const body = init?.body ? JSON.parse(String(init.body)) : {}
+      const offset = Number(body.offset ?? 0)
+      searchOffsets.push(offset)
+      if (offset >= 2) sawSecondPage()
+    }
+    if (url.includes("/thumb.jpg") && firstThumb) {
+      firstThumb = false
+      const winner = await Promise.race([
+        secondPage.then(() => "search" as const),
+        new Promise<"timeout">((resolve) =>
+          setTimeout(() => resolve("timeout"), 1000)
+        ),
+      ])
+      assert.equal(
+        winner,
+        "search",
+        "search should request the next page before the first thumbnail finishes"
+      )
+    }
+    return wrapped(input, init)
+  }) as typeof globalThis.fetch
+  try {
+    await withTempDir(async (dir) => {
+      const sink = await directorySink(dir)
+      const built = await buildLibraryFromSearch(projectRef, sink, silent, {
+        directory: dir,
+      })
+      assert.equal(built.photoCount, 6)
+      assert.deepEqual(searchOffsets, [0, 2, 4])
+    })
+  } finally {
+    globalThis.fetch = wrapped
+    inner.restore()
+  }
+})
+
 test("search pages seed their thumbnails as a batch", async () => {
   const images = await makeImages(6)
   const stub = stubRoboflow(images, { pageSize: 2 })
@@ -384,9 +433,7 @@ test("search pages seed their thumbnails as a batch", async () => {
       const thumbIds = stub.requested
         .map((url) => /\/owner\/([^/]+)\/thumb\.jpg/.exec(url)?.[1])
         .filter((id): id is string => Boolean(id))
-      assert.deepEqual(thumbIds.slice(0, 2).sort(), ["img-0000", "img-0001"])
-      assert.deepEqual(thumbIds.slice(2, 4).sort(), ["img-0002", "img-0003"])
-      assert.deepEqual(thumbIds.slice(4, 6).sort(), ["img-0004", "img-0005"])
+      assert.deepEqual(thumbIds.sort(), images.map((image) => image.id).sort())
     })
   } finally {
     stub.restore()
