@@ -3,7 +3,7 @@
 // allowlisted host — this is not a general-purpose proxy.
 
 import { fetchImageDetails, thumbUrlFromSource } from "@/lib/roboflow-api"
-import { errorMessage, isSameOrigin, json, readApiKeyHeader } from "@/lib/roboflow-http"
+import { errorMessage, isSameOrigin, json } from "@/lib/roboflow-http"
 import { isAllowedImageUrl } from "@/lib/roboflow-proxy"
 import { IS_VERCEL } from "@/lib/roboflow-store"
 
@@ -14,10 +14,7 @@ export const maxDuration = 15
 const SLUG_RE = /^[a-zA-Z0-9._-]+$/
 const REQUEST_TIMEOUT_MS = 20_000
 
-async function resolveRequestedUrl(
-  request: Request,
-  apiKey?: string
-): Promise<string | null> {
+async function resolveRequestedUrl(request: Request): Promise<string | null> {
   const params = new URL(request.url).searchParams
   const direct = params.get("url")?.trim()
   if (direct) return direct
@@ -29,8 +26,7 @@ async function resolveRequestedUrl(
 
   const details = await fetchImageDetails(
     { workspace, project, version: null },
-    id,
-    { apiKey }
+    id
   )
   return details.urls.thumb ?? details.urls.original ?? null
 }
@@ -40,16 +36,9 @@ export async function GET(request: Request): Promise<Response> {
     return json({ error: "Cross-origin thumbnail requests are not allowed." }, 403)
   }
 
-  let apiKey: string | undefined
-  try {
-    apiKey = readApiKeyHeader(request)
-  } catch (error) {
-    return json({ error: errorMessage(error) }, 400)
-  }
-
   let target: string | null
   try {
-    target = await resolveRequestedUrl(request, apiKey)
+    target = await resolveRequestedUrl(request)
   } catch (error) {
     return json({ error: errorMessage(error, "Could not resolve that image.") }, 400)
   }

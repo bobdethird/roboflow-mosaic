@@ -51,23 +51,15 @@ export type ClientIngestProgress = {
   total: number
 }
 
-function apiHeaders(apiKey?: string): HeadersInit {
-  const headers: Record<string, string> = { "content-type": "application/json" }
-  if (apiKey) headers["x-roboflow-api-key"] = apiKey
-  return headers
-}
-
-function thumbHeaders(apiKey?: string): HeadersInit {
-  return apiKey ? { "x-roboflow-api-key": apiKey } : {}
-}
+const JSON_HEADERS: HeadersInit = { "content-type": "application/json" }
 
 export async function resolveRemoteDataset(
   url: string,
-  options: { apiKey?: string; signal?: AbortSignal } = {}
+  options: { signal?: AbortSignal } = {}
 ): Promise<ResolvedCatalog> {
   const response = await fetch(ROBOFLOW_RESOLVE_PATH, {
     method: "POST",
-    headers: apiHeaders(options.apiKey),
+    headers: JSON_HEADERS,
     body: JSON.stringify({ url }),
     signal: options.signal,
   })
@@ -79,11 +71,11 @@ export async function resolveRemoteDataset(
 async function fetchImagePage(
   ref: Pick<ResolvedCatalog, "workspace" | "project">,
   offset: number,
-  options: { apiKey?: string; signal?: AbortSignal } = {}
+  options: { signal?: AbortSignal } = {}
 ): Promise<{ offset: number; total: number; results: CatalogImage[] }> {
   const response = await fetch(ROBOFLOW_IMAGES_PATH, {
     method: "POST",
-    headers: apiHeaders(options.apiKey),
+    headers: JSON_HEADERS,
     body: JSON.stringify({
       workspace: ref.workspace,
       project: ref.project,
@@ -106,7 +98,6 @@ async function fetchThumbBytes(
   image: CatalogImage,
   ref: Pick<ResolvedCatalog, "workspace" | "project">,
   options: {
-    apiKey?: string
     signal?: AbortSignal
     preferProxy: { value: boolean }
   }
@@ -133,7 +124,6 @@ async function fetchThumbBytes(
   }
   const response = await fetch(`${ROBOFLOW_THUMB_PATH}?${params}`, {
     signal: options.signal,
-    headers: thumbHeaders(options.apiKey),
   })
   if (!response.ok) return null
   return response.arrayBuffer()
@@ -332,7 +322,6 @@ function datasetFromPack(
 export async function ingestDatasetInBrowser(
   catalog: ResolvedCatalog,
   options: {
-    apiKey?: string
     signal?: AbortSignal
     budget?: number
     onProgress: (progress: ClientIngestProgress) => void
@@ -368,7 +357,7 @@ export async function ingestDatasetInBrowser(
     ? fetchThumbBytes(
         { id: "icon", thumbUrl: catalog.iconUrl },
         catalog,
-        { apiKey: options.apiKey, signal: options.signal, preferProxy }
+        { signal: options.signal, preferProxy }
       )
         .then(async (bytes) => {
           if (!bytes || options.signal?.aborted) return
@@ -387,7 +376,6 @@ export async function ingestDatasetInBrowser(
     options.signal?.throwIfAborted()
     if (pack.photoCount >= budget) return
     const bytes = await fetchThumbBytes(image, catalog, {
-      apiKey: options.apiKey,
       signal: options.signal,
       preferProxy,
     })
@@ -428,7 +416,6 @@ export async function ingestDatasetInBrowser(
       options.signal?.throwIfAborted()
       if (pack.photoCount >= budget) break
       const page = await fetchImagePage(catalog, offset, {
-        apiKey: options.apiKey,
         signal: options.signal,
       })
       sourceImages = Math.max(page.total, sourceImages)

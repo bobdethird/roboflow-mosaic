@@ -12,7 +12,6 @@ import {
   errorMessage,
   isSameOrigin,
   json,
-  readApiKeyHeader,
 } from "@/lib/roboflow-http"
 import { IngestError, resolveDataset, resolvedRecord } from "@/lib/roboflow-resolve"
 import { IS_VERCEL } from "@/lib/roboflow-store"
@@ -33,17 +32,10 @@ export async function POST(request: Request): Promise<Response> {
     return json({ error: "Expected a JSON body with a `url`." }, 400)
   }
 
-  let apiKey: string | undefined
-  try {
-    apiKey = readApiKeyHeader(request)
-  } catch (error) {
-    return json({ error: errorMessage(error) }, 400)
-  }
-
   try {
     const ref = parseRoboflowUrl(body.url ?? "")
 
-    if (IS_VERCEL && !apiKey) {
+    if (IS_VERCEL) {
       const rate = await consumeResolveRateLimit(clientAddress(request))
       if (!rate.allowed) {
         return json(
@@ -57,7 +49,7 @@ export async function POST(request: Request): Promise<Response> {
       }
     }
 
-    const resolved = await resolveDataset(ref, { apiKey })
+    const resolved = await resolveDataset(ref)
     return json(resolvedRecord(resolved))
   } catch (error) {
     const status =

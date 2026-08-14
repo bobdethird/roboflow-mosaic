@@ -21,9 +21,7 @@ pnpm dev
 ```
 
 The API key is free: roboflow.com → Settings → API Keys. Public Universe
-datasets still need one. On the page you can also paste your own key; that is
-sent only to this app's resolve/search/thumb routes and is never stored on the
-server.
+datasets still need one.
 
 The mosaic is built from the **project's source images**, not from a generated
 version export. A version in the URL is only cache identity and metadata;
@@ -31,10 +29,9 @@ augmentations and generated splits are not included.
 
 ### Deploying to Vercel
 
-Set `ROBOFLOW_API_KEY` on the project (or have visitors paste their own key on
-the page). Seeding no longer runs on the serverless CPU: Vercel only resolves
-the dataset and pages image metadata. The visitor's browser downloads the
-thumbnails and builds the tile library locally.
+Set `ROBOFLOW_API_KEY` on the project. Seeding no longer runs on the serverless
+CPU: Vercel only resolves the dataset and pages image metadata. The visitor's
+browser downloads the thumbnails and builds the tile library locally.
 
 An optional `BLOB_READ_WRITE_TOKEN` is still used by the older server ingest
 and the asset route, but it is not required for the page to load a dataset.

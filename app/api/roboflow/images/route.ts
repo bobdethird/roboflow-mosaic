@@ -7,7 +7,7 @@ import {
   thumbUrlFromSource,
   type ProjectImage,
 } from "@/lib/roboflow-api"
-import { errorMessage, isSameOrigin, json, readApiKeyHeader } from "@/lib/roboflow-http"
+import { errorMessage, isSameOrigin, json } from "@/lib/roboflow-http"
 import { IS_VERCEL } from "@/lib/roboflow-store"
 
 export const runtime = "nodejs"
@@ -51,13 +51,6 @@ export async function POST(request: Request): Promise<Response> {
     return json({ error: "Missing or malformed workspace or project." }, 400)
   }
 
-  let apiKey: string | undefined
-  try {
-    apiKey = readApiKeyHeader(request)
-  } catch (error) {
-    return json({ error: errorMessage(error) }, 400)
-  }
-
   const offset = Math.max(0, Number(body.offset) || 0)
   const limit = Math.min(
     SEARCH_PAGE_SIZE,
@@ -67,7 +60,7 @@ export async function POST(request: Request): Promise<Response> {
   try {
     const page = await searchProjectImages(
       { workspace, project, version: null },
-      { offset, limit, apiKey }
+      { offset, limit }
     )
     return json({
       offset: page.offset,

@@ -4,8 +4,6 @@ import { RoboflowUrlError } from "./roboflow"
 import { RoboflowApiError } from "./roboflow-api"
 import { IngestError } from "./roboflow-resolve"
 
-const API_KEY_RE = /^[A-Za-z0-9._-]{8,256}$/
-
 export function json(
   body: unknown,
   status = 200,
@@ -33,15 +31,6 @@ export function isSameOrigin(request: Request): boolean {
   } catch {
     return false
   }
-}
-
-export function readApiKeyHeader(request: Request): string | undefined {
-  const raw = request.headers.get("x-roboflow-api-key")?.trim()
-  if (!raw) return undefined
-  if (!API_KEY_RE.test(raw)) {
-    throw new IngestError("That API key does not look like a Roboflow key.")
-  }
-  return raw
 }
 
 export function errorMessage(error: unknown, fallback = "Request failed."): string {

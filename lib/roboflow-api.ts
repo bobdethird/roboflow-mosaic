@@ -30,7 +30,7 @@ export function roboflowApiKey(override?: string | null): string {
   if (!key) {
     throw new RoboflowApiError(
       "ROBOFLOW_API_KEY is not set. Add it to .env.local — you can copy it from " +
-        "roboflow.com → Settings → API Keys — or paste your own key in the page."
+        "roboflow.com → Settings → API Keys."
     )
   }
   return key

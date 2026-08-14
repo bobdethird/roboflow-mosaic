@@ -28,6 +28,7 @@ import {
   ingestDatasetInBrowser,
   resolveRemoteDataset,
 } from "@/lib/roboflow-client-ingest"
+import { SEARCH_RESULT_CAP } from "@/lib/roboflow-limits"
 
 // A single dataset image should not be allowed to carpet the mosaic.
 const MAX_TILE_REUSE = 24
@@ -44,31 +45,35 @@ const DatasetContext = React.createContext<RoboflowDataset | null>(null)
 // for a single stage and restarts at the next. Weights are rough durations and
 // sum to 100, but an uncounted stage only parks at its own start, so the bar
 // fills all the way just for a dataset that reports itself ready.
-const API_KEY_STORAGE = "roboflow-mosaic:api-key"
-
 const INGEST_STAGES: { step: string; weight: number }[] = [
   { step: "resolving dataset", weight: 6 },
   { step: "searching images", weight: 12 },
   { step: "seeding tiles", weight: 82 },
 ]
 
+// Search rejects offsets at SEARCH_RESULT_CAP. Progress copy and the bar use
+// this so a large dataset does not advertise a 20k total the API cannot reach.
+// Sampling is unchanged — this is display only.
+function searchDisplayLimit(available: number): number {
+  if (available <= 0) return 0
+  return Math.min(available, SEARCH_RESULT_CAP)
+}
+
 // Null is "nothing to say": an unrecognized stage with no counts, which leaves
 // the bar wherever it already stood.
 function ingestPercent(status: IngestStatus): number | null {
   if (status.state === "ready") return 100
   const step = status.step.toLowerCase()
+  const total = searchDisplayLimit(status.total)
   let start = 0
   for (const stage of INGEST_STAGES) {
     if (step.startsWith(stage.step)) {
-      const fraction =
-        status.total > 0 ? Math.min(1, status.done / status.total) : 0
+      const fraction = total > 0 ? Math.min(1, status.done / total) : 0
       return start + stage.weight * fraction
     }
     start += stage.weight
   }
-  return status.total > 0
-    ? Math.min(100, (status.done / status.total) * 100)
-    : null
+  return total > 0 ? Math.min(100, (status.done / total) * 100) : null
 }
 
 function statusFromProgress(
@@ -111,16 +116,10 @@ export function RoboflowMosaic() {
   } | null>(null)
   const [dataset, setDataset] = React.useState<RoboflowDataset | null>(null)
   const [error, setError] = React.useState<string | null>(null)
-  const [apiKey, setApiKey] = React.useState("")
   const abortRef = React.useRef<AbortController | null>(null)
   const inFlightUrlRef = React.useRef<string | null>(null)
 
   React.useEffect(() => {
-    try {
-      setApiKey(localStorage.getItem(API_KEY_STORAGE) ?? "")
-    } catch {
-      // Private mode can block storage; the key is then session-only.
-    }
     return () => abortRef.current?.abort()
   }, [])
 
@@ -179,15 +178,12 @@ export function RoboflowMosaic() {
     setProgress(null)
     setIngesting(true)
     try {
-      const key = apiKey.trim() || undefined
       report(statusFromProgress("", "Resolving dataset", 0, 0))
       const catalog = await resolveRemoteDataset(requestedUrl, {
-        apiKey: key,
         signal: controller.signal,
       })
       report(statusFromProgress(catalog.slug, "Searching images", 0, 0))
       const finished = await ingestDatasetInBrowser(catalog, {
-        apiKey: key,
         signal: controller.signal,
         onProgress: (next) => {
           report(
@@ -227,7 +223,7 @@ export function RoboflowMosaic() {
         setIngesting(false)
       }
     }
-  }, [url, apiKey, report])
+  }, [url, report])
 
   const shownPercent = progress ? Math.round(progress.percent) : 0
   const readyCount =
@@ -240,13 +236,15 @@ export function RoboflowMosaic() {
     progress?.status.dataset?.sourceImages ??
     progress?.status.total
   const step = progress?.status.step.toLowerCase() ?? ""
+  const tilingTotal = progress ? searchDisplayLimit(progress.status.total) : 0
+  const displaySource = searchDisplayLimit(sourceCount ?? 0)
   const seedingCount =
     (step.startsWith("seeding tiles") || step.startsWith("searching images")) &&
     progress &&
-    progress.status.total > 0
-      ? `${progress.status.done.toLocaleString()} / ${progress.status.total.toLocaleString()} images`
-      : readyCount && sourceCount && sourceCount > readyCount
-        ? `${readyCount.toLocaleString()} of ${sourceCount.toLocaleString()} images ready`
+    tilingTotal > 0
+      ? `${Math.min(progress.status.done, tilingTotal).toLocaleString()} / ${tilingTotal.toLocaleString()} images`
+      : ingesting && readyCount && displaySource && displaySource > readyCount
+        ? `${readyCount.toLocaleString()} of ${displaySource.toLocaleString()} images ready`
         : readyCount
           ? `${readyCount.toLocaleString()} images ready`
           : null
@@ -293,52 +291,38 @@ export function RoboflowMosaic() {
           {ingesting ? <Spinner /> : "Load Dataset"}
         </Button>
       </div>
-      {!dataset && (
-        <Input
-          type="password"
-          value={apiKey}
-          onChange={(event) => {
-            const value = event.target.value
-            setApiKey(value)
-            try {
-              if (value.trim()) localStorage.setItem(API_KEY_STORAGE, value.trim())
-              else localStorage.removeItem(API_KEY_STORAGE)
-            } catch {
-              // Ignore quota / private-mode failures; the in-memory value still works.
-            }
-          }}
-          placeholder="Optional: your Roboflow API key"
-          autoComplete="off"
-          spellCheck={false}
-          className="h-8 w-full select-text border-border/60 bg-input/60 shadow-sm backdrop-blur"
-          aria-label="Optional Roboflow API key"
-        />
-      )}
-      {ingesting && progress && (
-        <div className="flex w-full min-w-0 flex-col gap-1.5">
+      {error && <p className="text-xs text-destructive">{error}</p>}
+    </div>
+  )
+
+  const tilingProgress = (
+    <div className="flex w-full min-w-0 flex-col items-center gap-3">
+      <Spinner />
+      {progress && (
+        <>
           <Progress
             value={shownPercent}
             className="h-1"
             aria-label="Dataset load progress"
           />
           <p className="text-center text-xs text-muted-foreground tabular-nums">
-            {progress.status.step} —{" "}
-            {seedingCount && `${seedingCount} — `}
+            {progress.status.step} — {seedingCount && `${seedingCount} — `}
             {shownPercent}%
           </p>
-        </div>
+        </>
       )}
-      {error && <p className="text-xs text-destructive">{error}</p>}
     </div>
   )
 
   return (
     <div className="relative flex min-h-svh flex-col">
-      {collection && dataset ? (
+      {collection && dataset && !ingesting ? (
         // Remounted per dataset so every piece of CanvasHero's state —
         // library, reference, cached mosaic — resets with the collection.
-        // The dataset field is hosted as CanvasHero's top bar so it lives on
-        // the mosaic canvas and recenters with the image when the sidebar opens.
+        // Hidden while tiles are still seeding so generate cannot run on a
+        // half-loaded library. The dataset field is hosted as CanvasHero's
+        // top bar so it lives on the mosaic canvas and recenters with the
+        // image when the sidebar opens.
         <DatasetContext.Provider value={dataset}>
           <CanvasHero
             key={collection.id}
@@ -352,6 +336,15 @@ export function RoboflowMosaic() {
             expectedPhotoCount={dataset.imageCount}
           />
         </DatasetContext.Provider>
+      ) : ingesting ? (
+        // Tiling is in progress: loading only — no generate controls.
+        <div className="mx-auto flex w-full max-w-2xl flex-col items-center gap-4 px-5 py-24 text-center">
+          <h1 className="text-xl font-semibold tracking-tight">
+            Roboflow dataset mosaic
+          </h1>
+          {tilingProgress}
+          {error && <p className="text-xs text-destructive">{error}</p>}
+        </div>
       ) : (
         // Before a dataset is loaded there is no CanvasHero to host the bar, so
         // it gets its own centered landing state.
@@ -360,17 +353,15 @@ export function RoboflowMosaic() {
             Roboflow dataset mosaic
           </h1>
           {datasetBar}
-          {!ingesting && (
-            <p className="text-sm text-muted-foreground">
-              <button
-                type="button"
-                className="underline underline-offset-4"
-                onClick={() => setUrl(EXAMPLE_URL)}
-              >
-                Try {EXAMPLE_URL}
-              </button>
-            </p>
-          )}
+          <p className="text-sm text-muted-foreground">
+            <button
+              type="button"
+              className="underline underline-offset-4"
+              onClick={() => setUrl(EXAMPLE_URL)}
+            >
+              Try {EXAMPLE_URL}
+            </button>
+          </p>
         </div>
       )}
     </div>
