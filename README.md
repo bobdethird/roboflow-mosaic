@@ -13,30 +13,48 @@ renders — with two things swapped: where the tiles come from, and how the
 reference is chosen. Everything else (the Python/video pipeline, the Supabase
 collections and their pages, the gallery, sharing) is gone.
 
+The mosaic is built from the **project's source images**, not from a generated
+version export. A version in the URL is only cache identity and metadata;
+augmentations and generated splits are not included.
+
+## Host on Vercel
+
+Vercel only resolves the dataset and pages image metadata. The visitor's
+browser downloads the thumbnails and builds the tile library. A Blob store is
+not required for the page to load a dataset.
+
+1. Get a free Roboflow API key: [roboflow.com → Settings → API Keys](https://app.roboflow.com/settings/api). Public Universe datasets still need one.
+2. Push this repo to GitHub (or fork [bobdethird/roboflow-mosaic](https://github.com/bobdethird/roboflow-mosaic)).
+3. In the [Vercel dashboard](https://vercel.com/new), import that Git repository. Vercel detects Next.js and `pnpm` from the lockfile — leave the build settings as they are.
+4. On the import screen (or later under **Settings → Environment Variables**), add:
+
+   | Name | Value | Environments |
+   | ---- | ----- | ------------ |
+   | `ROBOFLOW_API_KEY` | your key | Production, Preview, Development |
+
+   Do not prefix it with `NEXT_PUBLIC_` — it must stay on the server. Vercel does not read `.env.local`.
+5. Deploy. After the build finishes, open the production URL (the app lives at `/roboflow`; `/` redirects there).
+6. If you add or change the key later, **redeploy** — existing deployments keep the old value.
+
+Optional: `BLOB_READ_WRITE_TOKEN` is only for the leftover server ingest and asset route. Resolve requests that use the server key are same-origin and rate-limited.
+
+From a checkout you can also deploy with the CLI:
+
+```bash
+pnpm dlx vercel
+# set ROBOFLOW_API_KEY when prompted, or:
+pnpm dlx vercel env add ROBOFLOW_API_KEY
+pnpm dlx vercel --prod
+```
+
+## Run locally
+
 ```bash
 pnpm install
 echo "ROBOFLOW_API_KEY=your_key_here" > .env.local
 pnpm dev
 # → http://localhost:3000/roboflow
 ```
-
-The API key is free: roboflow.com → Settings → API Keys. Public Universe
-datasets still need one.
-
-The mosaic is built from the **project's source images**, not from a generated
-version export. A version in the URL is only cache identity and metadata;
-augmentations and generated splits are not included.
-
-### Deploying to Vercel
-
-Set `ROBOFLOW_API_KEY` on the project. Seeding no longer runs on the serverless
-CPU: Vercel only resolves the dataset and pages image metadata. The visitor's
-browser downloads the thumbnails and builds the tile library locally.
-
-An optional `BLOB_READ_WRITE_TOKEN` is still used by the older server ingest
-and the asset route, but it is not required for the page to load a dataset.
-
-Resolve requests that use the server key are same-origin and rate-limited.
 
 ## How it works
 
