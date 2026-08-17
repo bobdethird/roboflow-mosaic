@@ -35,7 +35,7 @@ const MAX_TILE_REUSE = 24
 const MIN_CELL_SIZE = 8
 
 const EXAMPLE_URL =
-  "https://universe.roboflow.com/joseph-nelson/chess-pieces-new"
+  "https://universe.roboflow.com/microsoft/coco"
 
 const DatasetContext = React.createContext<RoboflowDataset | null>(null)
 
